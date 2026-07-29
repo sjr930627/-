@@ -1,0 +1,58 @@
+import type { GrabShiftApplication } from '@/types'
+
+export const seedGrabShiftApplications: GrabShiftApplication[] = [
+  {
+    id: 'gsa_001',
+    slotId: 'gs_001',
+    employeeId: 'emp_002',
+    message: '有2年客服经验，持有客服证',
+    status: 'pending',
+    createdAt: '2026-07-27T06:30:00.000Z',
+  },
+  {
+    id: 'gsa_002',
+    slotId: 'gs_002',
+    employeeId: 'emp_003',
+    message: '可接受中班时段',
+    status: 'pending',
+    createdAt: '2026-07-27T07:15:00.000Z',
+  },
+  {
+    id: 'gsa_003',
+    slotId: 'gs_002',
+    employeeId: 'emp_004',
+    message: '普通话二级，周末可出勤',
+    status: 'pending',
+    createdAt: '2026-07-27T08:00:00.000Z',
+  },
+  {
+    id: 'gsa_004',
+    slotId: 'gs_001',
+    employeeId: 'emp_001',
+    message: '有2年中石化加油站服务经验，持有中石化安全作业证',
+    status: 'approved',
+    createdAt: '2026-07-26T14:00:00.000Z',
+    reviewedBy: '排班员',
+    reviewedAt: '2026-07-26T15:00:00.000Z',
+    reviewNote: '技能匹配，予以通过',
+  },
+  {
+    id: 'gsa_006',
+    slotId: 'gs_004',
+    employeeId: 'emp_001',
+    message: '小程序抢班报名',
+    status: 'pending',
+    createdAt: '2026-07-27T08:30:00.000Z',
+  },
+  {
+    id: 'gsa_005',
+    slotId: 'gs_003',
+    employeeId: 'emp_006',
+    message: '申请夜班',
+    status: 'rejected',
+    createdAt: '2026-07-26T16:00:00.000Z',
+    reviewedBy: '排班员',
+    reviewedAt: '2026-07-26T17:00:00.000Z',
+    reviewNote: '缺少夜班资质证书',
+  },
+]

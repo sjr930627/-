@@ -1,0 +1,41 @@
+import type { BillingRule } from '@/types'
+
+export const seedBillingRules: BillingRule[] = [
+  {
+    id: 'br_001',
+    name: '标准时薪计薪',
+    code: 'HOURLY_STANDARD',
+    description: '按实际出勤工时 × 时薪单价结算，适用于大多数排班岗位',
+    scope: 'global',
+    payrollFormula: 'work_hours * hourly_rate - deductions',
+    serviceFeeFormula: 'payroll_total * service_fee_rate',
+    enabled: true,
+    isDefault: true,
+    createdAt: '2024-06-01T08:00:00.000Z',
+    updatedAt: '2024-10-01T08:00:00.000Z',
+  },
+  {
+    id: 'br_002',
+    name: '考勤天数时薪',
+    code: 'HOURLY_BY_DAYS',
+    description: '按考勤天数 × 日标准工时（8h）× 时薪单价结算',
+    scope: 'enterprise',
+    payrollFormula: 'attendance_days * hourly_rate * 8 - deductions',
+    serviceFeeFormula: 'payroll_total * service_fee_rate',
+    enabled: true,
+    createdAt: '2024-07-15T08:00:00.000Z',
+    updatedAt: '2024-09-20T08:00:00.000Z',
+  },
+  {
+    id: 'br_003',
+    name: '含加班时薪',
+    code: 'HOURLY_WITH_OT',
+    description: '正常工时按时薪结算，加班工时按加班单价（时薪倍数）另行计算',
+    scope: 'department',
+    payrollFormula: 'work_hours * hourly_rate + overtime_hours * overtime_rate - deductions',
+    serviceFeeFormula: 'payroll_total * service_fee_rate',
+    enabled: true,
+    createdAt: '2024-08-01T08:00:00.000Z',
+    updatedAt: '2024-08-01T08:00:00.000Z',
+  },
+]
