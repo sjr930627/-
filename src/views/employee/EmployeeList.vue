@@ -275,12 +275,21 @@ function maskPhone(phone?: string) {
 
 <template>
   <div class="personnel-page">
+    <div class="page-actions">
+      <div class="page-actions-left">
+        <span class="enterprise-tag">星辰通信集团</span>
+      </div>
+      <div class="page-actions-right">
+        <el-button plain>批量导入</el-button>
+        <el-button plain>批量导出</el-button>
+        <el-button type="primary" @click="openCreateDept(null)">+ 新增部门</el-button>
+      </div>
+    </div>
+
     <div class="org-panel page-card">
       <div class="org-panel-header">
         <span class="org-title">组织架构树</span>
-        <el-button type="primary" link @click="openCreateDept(null)">
-          <el-icon><Plus /></el-icon>
-        </el-button>
+        <el-tag size="small" type="info" round>{{ store.departments.length }}</el-tag>
       </div>
       <el-input
         v-model="treeKeyword"
@@ -316,22 +325,30 @@ function maskPhone(phone?: string) {
       <template v-if="selectedDept">
         <div class="page-card dept-card">
           <div class="dept-card-header">
-            <div>
-              <h2 class="page-title">{{ selectedDept.name }}</h2>
-              <p class="text-muted">
-                含下级共 {{ deptEmployeeCount }} 人 · 本部门 {{ directEmployeeCount }} 人
-              </p>
+            <div class="dept-title-wrap">
+              <div class="dept-icon">
+                <el-icon><OfficeBuilding /></el-icon>
+              </div>
+              <div>
+                <h2 class="page-title">{{ selectedDept.name }}</h2>
+                <p class="text-muted dept-path">
+                  星辰通信集团 / {{ getDepartmentName(store.departments, selectedDept.parentId ?? '') || '根节点' }} / {{ selectedDept.name }}
+                </p>
+              </div>
             </div>
             <div class="dept-actions">
-              <el-button @click="openEditDept">
+              <el-button plain @click="openEditDept">
                 <el-icon><Edit /></el-icon>
+                编辑
               </el-button>
-              <el-button type="danger" plain @click="removeDept">
+              <el-button plain type="danger" @click="removeDept">
                 <el-icon><Delete /></el-icon>
+                删除
               </el-button>
             </div>
           </div>
 
+          <div class="section-label">基本信息</div>
           <el-descriptions :column="3" border class="dept-info">
             <el-descriptions-item label="部门名称">{{ selectedDept.name }}</el-descriptions-item>
             <el-descriptions-item label="上级部门">
@@ -342,7 +359,13 @@ function maskPhone(phone?: string) {
               }}
             </el-descriptions-item>
             <el-descriptions-item label="部门层级">
-              <el-tag size="small" type="primary">{{ deptLevelLabel }}</el-tag>
+              <el-tag size="small">{{ deptLevelLabel }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="节点类型">
+              <el-tag size="small" type="warning">非叶子</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="考勤规则">
+              <el-link type="primary" :underline="false">标准考勤组</el-link>
             </el-descriptions-item>
             <el-descriptions-item label="负责人">
               <template v-if="managerEmployee">
@@ -354,17 +377,17 @@ function maskPhone(phone?: string) {
               <span v-else class="text-muted">未设置</span>
             </el-descriptions-item>
             <el-descriptions-item label="排序">{{ selectedDept.sort }}</el-descriptions-item>
-            <el-descriptions-item label="人员规模">{{ deptEmployeeCount }} 人</el-descriptions-item>
+            <el-descriptions-item label="人员规模">{{ deptEmployeeCount }} 人（本部门 {{ directEmployeeCount }} 人）</el-descriptions-item>
           </el-descriptions>
         </div>
 
         <div class="page-card employee-card">
           <div class="page-header">
-            <div>
-              <h3 class="section-title">灵工人员</h3>
-              <p class="text-muted">当前部门及下级部门人员列表</p>
+            <div class="section-title-wrap">
+              <h3 class="section-title">员工人员</h3>
+              <el-tag size="small" round>{{ employeeTableData.length }}</el-tag>
             </div>
-            <el-button type="primary" @click="openCreateEmployee">添加人员</el-button>
+            <el-button type="primary" @click="openCreateEmployee">+ 添加人员</el-button>
           </div>
 
           <div class="page-toolbar">
@@ -382,38 +405,36 @@ function maskPhone(phone?: string) {
             </el-select>
           </div>
 
-          <el-table :data="employeeTableData" border stripe>
+          <el-table :data="employeeTableData" border stripe class="employee-table">
             <el-table-column prop="employeeNo" label="工号" width="100" />
             <el-table-column prop="name" label="姓名" width="90" />
             <el-table-column label="手机号" width="120">
               <template #default="{ row }">{{ maskPhone(row.phone) }}</template>
             </el-table-column>
-            <el-table-column prop="departmentName" label="所属部门" min-width="120">
-              <template #default="{ row }">
-                {{ row.departmentName }}
-                <el-tag v-if="!row.isDirect" size="small" type="info">下级</el-tag>
-              </template>
+            <el-table-column label="身份证号" width="150">
+              <template #default>330***********1234</template>
             </el-table-column>
-            <el-table-column prop="position" label="岗位" width="100" />
-            <el-table-column prop="hireDate" label="入职日期" width="110" />
-            <el-table-column label="技能" min-width="140">
+            <el-table-column prop="position" label="岗位" width="110" />
+            <el-table-column prop="hireDate" label="关联日期" width="110" />
+            <el-table-column label="状态" width="100">
               <template #default="{ row }">
-                <el-tag v-for="s in row.skills" :key="s" size="small" class="skill-tag">
-                  {{ s }}
+                <span class="status-dot" :class="row.status" />
+                <el-tag :type="statusMap[row.status as EmployeeStatus].type" size="small" effect="light">
+                  {{ statusMap[row.status as EmployeeStatus].label === '在职' ? '正常' : statusMap[row.status as EmployeeStatus].label }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="90">
+            <el-table-column label="是否在线" width="90">
               <template #default="{ row }">
-                <el-tag :type="statusMap[row.status as EmployeeStatus].type" size="small">
-                  {{ statusMap[row.status as EmployeeStatus].label }}
-                </el-tag>
+                <span class="online-dot" :class="row.status === 'active' ? 'online' : 'offline'" />
+                {{ row.status === 'active' ? '在线' : '离线' }}
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140" fixed="right">
+            <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
+                <el-button link type="primary">详情</el-button>
                 <el-button link type="primary" @click="openEditEmployee(row)">编辑</el-button>
-                <el-button link type="danger" @click="removeEmployee(row)">删除</el-button>
+                <el-button link type="danger" @click="removeEmployee(row)">移除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -527,21 +548,37 @@ function maskPhone(phone?: string) {
 <style scoped>
 .personnel-page {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 300px 1fr;
   gap: 16px;
   align-items: start;
 }
 
-.org-panel {
-  padding: 16px;
-  position: sticky;
-  top: 0;
+.page-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.page-actions-right {
+  display: flex;
+  gap: 10px;
+}
+
+.enterprise-tag {
+  font-size: 13px;
+  color: #64748b;
+  background: #fff;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  padding: 4px 12px;
 }
 
 .org-panel-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
@@ -602,6 +639,72 @@ function maskPhone(phone?: string) {
   align-items: flex-start;
   justify-content: space-between;
   margin-bottom: 16px;
+}
+
+.dept-title-wrap {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.dept-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: #ede9fe;
+  color: #5b4fdb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dept-path {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  margin: 0 0 10px;
+}
+
+.section-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot,
+.online-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.status-dot.active,
+.online-dot.online {
+  background: #22c55e;
+}
+
+.status-dot.leave {
+  background: #f59e0b;
+}
+
+.status-dot.resigned,
+.online-dot.offline {
+  background: #94a3b8;
+}
+
+.employee-table :deep(.el-table__header th) {
+  background: #fafafa;
+  color: #64748b;
+  font-weight: 600;
 }
 
 .dept-card-header .page-title {

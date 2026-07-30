@@ -30,6 +30,7 @@ const router = createRouter({
         {
           path: 'contracts',
           redirect: '/partnership',
+          meta: { title: '合同管理', group: '人员考勤管理' },
         },
         {
           path: 'recruitment/requirements',
@@ -41,7 +42,7 @@ const router = createRouter({
           path: 'recruitment/progress',
           name: 'RecruitmentProgress',
           component: () => import('@/views/recruitment/RecruitmentProgress.vue'),
-          meta: { title: '招聘进度', group: '招聘管理' },
+          meta: { title: '招聘进度看板', group: '招聘管理' },
         },
         {
           path: 'recruitment/calendar',
@@ -192,7 +193,7 @@ const router = createRouter({
           path: 'attendance-data',
           name: 'AttendanceData',
           component: () => import('@/views/attendance/AttendanceDataView.vue'),
-          meta: { title: '考勤数据', group: '人员考勤管理' },
+          meta: { title: '考勤记录', group: '人员考勤管理' },
         },
         {
           path: 'attendance-daily',
@@ -206,7 +207,7 @@ const router = createRouter({
           path: 'attendance-groups',
           name: 'AttendanceGroups',
           component: () => import('@/views/attendance/AttendanceGroupList.vue'),
-          meta: { title: '考勤组管理', group: '人员考勤管理' },
+          meta: { title: '考勤规则', group: '人员考勤管理' },
         },
         {
           path: 'attendance-groups/create',
@@ -256,31 +257,31 @@ const router = createRouter({
           path: 'payroll/bills',
           name: 'PayrollBills',
           component: () => import('@/views/payroll/BillManageView.vue'),
-          meta: { title: '账单管理', group: '薪税管理' },
+          meta: { title: '账单管理', group: '财税管理' },
         },
         {
           path: 'payroll/bills/:id',
           name: 'PayrollBillDetail',
           component: () => import('@/views/payroll/BillDetailView.vue'),
-          meta: { title: '账单详情', group: '薪税管理' },
+          meta: { title: '账单详情', group: '财税管理' },
         },
         {
           path: 'payroll/billing-rules',
           name: 'PayrollBillingRules',
           component: () => import('@/views/payroll/BillingRuleView.vue'),
-          meta: { title: '计薪规则', group: '薪税管理' },
+          meta: { title: '计薪规则', group: '财税管理' },
         },
         {
           path: 'payroll/settlement',
           name: 'PayrollSettlement',
           component: () => import('@/views/payroll/SettlementOverviewView.vue'),
-          meta: { title: '结算概览', group: '薪税管理' },
+          meta: { title: '结算管理', group: '财税管理' },
         },
         {
           path: 'payroll/invoices',
           name: 'PayrollInvoices',
           component: () => import('@/views/payroll/InvoiceManageView.vue'),
-          meta: { title: '发票管理', group: '薪税管理' },
+          meta: { title: '发票管理', group: '财税管理' },
         },
         {
           path: 'statistics/overview',

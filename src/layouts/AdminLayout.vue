@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import EnterpriseNavIcon from '@/components/layout/EnterpriseNavIcon.vue'
 
 const STORAGE_KEY = 'layout:nav-collapsed'
 
@@ -12,129 +13,68 @@ const navCollapsed = ref(localStorage.getItem(STORAGE_KEY) === '1')
 const searchKeyword = ref('')
 const notificationDrawer = ref(false)
 
-interface MenuChild {
+interface NavItem {
   path: string
   title: string
   icon: string
 }
 
-interface MenuGroup {
-  index: string
+interface NavGroup {
   title: string
-  icon: string
-  children: MenuChild[]
+  items: NavItem[]
 }
 
-const menuGroups: MenuGroup[] = [
+const navGroups: NavGroup[] = [
   {
-    index: 'recruitment',
     title: '招聘管理',
-    icon: 'User',
-    children: [
-      { path: '/recruitment/requirements', title: '需求管理', icon: 'Document' },
-      { path: '/recruitment/progress', title: '招聘进度', icon: 'DataLine' },
-      { path: '/recruitment/calendar', title: '面试日程', icon: 'Calendar' },
-      { path: '/recruitment/talents', title: '人才库', icon: 'Postcard' },
+    items: [
+      { path: '/recruitment/requirements', title: '需求管理', icon: 'requirements' },
+      { path: '/recruitment/progress', title: '招聘进度看板', icon: 'progress' },
     ],
   },
   {
-    index: 'training',
-    title: '培训与考核',
-    icon: 'Reading',
-    children: [
-      { path: '/training/materials', title: '培训资料', icon: 'FolderOpened' },
-      { path: '/training/courses', title: '课程管理', icon: 'Notebook' },
-      { path: '/training/exams', title: '考核管理', icon: 'EditPen' },
-      { path: '/training/progress', title: '学习进度', icon: 'TrendCharts' },
-      { path: '/training/exam-results', title: '考核结果', icon: 'DocumentChecked' },
-    ],
-  },
-  {
-    index: 'attendance',
     title: '人员考勤管理',
-    icon: 'Avatar',
-    children: [
-      { path: '/employees', title: '人员管理', icon: 'UserFilled' },
-      { path: '/attendance-groups', title: '考勤组管理', icon: 'Grid' },
-      { path: '/schedule-manage', title: '排班管理', icon: 'Notebook' },
-      { path: '/grab-shifts', title: '抢班管理', icon: 'Bell' },
-      { path: '/attendance-data', title: '考勤数据', icon: 'DataBoard' },
-      { path: '/attendance-exceptions', title: '考勤异常处理', icon: 'WarningFilled' },
-      { path: '/insurance', title: '保险管理', icon: 'FirstAidKit' },
+    items: [
+      { path: '/employees', title: '人员管理', icon: 'personnel' },
+      { path: '/contracts', title: '合同管理', icon: 'contract' },
+      { path: '/attendance-groups', title: '考勤规则', icon: 'attendance-rule' },
+      { path: '/schedule-manage', title: '排班管理', icon: 'schedule' },
+      { path: '/attendance-data', title: '考勤记录', icon: 'attendance-record' },
+      { path: '/insurance', title: '保险管理', icon: 'insurance' },
     ],
   },
   {
-    index: 'task',
     title: '任务管理',
-    icon: 'List',
-    children: [
-      { path: '/task-workflows', title: '任务规则配置', icon: 'SetUp' },
-      { path: '/task-type-approval', title: '任务类型审批', icon: 'Stamp' },
-      { path: '/task-manage', title: '任务管理', icon: 'Tickets' },
+    items: [
+      { path: '/task-manage', title: '任务管理', icon: 'task' },
+      { path: '/task-workflows', title: '任务模板', icon: 'task-template' },
     ],
   },
   {
-    index: 'partnership',
-    title: '合作管理',
-    icon: 'Connection',
-    children: [
-      { path: '/partnership', title: '服务商合作', icon: 'Link' },
-    ],
-  },
-  {
-    index: 'payroll',
-    title: '薪税管理',
-    icon: 'Money',
-    children: [
-      { path: '/payroll/bills', title: '账单管理', icon: 'DocumentCopy' },
-      { path: '/payroll/billing-rules', title: '计薪规则', icon: 'Operation' },
-      { path: '/payroll/settlement', title: '结算概览', icon: 'PieChart' },
-      { path: '/payroll/invoices', title: '发票管理', icon: 'Ticket' },
-    ],
-  },
-  {
-    index: 'statistics',
-    title: '数据统计',
-    icon: 'DataAnalysis',
-    children: [
-      { path: '/statistics/overview', title: '概览看板', icon: 'Odometer' },
-      { path: '/bi/monitor', title: '数据监控中心', icon: 'Monitor' },
-      { path: '/statistics/recruitment', title: '招聘统计', icon: 'TrendCharts' },
-      { path: '/statistics/attendance', title: '考勤统计', icon: 'Timer' },
-      { path: '/statistics/task', title: '任务统计', icon: 'Finished' },
-      { path: '/statistics/settlement', title: '结算统计', icon: 'Wallet' },
+    title: '财税管理',
+    items: [
+      { path: '/payroll/bills', title: '账单管理', icon: 'bill' },
+      { path: '/payroll/settlement', title: '结算管理', icon: 'settlement' },
+      { path: '/payroll/billing-rules', title: '计薪规则', icon: 'payroll-rule' },
+      { path: '/payroll/invoices', title: '发票管理', icon: 'invoice' },
     ],
   },
 ]
 
-const settingsGroup: MenuGroup = {
-  index: 'settings',
-  title: '系统设置',
-  icon: 'Setting',
-  children: [
-    { path: '/system/accounts', title: '账号管理', icon: 'User' },
-    { path: '/system/roles', title: '角色权限', icon: 'Key' },
-  ],
-}
 
 const activeMenu = computed(() => route.path)
-const asideWidth = computed(() => (navCollapsed.value ? '64px' : '260px'))
+const asideWidth = computed(() => (navCollapsed.value ? '72px' : '248px'))
 
 const breadcrumbs = computed(() => {
-  const crumbs: string[] = ['灵工平台']
+  const crumbs: string[] = []
   if (route.meta.group) crumbs.push(route.meta.group as string)
   if (route.meta.title) crumbs.push(route.meta.title as string)
   return crumbs
 })
 
-const openMenus = computed(() => {
-  for (const group of [...menuGroups, settingsGroup]) {
-    if (group.children.some((c) => activeMenu.value === c.path || activeMenu.value.startsWith(`${c.path}/`))) {
-      return [group.index]
-    }
-  }
-  return []
-})
+function isActive(path: string) {
+  return activeMenu.value === path || activeMenu.value.startsWith(`${path}/`)
+}
 
 function navigate(path: string) {
   router.push(path)
@@ -156,24 +96,24 @@ function formatTime(iso: string) {
 </script>
 
 <template>
-  <el-container class="layout">
+  <el-container class="enterprise-layout">
     <el-header class="header">
       <div class="header-left">
         <div class="brand" @click="navigate('/dashboard')">
-          <div class="brand-mark">S</div>
-          <div class="brand-text">
-            <span class="brand-title">灵工管理平台</span>
-            <span class="brand-sub">灵活用工 · 智能管理</span>
+          <div class="brand-mark">
+            <svg viewBox="0 0 24 24" fill="none">
+              <rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor" opacity=".9" />
+              <rect x="13" y="3" width="8" height="8" rx="2" fill="currentColor" opacity=".65" />
+              <rect x="3" y="13" width="8" height="8" rx="2" fill="currentColor" opacity=".65" />
+              <rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity=".45" />
+            </svg>
           </div>
+          <span class="brand-title">灵工平台</span>
+          <span class="brand-badge">企业端</span>
         </div>
-        <el-divider direction="vertical" class="header-divider" />
-        <el-breadcrumb separator="/" class="header-breadcrumb">
-          <el-breadcrumb-item v-for="(crumb, i) in breadcrumbs" :key="i">
-            {{ crumb }}
-          </el-breadcrumb-item>
-        </el-breadcrumb>
       </div>
-      <div class="header-right">
+
+      <div class="header-center">
         <el-input
           v-model="searchKeyword"
           class="header-search"
@@ -182,29 +122,30 @@ function formatTime(iso: string) {
           clearable
           @keyup.enter="handleSearch"
         />
-        <el-badge :value="store.pendingApprovalCount" :hidden="store.pendingApprovalCount === 0">
-          <el-button class="header-icon-btn" text @click="router.push('/approvals')">
-            <el-icon size="18"><CircleCheck /></el-icon>
-          </el-button>
-        </el-badge>
+      </div>
+
+      <div class="header-right">
         <el-badge :value="store.unreadNotificationCount" :hidden="store.unreadNotificationCount === 0">
-          <el-button class="header-icon-btn" text @click="notificationDrawer = true">
+          <button class="icon-btn" type="button" @click="notificationDrawer = true">
             <el-icon size="18"><Bell /></el-icon>
-          </el-button>
+          </button>
         </el-badge>
         <el-dropdown trigger="click">
           <div class="user-info">
             <el-avatar :size="32" class="user-avatar">张</el-avatar>
-            <span class="username">张管理员</span>
-            <el-icon><ArrowDown /></el-icon>
+            <span v-show="!navCollapsed" class="username">张 管理</span>
+            <el-icon class="user-arrow"><ArrowDown /></el-icon>
           </div>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="router.push('/system/accounts')">账号管理</el-dropdown-item>
+              <el-dropdown-item @click="router.push('/dashboard')">工作台</el-dropdown-item>
+              <el-dropdown-item @click="router.push('/training/courses')">培训考核</el-dropdown-item>
+              <el-dropdown-item @click="router.push('/statistics/overview')">数据统计</el-dropdown-item>
+              <el-dropdown-item @click="router.push('/partnership')">服务商合作</el-dropdown-item>
+              <el-dropdown-item divided @click="router.push('/system/accounts')">账号管理</el-dropdown-item>
               <el-dropdown-item @click="router.push('/system/roles')">角色权限</el-dropdown-item>
               <el-dropdown-item @click="router.push('/approvals')">审批中心</el-dropdown-item>
-              <el-dropdown-item @click="router.push('/enterprise/task-types')">企业B端</el-dropdown-item>
-              <el-dropdown-item divided @click="router.push('/self-service')">员工自助</el-dropdown-item>
+              <el-dropdown-item divided @click="router.push('/miniapp/workbench')">灵工小程序</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -213,66 +154,71 @@ function formatTime(iso: string) {
 
     <el-container class="body-container">
       <el-aside :width="asideWidth" class="aside" :class="{ collapsed: navCollapsed }">
+        <div v-show="!navCollapsed" class="enterprise-card">
+          <div class="enterprise-icon">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M4 20V8l8-4 8 4v12" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+              <path d="M9 20v-6h6v6" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+            </svg>
+          </div>
+          <div class="enterprise-meta">
+            <div class="enterprise-name">星辰通信集团</div>
+            <div class="enterprise-id">企业ID：ENT-20260315-001</div>
+          </div>
+        </div>
+
         <el-scrollbar class="menu-scroll">
-          <el-menu
-            :default-active="activeMenu"
-            :default-openeds="openMenus"
-            :collapse="navCollapsed"
-            :collapse-transition="false"
-            class="side-menu"
-            @select="navigate"
-          >
-            <el-menu-item index="/dashboard">
-              <el-icon><Odometer /></el-icon>
-              <template #title>工作台</template>
-            </el-menu-item>
-
-            <el-sub-menu v-for="group in menuGroups" :key="group.index" :index="group.index">
-              <template #title>
-                <el-icon><component :is="group.icon" /></el-icon>
-                <span>{{ group.title }}</span>
-              </template>
-              <el-menu-item
-                v-for="child in group.children"
-                :key="child.path"
-                :index="child.path"
+          <nav class="side-nav">
+            <section v-for="group in navGroups" :key="group.title" class="nav-group">
+              <div v-show="!navCollapsed" class="nav-group-title">{{ group.title }}</div>
+              <el-tooltip
+                v-for="item in group.items"
+                :key="item.path"
+                :content="item.title"
+                placement="right"
+                :disabled="!navCollapsed"
               >
-                <el-icon><component :is="child.icon" /></el-icon>
-                <template #title>{{ child.title }}</template>
-              </el-menu-item>
-            </el-sub-menu>
-
-            <el-sub-menu :index="settingsGroup.index">
-              <template #title>
-                <el-icon><Setting /></el-icon>
-                <span>{{ settingsGroup.title }}</span>
-              </template>
-              <el-menu-item
-                v-for="child in settingsGroup.children"
-                :key="child.path"
-                :index="child.path"
-              >
-                <el-icon><component :is="child.icon" /></el-icon>
-                <template #title>{{ child.title }}</template>
-              </el-menu-item>
-            </el-sub-menu>
-          </el-menu>
+                <button
+                  type="button"
+                  class="nav-item"
+                  :class="{ active: isActive(item.path) }"
+                  @click="navigate(item.path)"
+                >
+                  <EnterpriseNavIcon :name="item.icon" :active="isActive(item.path)" />
+                  <span v-show="!navCollapsed" class="nav-label">{{ item.title }}</span>
+                </button>
+              </el-tooltip>
+            </section>
+          </nav>
         </el-scrollbar>
 
         <div class="aside-footer">
+          <el-tooltip content="帮助中心" placement="right" :disabled="!navCollapsed">
+            <button type="button" class="nav-item help-item" @click="navigate('/dashboard')">
+              <EnterpriseNavIcon name="help" />
+              <span v-show="!navCollapsed" class="nav-label">帮助中心</span>
+            </button>
+          </el-tooltip>
           <el-tooltip :content="navCollapsed ? '展开导航' : '收起导航'" placement="right">
             <button class="collapse-btn" type="button" @click="toggleNav">
-              <el-icon size="18">
+              <el-icon size="16">
                 <Expand v-if="navCollapsed" />
                 <Fold v-else />
               </el-icon>
-              <span v-show="!navCollapsed" class="collapse-label">收起导航</span>
+              <span v-show="!navCollapsed">收起导航</span>
             </button>
           </el-tooltip>
         </div>
       </el-aside>
 
       <el-main class="main">
+        <div v-if="breadcrumbs.length" class="page-breadcrumb">
+          <el-breadcrumb separator="/">
+            <el-breadcrumb-item v-for="(crumb, i) in breadcrumbs" :key="i">
+              {{ crumb }}
+            </el-breadcrumb-item>
+          </el-breadcrumb>
+        </div>
         <RouterView />
       </el-main>
     </el-container>
@@ -300,7 +246,22 @@ function formatTime(iso: string) {
 </template>
 
 <style scoped>
-.layout {
+.enterprise-layout {
+  --app-primary: #5b4fdb;
+  --app-primary-light: #ede9fe;
+  --app-primary-dark: #4f46e5;
+  --app-bg: #f5f6fa;
+  --app-border: #e8ebf0;
+  --app-text: #1f2329;
+  --app-text-secondary: #646a73;
+  --el-color-primary: #5b4fdb;
+  --el-color-primary-light-3: #8b83e8;
+  --el-color-primary-light-5: #a9a3ef;
+  --el-color-primary-light-7: #c7c3f5;
+  --el-color-primary-light-8: #d9d6f8;
+  --el-color-primary-light-9: #ede9fe;
+  --el-color-primary-dark-2: #4f46e5;
+
   height: 100vh;
   flex-direction: column;
   background: var(--app-bg);
@@ -314,7 +275,6 @@ function formatTime(iso: string) {
   height: 56px;
   padding: 0 20px;
   border-bottom: 1px solid var(--app-border);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
   flex-shrink: 0;
   z-index: 10;
 }
@@ -324,6 +284,18 @@ function formatTime(iso: string) {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: 1;
+}
+
+.header-center {
+  flex: 1.4;
+  display: flex;
+  justify-content: center;
+  max-width: 420px;
+}
+
+.header-right {
+  justify-content: flex-end;
 }
 
 .brand {
@@ -335,68 +307,70 @@ function formatTime(iso: string) {
 }
 
 .brand-mark {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #e60012 0%, #ff4d4f 100%);
+  background: linear-gradient(135deg, #5b4fdb 0%, #7c6df0 100%);
   color: #fff;
-  font-weight: 800;
-  font-size: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(230, 0, 18, 0.2);
+  box-shadow: 0 4px 12px rgba(91, 79, 219, 0.28);
 }
 
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
+.brand-mark svg {
+  width: 20px;
+  height: 20px;
 }
 
 .brand-title {
   font-size: 16px;
   font-weight: 700;
   color: var(--app-text);
-  letter-spacing: 0.3px;
 }
 
-.brand-sub {
+.brand-badge {
   font-size: 11px;
-  color: var(--app-text-secondary);
-}
-
-.header-divider {
-  border-color: var(--app-border);
-  height: 24px;
-  margin: 0 4px;
-}
-
-.header-breadcrumb :deep(.el-breadcrumb__inner),
-.header-breadcrumb :deep(.el-breadcrumb__separator) {
-  color: var(--app-text-secondary);
-  font-weight: 400;
-}
-
-.header-icon-btn {
-  color: var(--app-text-secondary);
-}
-
-.header-icon-btn:hover {
-  background: var(--app-primary-light);
-  color: var(--app-primary);
+  font-weight: 600;
+  color: #5b4fdb;
+  background: #ede9fe;
+  border-radius: 999px;
+  padding: 2px 8px;
 }
 
 .header-search {
-  width: 220px;
+  width: 100%;
 }
 
 .header-search :deep(.el-input__wrapper) {
-  border-radius: 8px;
-  background: #fff;
+  border-radius: 999px;
+  background: #f5f6fa;
   box-shadow: none;
-  border: 1px solid var(--app-border);
+  border: 1px solid transparent;
+}
+
+.header-search :deep(.el-input__wrapper.is-focus) {
+  background: #fff;
+  border-color: #c7c3f5;
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: #f5f6fa;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.icon-btn:hover {
+  background: var(--app-primary-light);
+  color: var(--app-primary);
 }
 
 .user-info {
@@ -404,17 +378,19 @@ function formatTime(iso: string) {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 8px;
-  color: var(--app-text);
+  padding: 4px 10px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--app-border);
+  background: #fff;
 }
 
 .user-info:hover {
-  background: var(--app-primary-light);
+  border-color: #c7c3f5;
+  background: #fafaff;
 }
 
 .user-avatar {
-  background: linear-gradient(135deg, #e60012, #ff4d4f);
+  background: linear-gradient(135deg, #5b4fdb, #7c6df0);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
@@ -422,6 +398,13 @@ function formatTime(iso: string) {
 
 .username {
   font-size: 14px;
+  font-weight: 500;
+  color: var(--app-text);
+}
+
+.user-arrow {
+  color: #94a3b8;
+  font-size: 12px;
 }
 
 .body-container {
@@ -439,46 +422,121 @@ function formatTime(iso: string) {
   flex-shrink: 0;
 }
 
+.enterprise-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 12px 8px;
+  padding: 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fafaff 0%, #f3f0ff 100%);
+  border: 1px solid #ebe8ff;
+}
+
+.enterprise-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #5b4fdb, #7c6df0);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.enterprise-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.enterprise-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--app-text);
+  line-height: 1.3;
+}
+
+.enterprise-id {
+  font-size: 11px;
+  color: var(--app-text-secondary);
+  margin-top: 2px;
+}
+
 .menu-scroll {
   flex: 1;
   min-height: 0;
 }
 
-.side-menu {
-  border-right: none;
-  --el-menu-active-color: var(--app-primary);
-  --el-menu-hover-bg-color: var(--app-primary-light);
+.side-nav {
+  padding: 4px 10px 12px;
 }
 
-.side-menu:not(.el-menu--collapse) {
-  width: 260px;
+.nav-group + .nav-group {
+  margin-top: 8px;
 }
 
-.aside.collapsed .side-menu {
-  width: 64px;
+.nav-group-title {
+  padding: 8px 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  letter-spacing: 0.02em;
 }
 
-.side-menu :deep(.el-menu-item.is-active),
-.side-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
-  color: var(--app-primary);
-  background: var(--app-primary-light);
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 2px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #475569;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
 }
 
-.side-menu :deep(.el-menu-item.is-active) {
-  border-right: 3px solid var(--app-primary);
+.nav-item:hover {
+  background: #f8fafc;
+  color: #334155;
 }
 
-.side-menu :deep(.el-sub-menu__title),
-.side-menu :deep(.el-menu-item) {
-  height: 44px;
-  line-height: 44px;
+.nav-item.active {
+  background: linear-gradient(90deg, #ede9fe 0%, #f5f3ff 100%);
+  color: #5b4fdb;
+  font-weight: 600;
+  box-shadow: inset 3px 0 0 #5b4fdb;
+}
+
+.nav-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aside.collapsed .nav-item {
+  justify-content: center;
+  padding: 8px;
+}
+
+.aside.collapsed .enterprise-card {
+  display: none;
 }
 
 .aside-footer {
   flex-shrink: 0;
   border-top: 1px solid var(--app-border);
-  padding: 8px;
+  padding: 8px 10px 10px;
   background: #fff;
+}
+
+.help-item {
+  margin-bottom: 6px;
 }
 
 .collapse-btn {
@@ -489,11 +547,11 @@ function formatTime(iso: string) {
   width: 100%;
   padding: 8px;
   border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: #606266;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #64748b;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12px;
   transition: background 0.15s, color 0.15s;
 }
 
@@ -502,19 +560,22 @@ function formatTime(iso: string) {
   color: var(--app-primary);
 }
 
-.aside.collapsed .collapse-btn {
-  padding: 8px 0;
-}
-
-.collapse-label {
-  white-space: nowrap;
-}
-
 .main {
-  padding: 16px 20px;
+  padding: 12px 20px 20px;
   overflow: auto;
-  background: #fff;
+  background: var(--app-bg);
   min-width: 0;
+}
+
+.page-breadcrumb {
+  margin-bottom: 12px;
+}
+
+.page-breadcrumb :deep(.el-breadcrumb__inner),
+.page-breadcrumb :deep(.el-breadcrumb__separator) {
+  color: var(--app-text-secondary);
+  font-weight: 400;
+  font-size: 13px;
 }
 
 .notification-actions {
@@ -529,14 +590,15 @@ function formatTime(iso: string) {
 
 .notification-item {
   padding: 12px;
-  border-radius: 4px;
+  border-radius: 8px;
   border: 1px solid var(--app-border);
   cursor: pointer;
+  background: #fff;
 }
 
 .notification-item.unread {
   background: var(--app-primary-light);
-  border-color: #ffccc7;
+  border-color: #ddd6fe;
 }
 
 .notification-title {
@@ -557,8 +619,15 @@ function formatTime(iso: string) {
 </style>
 
 <style>
-.el-menu--popup {
-  --el-menu-active-color: var(--app-primary);
-  --el-menu-hover-bg-color: var(--app-primary-light);
+.enterprise-layout .el-button--primary {
+  --el-button-bg-color: #5b4fdb;
+  --el-button-border-color: #5b4fdb;
+  --el-button-hover-bg-color: #4f46e5;
+  --el-button-hover-border-color: #4f46e5;
+}
+
+.enterprise-layout .page-card {
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
 }
 </style>
