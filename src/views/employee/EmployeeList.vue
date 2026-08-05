@@ -1,52 +1,73 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { ElTree } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import DepartmentFormDialog from '@/components/employee/DepartmentFormDialog.vue'
+import EmployeeFormDrawer from '@/components/employee/EmployeeFormDrawer.vue'
+import EmployeeImportDialog from '@/components/employee/EmployeeImportDialog.vue'
+import EmployeeBatchAssignDialog from '@/components/employee/EmployeeBatchAssignDialog.vue'
+import {
+  isUnassignedDepartment,
+  isEnterpriseRootDepartment,
+  enterpriseRootDepartmentId,
+  enterpriseUnassignedDepartmentId,
+} from '@/constants/department'
 import {
   buildDepartmentTree,
   countDepartmentEmployees,
   getDepartmentDescendantIds,
   getDepartmentName,
 } from '@/utils'
+import { attendanceGroupTypeMap, formatShiftPeriod } from '@/constants/attendanceGroup'
 import type { DepartmentTreeNode, Employee, EmployeeStatus } from '@/types'
 
 const store = useAppStore()
+const route = useRoute()
+const router = useRouter()
 const treeRef = ref<InstanceType<typeof ElTree>>()
 const treeKeyword = ref('')
 const selectedDeptId = ref('dept_prod_a')
 const deptDialogVisible = ref(false)
-const employeeDialogVisible = ref(false)
 const editingDeptId = ref<string | null>(null)
+const defaultParentId = ref<string | null>(null)
+const employeeDialogVisible = ref(false)
+const employeeImportVisible = ref(false)
+const batchAssignVisible = ref(false)
+const selectedEmployeeIds = ref<string[]>([])
+const employeeTableRef = ref()
 const editingEmployeeId = ref<string | null>(null)
 const employeeKeyword = ref('')
 const filterStatus = ref<EmployeeStatus | ''>('')
 
 const statusMap: Record<EmployeeStatus, { label: string; type: 'success' | 'warning' | 'info' }> = {
-  active: { label: '在职', type: 'success' },
-  leave: { label: '休假中', type: 'warning' },
-  resigned: { label: '离职', type: 'info' },
+  pending: { label: '待入职', type: 'warning' },
+  active: { label: '正常', type: 'success' },
+  resigned: { label: '已离职', type: 'info' },
 }
 
-const deptForm = ref({
-  name: '',
-  parentId: null as string | null,
-  sort: 0,
+const activeEnterpriseId = computed(() => {
+  const fromRoute = route.params.enterpriseId as string | undefined
+  if (fromRoute) return fromRoute
+  return store.currentEnterpriseId
 })
 
-const employeeForm = ref({
-  name: '',
-  employeeNo: '',
-  departmentId: '',
-  position: '',
-  hireDate: '',
-  skills: [] as string[],
-  preferredShiftIds: [] as string[],
-  status: 'active' as EmployeeStatus,
-  phone: '',
-})
+const currentEnterprise = computed(
+  () => store.enterprises.find((e) => e.id === activeEnterpriseId.value) ?? store.currentEnterprise,
+)
 
-const skillOptions = ['叉车证', '急救证', '高级技师', '电工证', '质检员证']
+const isPlatformOrgView = computed(() => Boolean(route.params.enterpriseId))
+
+const scopedDepartments = computed(() => store.getDepartmentsByEnterprise(activeEnterpriseId.value))
+
+const scopedEmployees = computed(() => store.getEmployeesByEnterprise(activeEnterpriseId.value))
+
+const employeeDetailBase = computed(() => {
+  if (isPlatformOrgView.value) return `/employees/org/${activeEnterpriseId.value}`
+  if (route.path.startsWith('/enterprise')) return '/enterprise/employees'
+  return '/employees'
+})
 
 interface TreeNode extends DepartmentTreeNode {
   headcount: number
@@ -55,22 +76,37 @@ interface TreeNode extends DepartmentTreeNode {
 function enrichTree(nodes: DepartmentTreeNode[]): TreeNode[] {
   return nodes.map((node) => ({
     ...node,
-    headcount: countDepartmentEmployees(store.departments, store.employees, node.id, true),
+    headcount: countDepartmentEmployees(scopedDepartments.value, scopedEmployees.value, node.id, true),
     children: enrichTree(node.children),
   }))
 }
 
-const treeData = computed(() => enrichTree(buildDepartmentTree(store.departments)))
+const treeData = computed(() => enrichTree(buildDepartmentTree(scopedDepartments.value)))
 
 const selectedDept = computed(() =>
-  store.departments.find((d) => d.id === selectedDeptId.value),
+  scopedDepartments.value.find((d) => d.id === selectedDeptId.value),
+)
+
+const isUnassignedDept = computed(() => isUnassignedDepartment(selectedDeptId.value))
+
+const isEnterpriseRootDept = computed(() =>
+  selectedDept.value ? isEnterpriseRootDepartment(selectedDept.value) : false,
+)
+
+const selectedAttendanceGroup = computed(() => {
+  const groupId = selectedDept.value?.attendanceGroupId
+  return store.attendanceGroups.find((g) => g.id === groupId)
+})
+
+const nodeTypeLabel = computed(() =>
+  selectedDept.value?.nodeType === 'leaf' ? '叶节点' : '非叶节点',
 )
 
 const deptEmployeeCount = computed(() => {
   if (!selectedDeptId.value) return 0
   return countDepartmentEmployees(
-    store.departments,
-    store.employees,
+    scopedDepartments.value,
+    scopedEmployees.value,
     selectedDeptId.value,
     true,
   )
@@ -79,8 +115,8 @@ const deptEmployeeCount = computed(() => {
 const directEmployeeCount = computed(() => {
   if (!selectedDeptId.value) return 0
   return countDepartmentEmployees(
-    store.departments,
-    store.employees,
+    scopedDepartments.value,
+    scopedEmployees.value,
     selectedDeptId.value,
     false,
   )
@@ -92,27 +128,32 @@ const deptLevelLabel = computed(() => {
   let parentId = selectedDept.value.parentId
   while (parentId) {
     level += 1
-    parentId = store.departments.find((d) => d.id === parentId)?.parentId ?? null
+    parentId = scopedDepartments.value.find((d) => d.id === parentId)?.parentId ?? null
   }
   const labels = ['一级', '二级', '三级', '四级', '五级']
   return labels[level - 1] ? `${labels[level - 1]}部门` : `${level}级部门`
 })
 
 const managerEmployee = computed(() => {
-  if (!selectedDeptId.value) return null
+  if (!selectedDept.value) return null
+  if (selectedDept.value.managerEmployeeId) {
+    return (
+      scopedEmployees.value.find((e) => e.id === selectedDept.value!.managerEmployeeId) ?? null
+    )
+  }
   return (
-    store.employees.find(
+    scopedEmployees.value.find(
       (e) => e.departmentId === selectedDeptId.value && e.position.includes('组长'),
     ) ??
-    store.employees.find((e) => e.departmentId === selectedDeptId.value) ??
+    scopedEmployees.value.find((e) => e.departmentId === selectedDeptId.value) ??
     null
   )
 })
 
 const employeeTableData = computed(() => {
   if (!selectedDeptId.value) return []
-  const ids = getDepartmentDescendantIds(store.departments, selectedDeptId.value)
-  return store.employees
+  const ids = getDepartmentDescendantIds(scopedDepartments.value, selectedDeptId.value)
+  return scopedEmployees.value
     .filter((e) => {
       if (!ids.has(e.departmentId)) return false
       if (employeeKeyword.value) {
@@ -130,13 +171,25 @@ const employeeTableData = computed(() => {
     })
     .map((e) => ({
       ...e,
-      departmentName: getDepartmentName(store.departments, e.departmentId),
+      departmentName: getDepartmentName(scopedDepartments.value, e.departmentId),
       isDirect: e.departmentId === selectedDeptId.value,
     }))
 })
 
-const parentOptions = computed(() =>
-  store.departments.filter((d) => d.id !== editingDeptId.value),
+watch(
+  activeEnterpriseId,
+  (enterpriseId) => {
+    store.ensureEnterpriseOrgStructure(enterpriseId)
+    const depts = store.getDepartmentsByEnterprise(enterpriseId)
+    const unassignedId = enterpriseUnassignedDepartmentId(enterpriseId)
+    const preferred =
+      depts.find((d) => d.id === 'dept_prod_a') ??
+      depts.find((d) => d.id === unassignedId) ??
+      depts.find((d) => d.orgType === 'enterprise') ??
+      depts[0]
+    selectedDeptId.value = preferred?.id ?? unassignedId
+  },
+  { immediate: true },
 )
 
 watch(treeKeyword, (val) => {
@@ -153,55 +206,86 @@ function handleNodeClick(data: TreeNode) {
 }
 
 function openCreateDept(parentId: string | null = null) {
-  editingDeptId.value = null
-  deptForm.value = {
-    name: '',
-    parentId: parentId ?? selectedDeptId.value ?? null,
-    sort: 0,
+  const parent = parentId ? scopedDepartments.value.find((d) => d.id === parentId) : null
+  if (parent?.nodeType === 'leaf') {
+    ElMessage.warning('叶节点下不可创建子部门')
+    return
   }
+  editingDeptId.value = null
+  const rootDept =
+    scopedDepartments.value.find((d) => d.orgType === 'enterprise')?.id ??
+    enterpriseRootDepartmentId(activeEnterpriseId.value)
+  const fallbackParent = isUnassignedDepartment(selectedDeptId.value)
+    ? rootDept
+    : selectedDeptId.value
+  defaultParentId.value = parentId ?? fallbackParent ?? rootDept
   deptDialogVisible.value = true
 }
 
 function openEditDept() {
-  if (!selectedDept.value) return
-  editingDeptId.value = selectedDept.value.id
-  deptForm.value = {
-    name: selectedDept.value.name,
-    parentId: selectedDept.value.parentId,
-    sort: selectedDept.value.sort,
+  if (
+    !selectedDept.value ||
+    isUnassignedDept.value ||
+    isEnterpriseRootDepartment(selectedDept.value)
+  ) {
+    return
   }
+  editingDeptId.value = selectedDept.value.id
+  defaultParentId.value = selectedDept.value.parentId
   deptDialogVisible.value = true
 }
 
-function submitDept() {
-  if (!deptForm.value.name.trim()) {
-    ElMessage.warning('请输入部门名称')
-    return
-  }
+function handleDeptSaved(deptId: string) {
+  selectedDeptId.value = deptId
+}
+
+type TreeDropType = 'prev' | 'next' | 'inner'
+
+function mapDropType(type: TreeDropType): 'before' | 'after' | 'inner' {
+  if (type === 'prev') return 'before'
+  if (type === 'next') return 'after'
+  return 'inner'
+}
+
+function allowDrag(node: { data: TreeNode }) {
+  return !isUnassignedDepartment(node.data.id) && !isEnterpriseRootDepartment(node.data)
+}
+
+function allowDrop(_draggingNode: unknown, dropNode: TreeNode, type: TreeDropType) {
+  const draggingId = (_draggingNode as { data: TreeNode }).data.id
+  if (isUnassignedDepartment(draggingId) || isUnassignedDepartment(dropNode.id)) return false
+  if (type === 'inner' && dropNode.nodeType === 'leaf') return false
+  const descendants = getDepartmentDescendantIds(scopedDepartments.value, draggingId)
+  if (descendants.has(dropNode.id)) return false
+  return true
+}
+
+function handleNodeDrop(
+  draggingNode: { data: TreeNode },
+  dropNode: { data: TreeNode },
+  dropType: TreeDropType,
+) {
   try {
-    if (editingDeptId.value) {
-      store.updateDepartment(editingDeptId.value, deptForm.value)
-      ElMessage.success('部门已更新')
-    } else {
-      const dept = store.addDepartment(deptForm.value)
-      selectedDeptId.value = dept.id
-      ElMessage.success('部门已创建')
-    }
-    deptDialogVisible.value = false
+    store.reorderDepartment(
+      draggingNode.data.id,
+      dropNode.data.id,
+      mapDropType(dropType),
+    )
+    ElMessage.success('部门顺序已更新')
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+    ElMessage.error(e instanceof Error ? e.message : '调整失败')
   }
 }
 
 async function removeDept() {
-  if (!selectedDept.value) return
+  if (!selectedDept.value || isUnassignedDept.value) return
   try {
     await ElMessageBox.confirm(`确定删除部门「${selectedDept.value.name}」？`, '提示', {
       type: 'warning',
     })
     const parentId = selectedDept.value.parentId
     store.removeDepartment(selectedDept.value.id)
-    selectedDeptId.value = parentId ?? store.departments[0]?.id ?? ''
+    selectedDeptId.value = parentId ?? scopedDepartments.value[0]?.id ?? ''
     ElMessage.success('部门已删除')
   } catch (e) {
     if (e !== 'cancel' && e instanceof Error) ElMessage.error(e.message)
@@ -214,50 +298,12 @@ function openCreateEmployee() {
     return
   }
   editingEmployeeId.value = null
-  employeeForm.value = {
-    name: '',
-    employeeNo: '',
-    departmentId: selectedDeptId.value,
-    position: '',
-    hireDate: new Date().toISOString().slice(0, 10),
-    skills: [],
-    preferredShiftIds: [],
-    status: 'active',
-    phone: '',
-  }
   employeeDialogVisible.value = true
 }
 
 function openEditEmployee(emp: Employee) {
   editingEmployeeId.value = emp.id
-  employeeForm.value = {
-    name: emp.name,
-    employeeNo: emp.employeeNo,
-    departmentId: emp.departmentId,
-    position: emp.position,
-    hireDate: emp.hireDate,
-    skills: [...emp.skills],
-    preferredShiftIds: [...emp.preferredShiftIds],
-    status: emp.status,
-    phone: emp.phone ?? '',
-  }
   employeeDialogVisible.value = true
-}
-
-function submitEmployee() {
-  if (!employeeForm.value.name.trim() || !employeeForm.value.employeeNo.trim()) {
-    ElMessage.warning('请填写姓名和工号')
-    return
-  }
-  const payload = { ...employeeForm.value, unavailableDates: [] as string[] }
-  if (editingEmployeeId.value) {
-    store.updateEmployee(editingEmployeeId.value, payload)
-    ElMessage.success('人员已更新')
-  } else {
-    store.addEmployee(payload)
-    ElMessage.success('人员已添加')
-  }
-  employeeDialogVisible.value = false
 }
 
 async function removeEmployee(emp: Employee) {
@@ -266,10 +312,35 @@ async function removeEmployee(emp: Employee) {
   ElMessage.success('已删除')
 }
 
+function openEmployeeDetail(emp: Employee) {
+  router.push(`${employeeDetailBase.value}/${emp.id}`)
+}
+
+function backToOverview() {
+  router.push('/employees')
+}
+
 function maskPhone(phone?: string) {
   if (!phone) return '-'
   if (phone.includes('*')) return phone
   return phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')
+}
+
+function handleEmployeeSelection(rows: Employee[]) {
+  selectedEmployeeIds.value = rows.map((row) => row.id)
+}
+
+function openBatchAssign() {
+  if (!selectedEmployeeIds.value.length) {
+    ElMessage.warning('请先选择要分配的人员')
+    return
+  }
+  batchAssignVisible.value = true
+}
+
+function handleBatchAssigned() {
+  selectedEmployeeIds.value = []
+  employeeTableRef.value?.clearSelection()
 }
 </script>
 
@@ -277,10 +348,14 @@ function maskPhone(phone?: string) {
   <div class="personnel-page">
     <div class="page-actions">
       <div class="page-actions-left">
-        <span class="enterprise-tag">星辰通信集团</span>
+        <el-button v-if="isPlatformOrgView" link type="primary" @click="backToOverview">
+          <el-icon><ArrowLeft /></el-icon>
+          返回企业列表
+        </el-button>
+        <span class="enterprise-tag">{{ currentEnterprise?.name ?? '当前企业' }}</span>
       </div>
       <div class="page-actions-right">
-        <el-button plain>批量导入</el-button>
+        <el-button plain @click="employeeImportVisible = true">批量导入</el-button>
         <el-button plain>批量导出</el-button>
         <el-button type="primary" @click="openCreateDept(null)">+ 新增部门</el-button>
       </div>
@@ -289,7 +364,7 @@ function maskPhone(phone?: string) {
     <div class="org-panel page-card">
       <div class="org-panel-header">
         <span class="org-title">组织架构树</span>
-        <el-tag size="small" type="info" round>{{ store.departments.length }}</el-tag>
+        <el-tag size="small" type="info" round>{{ scopedDepartments.length }}</el-tag>
       </div>
       <el-input
         v-model="treeKeyword"
@@ -304,21 +379,25 @@ function maskPhone(phone?: string) {
         node-key="id"
         default-expand-all
         highlight-current
+        draggable
+        :allow-drop="allowDrop"
+        :allow-drag="allowDrag"
         :current-node-key="selectedDeptId"
         :expand-on-click-node="false"
         :filter-node-method="filterTreeNode"
         @node-click="handleNodeClick"
+        @node-drop="handleNodeDrop"
       >
         <template #default="{ data }">
-          <div class="tree-node">
+          <div class="tree-node" :class="{ 'tree-node--unassigned': isUnassignedDepartment(data.id) }">
+            <el-icon v-if="!isUnassignedDepartment(data.id)" class="drag-handle"><Rank /></el-icon>
+            <el-icon v-else class="unassigned-icon"><User /></el-icon>
             <span class="tree-name">{{ data.name }}</span>
             <span class="tree-count">{{ data.headcount }}人</span>
           </div>
         </template>
       </el-tree>
-      <el-button class="add-sub-btn" plain @click="openCreateDept(selectedDeptId)">
-        + 新增子部门
-      </el-button>
+      <p class="org-tree-tip">拖拽可实现部门顺序排序</p>
     </div>
 
     <div class="detail-panel">
@@ -326,17 +405,22 @@ function maskPhone(phone?: string) {
         <div class="page-card dept-card">
           <div class="dept-card-header">
             <div class="dept-title-wrap">
-              <div class="dept-icon">
-                <el-icon><OfficeBuilding /></el-icon>
+              <div class="dept-icon" :class="{ 'dept-icon--unassigned': isUnassignedDept }">
+                <el-icon><User v-if="isUnassignedDept" /><OfficeBuilding v-else /></el-icon>
               </div>
               <div>
                 <h2 class="page-title">{{ selectedDept.name }}</h2>
                 <p class="text-muted dept-path">
-                  星辰通信集团 / {{ getDepartmentName(store.departments, selectedDept.parentId ?? '') || '根节点' }} / {{ selectedDept.name }}
+                  <template v-if="isUnassignedDept">
+                    系统默认部门 · 管理待入职及未分配部门和岗位的人员
+                  </template>
+                  <template v-else>
+                    {{ currentEnterprise?.name }} / {{ getDepartmentName(scopedDepartments, selectedDept.parentId ?? '') || '根节点' }} / {{ selectedDept.name }}
+                  </template>
                 </p>
               </div>
             </div>
-            <div class="dept-actions">
+            <div v-if="!isUnassignedDept && !isEnterpriseRootDept" class="dept-actions">
               <el-button plain @click="openEditDept">
                 <el-icon><Edit /></el-icon>
                 编辑
@@ -353,19 +437,36 @@ function maskPhone(phone?: string) {
             <el-descriptions-item label="部门名称">{{ selectedDept.name }}</el-descriptions-item>
             <el-descriptions-item label="上级部门">
               {{
-                selectedDept.parentId
-                  ? getDepartmentName(store.departments, selectedDept.parentId)
-                  : '—'
+                isUnassignedDept
+                  ? '—'
+                  : selectedDept.parentId
+                    ? getDepartmentName(scopedDepartments, selectedDept.parentId)
+                    : '—'
               }}
             </el-descriptions-item>
             <el-descriptions-item label="部门层级">
-              <el-tag size="small">{{ deptLevelLabel }}</el-tag>
+              <el-tag size="small">{{ isUnassignedDept ? '系统部门' : deptLevelLabel }}</el-tag>
             </el-descriptions-item>
+            <el-descriptions-item v-if="isUnassignedDept" label="部门说明" :span="3">
+              {{ selectedDept.description || '用于管理待入职及尚未分配部门和岗位的人员' }}
+            </el-descriptions-item>
+            <template v-if="!isUnassignedDept">
             <el-descriptions-item label="节点类型">
-              <el-tag size="small" type="warning">非叶子</el-tag>
+              <el-tag size="small" :type="selectedDept.nodeType === 'leaf' ? 'info' : 'warning'">
+                {{ nodeTypeLabel }}
+              </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="考勤规则">
-              <el-link type="primary" :underline="false">标准考勤组</el-link>
+              <el-link v-if="selectedAttendanceGroup" type="primary" :underline="false">
+                {{ selectedAttendanceGroup.name }}
+              </el-link>
+              <span v-else class="text-muted">未关联</span>
+            </el-descriptions-item>
+            <el-descriptions-item v-if="selectedAttendanceGroup" label="考勤类型">
+              {{ attendanceGroupTypeMap[selectedAttendanceGroup.attendanceType] }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="selectedAttendanceGroup" label="考勤时段">
+              {{ formatShiftPeriod(selectedAttendanceGroup) }}
             </el-descriptions-item>
             <el-descriptions-item label="负责人">
               <template v-if="managerEmployee">
@@ -378,6 +479,7 @@ function maskPhone(phone?: string) {
             </el-descriptions-item>
             <el-descriptions-item label="排序">{{ selectedDept.sort }}</el-descriptions-item>
             <el-descriptions-item label="人员规模">{{ deptEmployeeCount }} 人（本部门 {{ directEmployeeCount }} 人）</el-descriptions-item>
+            </template>
           </el-descriptions>
         </div>
 
@@ -399,13 +501,28 @@ function maskPhone(phone?: string) {
               style="width: 220px"
             />
             <el-select v-model="filterStatus" clearable placeholder="状态" style="width: 120px">
-              <el-option label="在职" value="active" />
-              <el-option label="休假中" value="leave" />
-              <el-option label="离职" value="resigned" />
+              <el-option label="待入职" value="pending" />
+              <el-option label="正常" value="active" />
+              <el-option label="已离职" value="resigned" />
             </el-select>
+            <el-button
+              type="primary"
+              :disabled="!selectedEmployeeIds.length"
+              @click="openBatchAssign"
+            >
+              批量分配部门及岗位
+            </el-button>
           </div>
 
-          <el-table :data="employeeTableData" border stripe class="employee-table">
+          <el-table
+            ref="employeeTableRef"
+            :data="employeeTableData"
+            border
+            stripe
+            class="employee-table"
+            @selection-change="handleEmployeeSelection"
+          >
+            <el-table-column type="selection" width="48" />
             <el-table-column prop="employeeNo" label="工号" width="100" />
             <el-table-column prop="name" label="姓名" width="90" />
             <el-table-column label="手机号" width="120">
@@ -415,12 +532,12 @@ function maskPhone(phone?: string) {
               <template #default>330***********1234</template>
             </el-table-column>
             <el-table-column prop="position" label="岗位" width="110" />
-            <el-table-column prop="hireDate" label="关联日期" width="110" />
+            <el-table-column prop="hireDate" label="入职日期" width="110" />
             <el-table-column label="状态" width="100">
               <template #default="{ row }">
                 <span class="status-dot" :class="row.status" />
                 <el-tag :type="statusMap[row.status as EmployeeStatus].type" size="small" effect="light">
-                  {{ statusMap[row.status as EmployeeStatus].label === '在职' ? '正常' : statusMap[row.status as EmployeeStatus].label }}
+                  {{ statusMap[row.status as EmployeeStatus].label }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -432,11 +549,14 @@ function maskPhone(phone?: string) {
             </el-table-column>
             <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary">详情</el-button>
+                <el-button link type="primary" @click="openEmployeeDetail(row)">详情</el-button>
                 <el-button link type="primary" @click="openEditEmployee(row)">编辑</el-button>
                 <el-button link type="danger" @click="removeEmployee(row)">移除</el-button>
               </template>
             </el-table-column>
+            <template #empty>
+              <el-empty description="暂无数据" :image-size="64" />
+            </template>
           </el-table>
         </div>
       </template>
@@ -447,102 +567,33 @@ function maskPhone(phone?: string) {
     </div>
   </div>
 
-  <el-dialog
-    v-model="deptDialogVisible"
-    :title="editingDeptId ? '编辑部门' : '新增部门'"
-    width="480px"
-  >
-    <el-form label-width="90px">
-      <el-form-item label="部门名称" required>
-        <el-input v-model="deptForm.name" placeholder="请输入部门名称" />
-      </el-form-item>
-      <el-form-item label="上级部门">
-        <el-select
-          v-model="deptForm.parentId"
-          clearable
-          placeholder="无（顶级部门）"
-          style="width: 100%"
-        >
-          <el-option v-for="d in parentOptions" :key="d.id" :label="d.name" :value="d.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="排序">
-        <el-input-number v-model="deptForm.sort" :min="0" />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="deptDialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="submitDept">确定</el-button>
-    </template>
-  </el-dialog>
+  <DepartmentFormDialog
+    v-model:visible="deptDialogVisible"
+    :editing-id="editingDeptId"
+    :default-parent-id="defaultParentId"
+    @saved="handleDeptSaved"
+  />
 
-  <el-dialog
-    v-model="employeeDialogVisible"
-    :title="editingEmployeeId ? '编辑人员' : '添加人员'"
-    width="560px"
-  >
-    <el-form label-width="90px">
-      <el-row :gutter="16">
-        <el-col :span="12">
-          <el-form-item label="姓名" required>
-            <el-input v-model="employeeForm.name" />
-          </el-form-item>
-        </el-col>
-        <el-col :span="12">
-          <el-form-item label="工号" required>
-            <el-input v-model="employeeForm.employeeNo" />
-          </el-form-item>
-        </el-col>
-      </el-row>
-      <el-row :gutter="16">
-        <el-col :span="12">
-          <el-form-item label="所属部门">
-            <el-select v-model="employeeForm.departmentId" style="width: 100%">
-              <el-option v-for="d in store.departments" :key="d.id" :label="d.name" :value="d.id" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-        <el-col :span="12">
-          <el-form-item label="岗位">
-            <el-input v-model="employeeForm.position" />
-          </el-form-item>
-        </el-col>
-      </el-row>
-      <el-row :gutter="16">
-        <el-col :span="12">
-          <el-form-item label="入职日期">
-            <el-date-picker
-              v-model="employeeForm.hireDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              style="width: 100%"
-            />
-          </el-form-item>
-        </el-col>
-        <el-col :span="12">
-          <el-form-item label="状态">
-            <el-select v-model="employeeForm.status" style="width: 100%">
-              <el-option label="在职" value="active" />
-              <el-option label="休假中" value="leave" />
-              <el-option label="离职" value="resigned" />
-            </el-select>
-          </el-form-item>
-        </el-col>
-      </el-row>
-      <el-form-item label="技能标签">
-        <el-select v-model="employeeForm.skills" multiple allow-create filterable style="width: 100%">
-          <el-option v-for="s in skillOptions" :key="s" :label="s" :value="s" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="手机号">
-        <el-input v-model="employeeForm.phone" />
-      </el-form-item>
-    </el-form>
-    <template #footer>
-      <el-button @click="employeeDialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="submitEmployee">确定</el-button>
-    </template>
-  </el-dialog>
+  <EmployeeImportDialog
+    v-model:visible="employeeImportVisible"
+    :default-department-id="
+      isUnassignedDept
+        ? enterpriseUnassignedDepartmentId(activeEnterpriseId)
+        : selectedDeptId
+    "
+  />
+
+  <EmployeeBatchAssignDialog
+    v-model:visible="batchAssignVisible"
+    :employee-ids="selectedEmployeeIds"
+    @assigned="handleBatchAssigned"
+  />
+
+  <EmployeeFormDrawer
+    v-model:visible="employeeDialogVisible"
+    :editing-id="editingEmployeeId"
+    :default-department-id="selectedDeptId"
+  />
 </template>
 
 <style scoped>
@@ -551,6 +602,17 @@ function maskPhone(phone?: string) {
   grid-template-columns: 300px 1fr;
   gap: 16px;
   align-items: start;
+}
+
+.empty-org-card {
+  grid-column: 1 / -1;
+  padding: 48px 20px;
+}
+
+.page-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .page-actions {
@@ -611,10 +673,24 @@ function maskPhone(phone?: string) {
 .tree-node {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
   width: 100%;
   padding-right: 8px;
   font-size: 13px;
+}
+
+.drag-handle {
+  color: #cbd5e1;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-count {
@@ -622,9 +698,12 @@ function maskPhone(phone?: string) {
   color: #909399;
 }
 
-.add-sub-btn {
-  width: 100%;
-  margin-top: 12px;
+.org-tree-tip {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .detail-panel {
@@ -657,6 +736,29 @@ function maskPhone(phone?: string) {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.dept-icon--unassigned {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.tree-node--unassigned .tree-name {
+  color: #b45309;
+  font-weight: 600;
+}
+
+.unassigned-icon {
+  color: #d97706;
+  flex-shrink: 0;
+}
+
+.employee-card .page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .dept-path {
@@ -692,7 +794,7 @@ function maskPhone(phone?: string) {
   background: #22c55e;
 }
 
-.status-dot.leave {
+.status-dot.pending {
   background: #f59e0b;
 }
 

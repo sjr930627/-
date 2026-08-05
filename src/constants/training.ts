@@ -37,9 +37,14 @@ export const courseStudyModeOptions: { value: CourseStudyMode; label: string }[]
 ]
 
 export const courseScopeTypeOptions: { value: CourseScopeType; label: string }[] = [
-  { value: 'all', label: '全体灵工' },
-  { value: 'department', label: '按部门' },
+  { value: 'all', label: '企业全体灵工' },
+  { value: 'department', label: '按企业部门' },
   { value: 'tag', label: '按标签' },
+]
+
+export const courseGateOptions = [
+  { key: 'requireExamPassForSchedule' as const, label: '考核通过后才可排班/抢班' },
+  { key: 'requireExamPassForTask' as const, label: '考核通过后才可接任务' },
 ]
 
 export const courseStatusMap: Record<CourseStatus, string> = {

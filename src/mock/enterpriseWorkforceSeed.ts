@@ -1,0 +1,474 @@
+import type { AttendanceGroup, Department, Employee, Team } from '@/types'
+import { createDefaultFreePunchConfig, createDefaultPricingConfig } from '@/constants/attendanceGroupPricing'
+import { getDefaultScheduleRuleForSeed } from '@/services/scheduleGroup'
+import { ensureGroupVersions } from '@/services/attendanceGroupVersion'
+
+const ENT_STARS = 'ent_stars_telecom'
+const ENT_CM = 'ent_china_mobile_agent'
+const ENT_PINGAN = 'ent_pingan_partner'
+const ENT_SH = 'ent_china_telecom_agent'
+
+const defaultCompliance = {
+  maxDailyHours: 12,
+  maxWeeklyHours: 60,
+  minShiftIntervalHours: 12,
+  maxMonthlyHours: 260,
+  maxConsecutiveWorkdays: 3,
+}
+
+/** 各企业组织架构（含根节点与待分配） */
+export const seedMultiEnterpriseDepartments: Department[] = [
+  {
+    id: 'dept_root_ent_china_mobile_agent',
+    name: '中石化北京朝阳分公司',
+    parentId: null,
+    sort: 0,
+    enterpriseId: ENT_CM,
+    orgType: 'enterprise',
+    nodeType: 'branch',
+  },
+  {
+    id: 'dept_unassigned_ent_china_mobile_agent',
+    name: '待分配人员',
+    parentId: null,
+    sort: 1,
+    enterpriseId: ENT_CM,
+    nodeType: 'leaf',
+    description: '用于管理待入职及尚未分配部门和岗位的人员',
+  },
+  {
+    id: 'dept_cm_hr',
+    name: '人事行政部',
+    parentId: 'dept_root_ent_china_mobile_agent',
+    sort: 1,
+    enterpriseId: ENT_CM,
+    nodeType: 'branch',
+    managerEmployeeId: 'emp_002',
+  },
+  {
+    id: 'dept_cm_field',
+    name: '外勤推广部',
+    parentId: 'dept_root_ent_china_mobile_agent',
+    sort: 3,
+    enterpriseId: ENT_CM,
+    nodeType: 'branch',
+    attendanceGroupId: 'ag_sales',
+    managerEmployeeId: 'emp_005',
+    description: '负责非油促销、会员拉新等外勤任务',
+  },
+  {
+    id: 'dept_root_ent_pingan_partner',
+    name: '中石化浙江分公司',
+    parentId: null,
+    sort: 0,
+    enterpriseId: ENT_PINGAN,
+    orgType: 'enterprise',
+    nodeType: 'branch',
+  },
+  {
+    id: 'dept_unassigned_ent_pingan_partner',
+    name: '待分配人员',
+    parentId: null,
+    sort: 1,
+    enterpriseId: ENT_PINGAN,
+    nodeType: 'leaf',
+    description: '用于管理待入职及尚未分配部门和岗位的人员',
+  },
+  {
+    id: 'dept_pj_store',
+    name: '便利店运营部',
+    parentId: 'dept_root_ent_pingan_partner',
+    sort: 1,
+    enterpriseId: ENT_PINGAN,
+    nodeType: 'branch',
+    attendanceGroupId: 'ag_pj_store',
+    managerEmployeeId: 'emp_006',
+    description: '浙江区域便利店陈列与推广',
+  },
+  {
+    id: 'dept_pj_field',
+    name: '渠道推广组',
+    parentId: 'dept_pj_store',
+    sort: 1,
+    enterpriseId: ENT_PINGAN,
+    nodeType: 'leaf',
+    attendanceGroupId: 'ag_pj_store',
+  },
+  {
+    id: 'dept_root_ent_china_telecom_agent',
+    name: '中石化上海分公司',
+    parentId: null,
+    sort: 0,
+    enterpriseId: ENT_SH,
+    orgType: 'enterprise',
+    nodeType: 'branch',
+  },
+  {
+    id: 'dept_unassigned_ent_china_telecom_agent',
+    name: '待分配人员',
+    parentId: null,
+    sort: 1,
+    enterpriseId: ENT_SH,
+    nodeType: 'leaf',
+    description: '用于管理待入职及尚未分配部门和岗位的人员',
+  },
+  {
+    id: 'dept_sh_hall',
+    name: '营业厅运营部',
+    parentId: 'dept_root_ent_china_telecom_agent',
+    sort: 1,
+    enterpriseId: ENT_SH,
+    nodeType: 'branch',
+    attendanceGroupId: 'ag_sh_hall',
+    managerEmployeeId: 'emp_sh_001',
+    description: '商圈营业厅引流与业务办理',
+  },
+]
+
+/** 补充各企业灵工人员 */
+export const seedMultiEnterpriseEmployees: Employee[] = [
+  {
+    id: 'emp_pj_001',
+    name: '孙丽',
+    employeeNo: 'E2001',
+    departmentId: 'dept_pj_field',
+    enterpriseId: ENT_PINGAN,
+    position: '推广专员',
+    hireDate: '2023-04-12',
+    skills: ['陈列检查'],
+    preferredShiftIds: [],
+    unavailableDates: [],
+    status: 'active',
+    phone: '13800002001',
+    gender: 'female',
+    realNameVerified: true,
+  },
+  {
+    id: 'emp_pj_002',
+    name: '马强',
+    employeeNo: 'E2002',
+    departmentId: 'dept_pj_store',
+    enterpriseId: ENT_PINGAN,
+    position: '班组长',
+    hireDate: '2022-08-01',
+    skills: ['安全管理'],
+    preferredShiftIds: [],
+    unavailableDates: [],
+    status: 'active',
+    phone: '13800002002',
+    realNameVerified: true,
+  },
+  {
+    id: 'emp_pj_pending',
+    name: '周待入职',
+    employeeNo: 'E2901',
+    departmentId: 'dept_unassigned_ent_pingan_partner',
+    enterpriseId: ENT_PINGAN,
+    position: '待分配',
+    hireDate: '2026-07-30',
+    skills: [],
+    preferredShiftIds: [],
+    unavailableDates: [],
+    status: 'pending',
+    phone: '13800002901',
+    realNameVerified: false,
+  },
+  {
+    id: 'emp_sh_001',
+    name: '黄明',
+    employeeNo: 'E3001',
+    departmentId: 'dept_sh_hall',
+    enterpriseId: ENT_SH,
+    position: '营业厅引导员',
+    hireDate: '2024-01-15',
+    skills: [],
+    preferredShiftIds: ['shift_morning'],
+    unavailableDates: [],
+    status: 'active',
+    phone: '13800003001',
+    gender: 'male',
+    realNameVerified: true,
+  },
+  {
+    id: 'emp_sh_002',
+    name: '徐芳',
+    employeeNo: 'E3002',
+    departmentId: 'dept_sh_hall',
+    enterpriseId: ENT_SH,
+    position: '推广专员',
+    hireDate: '2024-06-20',
+    skills: [],
+    preferredShiftIds: ['shift_afternoon'],
+    unavailableDates: [],
+    status: 'active',
+    phone: '13800003002',
+    gender: 'female',
+    realNameVerified: true,
+  },
+  {
+    id: 'emp_stars_001',
+    name: '林浩',
+    employeeNo: 'E0101',
+    departmentId: 'dept_hr',
+    enterpriseId: ENT_STARS,
+    position: 'HR专员',
+    hireDate: '2021-03-01',
+    skills: [],
+    preferredShiftIds: ['shift_morning'],
+    unavailableDates: [],
+    status: 'active',
+    phone: '13800000101',
+    realNameVerified: true,
+  },
+  {
+    id: 'emp_stars_002',
+    name: '赵婷',
+    employeeNo: 'E0102',
+    departmentId: 'dept_hr',
+    enterpriseId: ENT_STARS,
+    position: '行政助理',
+    hireDate: '2022-05-18',
+    skills: [],
+    preferredShiftIds: ['shift_morning'],
+    unavailableDates: [],
+    status: 'active',
+    phone: '13800000102',
+    realNameVerified: true,
+  },
+]
+
+export const seedMultiEnterpriseTeams: Team[] = [
+  {
+    id: 'team_pj_am',
+    name: '浙江便利店早班',
+    departmentId: 'dept_pj_store',
+    attendanceGroupId: 'ag_pj_store',
+    memberIds: ['emp_006', 'emp_pj_001'],
+    hourlyRate: 42,
+    description: '便利店陈列检查早班',
+  },
+  {
+    id: 'team_sh_hall',
+    name: '上海营业厅推广组',
+    departmentId: 'dept_sh_hall',
+    attendanceGroupId: 'ag_sh_hall',
+    memberIds: ['emp_sh_001', 'emp_sh_002'],
+    hourlyRate: 40,
+    description: '商圈营业厅引流推广',
+  },
+  {
+    id: 'team_cm_field',
+    name: '朝阳外勤推广组',
+    departmentId: 'dept_cm_field',
+    attendanceGroupId: 'ag_sales',
+    memberIds: ['emp_005', 'emp_007'],
+    hourlyRate: 35,
+    description: '非油促销与会员拉新外勤',
+  },
+]
+
+const rawExtraGroups = [
+  {
+    id: 'ag_pj_store',
+    code: 'ZJ-ATT-001',
+    name: '浙江便利店考勤组',
+    description: '便利店陈列推广，自由打卡计工时',
+    status: 'enabled' as const,
+    attendanceType: 'free' as const,
+    shiftTemplates: [],
+    freePunchConfig: {
+      ...createDefaultFreePunchConfig(),
+      startTime: '08:00',
+      endTime: '21:00',
+      punchCountMode: 'clock_in_out' as const,
+    },
+    gpsEnabled: true,
+    gpsRadiusMeters: 500,
+    punchLocations: [
+      { id: 'loc_pj_hz', name: '杭州西湖便利店', address: '杭州市西湖区文三路' },
+      { id: 'loc_pj_nb', name: '宁波鄞州便利店', address: '宁波市鄞州区' },
+    ],
+    wifiEnabled: true,
+    wifiName: 'Sinopec-Store',
+    qrcodeEnabled: true,
+    compliance: { ...defaultCompliance },
+    scheduleRule: getDefaultScheduleRuleForSeed({
+      maxConsecutiveDays: 5,
+      maxDailyHours: 10,
+      maxWeeklyHours: 48,
+      maxMonthlyHours: 200,
+      minRestHours: 10,
+      weekendWork: true,
+    }),
+    departmentBindings: [
+      { departmentId: 'dept_pj_store', departmentName: '便利店运营部', headcount: 8, managerName: '陈静' },
+      { departmentId: 'dept_pj_field', departmentName: '渠道推广组', headcount: 5, managerName: '马强' },
+    ],
+    payRule: {
+      baseHourlyRate: 42,
+      nightShiftSubsidy: 5,
+      nightShiftTimeRange: '22:00-06:00',
+      holidaySubsidy: 60,
+    },
+    pricingConfig: createDefaultPricingConfig(42),
+    minMonthlyOnlineHours: 160,
+    attendanceArea: '浙江便利店',
+    createdAt: '2026-06-15T08:00:00.000Z',
+    updatedAt: '2026-07-18T10:00:00.000Z',
+  },
+  {
+    id: 'ag_sh_hall',
+    code: 'SH-ATT-001',
+    name: '上海营业厅考勤组',
+    description: '营业厅引流推广，排班+GPS打卡',
+    status: 'enabled' as const,
+    attendanceType: 'shift' as const,
+    shiftTemplates: [
+      {
+        id: 'st_sh_am',
+        name: '早班',
+        startTime: '09:00',
+        endTime: '17:00',
+        breakRule: '午休1小时',
+        workHours: 8,
+        requiredHeadcount: 6,
+        weekendRequiredHeadcount: 8,
+        holidayRequiredHeadcount: 4,
+      },
+      {
+        id: 'st_sh_pm',
+        name: '晚班',
+        startTime: '13:00',
+        endTime: '21:00',
+        breakRule: '晚餐休30分钟',
+        workHours: 8,
+        requiredHeadcount: 4,
+        weekendRequiredHeadcount: 6,
+        holidayRequiredHeadcount: 3,
+      },
+    ],
+    gpsEnabled: true,
+    gpsRadiusMeters: 400,
+    punchLocations: [
+      { id: 'loc_sh_ljz', name: '陆家嘴营业厅', address: '上海市浦东新区陆家嘴环路' },
+    ],
+    wifiEnabled: true,
+    wifiName: 'Sinopec-SH-Hall',
+    qrcodeEnabled: true,
+    compliance: { ...defaultCompliance },
+    scheduleRule: getDefaultScheduleRuleForSeed({
+      maxConsecutiveDays: 5,
+      maxDailyHours: 9,
+      maxWeeklyHours: 45,
+      maxMonthlyHours: 176,
+      minRestHours: 12,
+      weekendWork: true,
+    }),
+    departmentBindings: [
+      { departmentId: 'dept_sh_hall', departmentName: '营业厅运营部', headcount: 6, managerName: '黄明' },
+    ],
+    payRule: {
+      baseHourlyRate: 40,
+      nightShiftSubsidy: 6,
+      nightShiftTimeRange: '22:00-06:00',
+      holidaySubsidy: 70,
+    },
+    pricingConfig: createDefaultPricingConfig(40),
+    minMonthlyOnlineHours: 176,
+    attendanceArea: '陆家嘴商圈',
+    createdAt: '2026-06-20T08:00:00.000Z',
+    updatedAt: '2026-07-22T11:00:00.000Z',
+  },
+]
+
+export const seedMultiEnterpriseAttendanceGroups: AttendanceGroup[] = rawExtraGroups.map((item) =>
+  ensureGroupVersions(item as AttendanceGroup),
+)
+
+/** 将基础 seed 部门/人员绑定到正确企业（用于 merge） */
+export function patchBaseWorkforceEnterpriseIds(
+  departments: Department[],
+  employees: Employee[],
+): { departments: Department[]; employees: Employee[] } {
+  const deptPatches: Record<string, Partial<Department>> = {
+    dept_root: { enterpriseId: ENT_STARS, name: '星辰通信集团' },
+    dept_unassigned: { enterpriseId: ENT_STARS },
+    dept_hr: { enterpriseId: ENT_STARS },
+    dept_prod: { enterpriseId: ENT_STARS, name: '生产运营部' },
+    dept_prod_b: { enterpriseId: ENT_STARS },
+    dept_logistics: { enterpriseId: ENT_STARS },
+    dept_prod_a: {
+      enterpriseId: ENT_CM,
+      parentId: 'dept_root_ent_china_mobile_agent',
+      name: '中石化朝阳加油站',
+    },
+  }
+
+  const empPatches: Record<string, Partial<Employee>> = {
+    emp_001: { enterpriseId: ENT_CM },
+    emp_002: { enterpriseId: ENT_CM },
+    emp_003: { enterpriseId: ENT_CM },
+    emp_004: { enterpriseId: ENT_CM },
+    emp_005: { enterpriseId: ENT_CM, departmentId: 'dept_cm_field' },
+    emp_006: { enterpriseId: ENT_PINGAN, departmentId: 'dept_pj_store', position: '推广专员' },
+    emp_007: { enterpriseId: ENT_CM, departmentId: 'dept_cm_field' },
+    emp_008: { enterpriseId: ENT_STARS },
+    emp_009: { enterpriseId: ENT_STARS },
+    emp_010: { enterpriseId: ENT_STARS },
+    emp_pending_001: {
+      enterpriseId: ENT_CM,
+      departmentId: 'dept_unassigned_ent_china_mobile_agent',
+    },
+    emp_pending_002: {
+      enterpriseId: ENT_CM,
+      departmentId: 'dept_unassigned_ent_china_mobile_agent',
+    },
+  }
+
+  return {
+    departments: departments.map((d) => ({ ...d, ...deptPatches[d.id] })),
+    employees: employees.map((e) => ({ ...e, ...empPatches[e.id] })),
+  }
+}
+
+export function mergeWorkforceSeed(
+  baseDepartments: Department[],
+  baseEmployees: Employee[],
+  baseTeams: Team[],
+  baseGroups: AttendanceGroup[],
+) {
+  const patched = patchBaseWorkforceEnterpriseIds(baseDepartments, baseEmployees)
+  const existingDeptIds = new Set(patched.departments.map((d) => d.id))
+  const existingEmpIds = new Set(patched.employees.map((e) => e.id))
+  const existingTeamIds = new Set(baseTeams.map((t) => t.id))
+  const existingGroupIds = new Set(baseGroups.map((g) => g.id))
+
+  const departments = [
+    ...patched.departments,
+    ...seedMultiEnterpriseDepartments.filter((d) => !existingDeptIds.has(d.id)),
+  ]
+  const employees = [
+    ...patched.employees,
+    ...seedMultiEnterpriseEmployees.filter((e) => !existingEmpIds.has(e.id)),
+  ]
+  const teams = [
+    ...baseTeams,
+    ...seedMultiEnterpriseTeams.filter((t) => !existingTeamIds.has(t.id)),
+  ]
+  const attendanceGroups = [
+    ...baseGroups.map((g) => {
+      if (g.id === 'ag_sales') {
+        return {
+          ...g,
+          departmentBindings: [
+            { departmentId: 'dept_cm_field', departmentName: '外勤推广部', headcount: 12, managerName: '刘洋' },
+          ],
+        }
+      }
+      return g
+    }),
+    ...seedMultiEnterpriseAttendanceGroups.filter((g) => !existingGroupIds.has(g.id)),
+  ]
+
+  return { departments, employees, teams, attendanceGroups }
+}

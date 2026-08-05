@@ -176,7 +176,7 @@ const monthStats = computed(() => {
   <div class="person-schedule-page">
     <header class="page-card sub-header">
       <el-button :icon="ArrowLeft" link @click="router.push({ path: '/schedule-manage', query: { group: selectedGroupId } })">
-        返回排班操作
+        返回排班管理
       </el-button>
       <h2 class="page-title">按人员排班</h2>
       <el-date-picker v-model="selectedMonth" type="month" value-format="YYYY-MM" style="width: 130px" />

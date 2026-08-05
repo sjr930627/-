@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { useMiniAppBack } from '@/composables/useMiniAppBack'
 import MiniInsuranceSuccessDialog, {
   type InsuranceSuccessInfo,
 } from '@/components/miniapp/MiniInsuranceSuccessDialog.vue'
@@ -27,7 +27,6 @@ import {
 } from '@/constants/miniapp'
 import type { PunchMethod } from '@/types'
 
-const { goBack } = useMiniAppBack()
 const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
@@ -222,7 +221,7 @@ function methodPunchLabel(method?: PunchMethod) {
 <template>
   <div class="mp-page">
     <div class="mini-nav-bar mp-nav">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/workbench" />
       <div class="mini-nav-title">打卡</div>
       <button class="mp-refresh" type="button" :disabled="locating" @click="refreshLocation">
         {{ locating ? '…' : '重新定位' }}

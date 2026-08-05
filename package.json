@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "start": "vite preview --host 0.0.0.0 --port 4173",
     "start:lan": "vite preview --host 0.0.0.0 --port 4173",
-    "dev:lan": "vite --host 0.0.0.0 --port 5173"
+    "dev:lan": "vite --host 0.0.0.0 --port 5173",
+    "export:prd": "node scripts/export-prd-docx.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
@@ -26,6 +27,7 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",
     "cloudflared": "^0.7.1",
+    "docx": "^9.7.1",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",
     "vue-tsc": "^2.2.0"

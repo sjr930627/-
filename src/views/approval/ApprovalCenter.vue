@@ -1,10 +1,22 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 
 const store = useAppStore()
+const route = useRoute()
 const activeTab = ref('leave')
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (typeof tab === 'string' && ['leave', 'swap', 'cancel', 'makeup', 'overtime'].includes(tab)) {
+      activeTab.value = tab
+    }
+  },
+  { immediate: true },
+)
 
 const leaveTypeMap = {
   annual: '年假',
@@ -27,6 +39,16 @@ const swapList = computed(() =>
     ...r,
     applicantName: store.employees.find((e) => e.id === r.applicantId)?.name ?? '-',
     targetName: store.employees.find((e) => e.id === r.targetEmployeeId)?.name ?? '-',
+    statusLabel: { pending: '待审批', approved: '已通过', rejected: '已驳回' }[r.status],
+  })),
+)
+
+const cancelShiftList = computed(() =>
+  store.cancelShiftRequests.map((r) => ({
+    ...r,
+    employeeName: store.employees.find((e) => e.id === r.employeeId)?.name ?? '-',
+    shiftName: store.shifts.find((s) => s.id === r.shiftId)?.name ?? '-',
+    initiatedByLabel: r.initiatedBy === 'employee' ? '灵工申请' : '管理端发起',
     statusLabel: { pending: '待审批', approved: '已通过', rejected: '已驳回' }[r.status],
   })),
 )
@@ -57,12 +79,13 @@ const pendingCount = computed(
   () =>
     leaveList.value.filter((r) => r.status === 'pending').length +
     swapList.value.filter((r) => r.status === 'pending').length +
+    cancelShiftList.value.filter((r) => r.status === 'pending').length +
     makeupList.value.filter((r) => r.status === 'pending').length +
     overtimeList.value.filter((r) => r.status === 'pending').length,
 )
 
 async function review(
-  type: 'leave' | 'swap' | 'makeup' | 'overtime',
+  type: 'leave' | 'swap' | 'cancel' | 'makeup' | 'overtime',
   id: string,
   approved: boolean,
 ) {
@@ -74,6 +97,7 @@ async function review(
     )
     if (type === 'leave') store.reviewLeaveRequest(id, approved, value)
     if (type === 'swap') store.reviewSwapRequest(id, approved, value)
+    if (type === 'cancel') store.reviewCancelShiftRequest(id, approved, value)
     if (type === 'makeup') store.reviewMakeupRequest(id, approved, value)
     if (type === 'overtime') store.reviewOvertimeRequest(id, approved, value)
     ElMessage.success(approved ? '已通过' : '已驳回')
@@ -88,7 +112,9 @@ async function review(
     <div class="page-header">
       <div>
         <h2 class="page-title">审批中心</h2>
-        <p class="text-muted">换班、请假、补卡、加班申请审批 · 待处理 {{ pendingCount }} 条</p>
+        <p class="text-muted">
+          换班、取消班次、请假、补卡、加班申请审批 · 待处理 {{ pendingCount }} 条
+        </p>
       </div>
     </div>
 
@@ -128,6 +154,34 @@ async function review(
                 <el-button link type="danger" @click="review('swap', row.id, false)">驳回</el-button>
               </template>
               <span v-else class="text-muted">审批后自动更新排班</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+      <el-tab-pane name="cancel">
+        <template #label>
+          取消班次
+          <el-badge
+            v-if="cancelShiftList.filter((r) => r.status === 'pending').length"
+            :value="cancelShiftList.filter((r) => r.status === 'pending').length"
+            style="margin-left: 4px"
+          />
+        </template>
+        <el-table :data="cancelShiftList" border stripe>
+          <el-table-column prop="employeeName" label="员工" width="100" />
+          <el-table-column prop="date" label="日期" width="110" />
+          <el-table-column prop="shiftName" label="班次" width="90" />
+          <el-table-column prop="initiatedByLabel" label="来源" width="100" />
+          <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="statusLabel" label="状态" width="90" />
+          <el-table-column label="操作" width="160" fixed="right">
+            <template #default="{ row }">
+              <template v-if="row.status === 'pending'">
+                <el-button link type="success" @click="review('cancel', row.id, true)">通过</el-button>
+                <el-button link type="danger" @click="review('cancel', row.id, false)">驳回</el-button>
+              </template>
+              <span v-else class="text-muted">审批后自动移除排班</span>
             </template>
           </el-table-column>
         </el-table>

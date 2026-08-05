@@ -94,7 +94,7 @@ function submit() {
 function openAssign(row: Talent) {
   selectedTalentId.value = row.id
   assignRequirementId.value =
-    store.jobRequirements.find((r) => r.status === 'active')?.id ?? ''
+    store.jobRequirements.find((r) => r.status === 'recruiting')?.id ?? ''
   assignDialog.value = true
 }
 
@@ -252,7 +252,7 @@ async function archive(row: Talent) {
       <el-form-item label="选择岗位">
         <el-select v-model="assignRequirementId" style="width: 100%">
           <el-option
-            v-for="r in store.jobRequirements.filter((x) => x.status === 'active')"
+            v-for="r in store.jobRequirements.filter((x) => x.status === 'recruiting')"
             :key="r.id"
             :label="`${r.enterpriseName} - ${r.title}`"
             :value="r.id"

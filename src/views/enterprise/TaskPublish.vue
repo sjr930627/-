@@ -2,7 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import { dispatchModeMap, taskPublishStatusMap } from '@/constants/task'
+import TaskQuantityField from '@/components/task/TaskQuantityField.vue'
+import TaskFormSection from '@/components/task/TaskFormSection.vue'
+import { dispatchModeMap, formatTaskQuantity, taskPublishStatusMap } from '@/constants/task'
 import type { Task } from '@/types'
 
 const store = useAppStore()
@@ -13,6 +15,8 @@ const form = ref({
   name: '',
   taskTypeId: '',
   plannedTotal: undefined as number | undefined,
+  unlimitedQuantity: false,
+  longTerm: false,
   dateRange: [] as string[],
   dispatchMode: 'hall' as 'assign' | 'hall',
   assigneeIds: [] as string[],
@@ -38,8 +42,22 @@ const tableData = computed(() =>
       ...t,
       statusLabel: taskPublishStatusMap[t.status],
       dispatchLabel: dispatchModeMap[t.dispatchMode],
+      quantityLabel: formatTaskQuantity(t.unlimitedQuantity, t.plannedTotal),
+      periodLabel: t.longTerm
+        ? '长期'
+        : `${t.startTime.slice(0, 10)} ~ ${t.endTime.slice(0, 10)}`,
     })),
 )
+
+function applyTaskTypeDefaults(typeId: string) {
+  const tt = store.taskTypes.find((t) => t.id === typeId)
+  if (!tt) return
+  form.value.unlimitedQuantity = tt.unlimitedQuantity ?? false
+  form.value.plannedTotal = tt.unlimitedQuantity ? undefined : (tt.defaultQuantity ?? 100)
+  if (!form.value.description.trim() && tt.description) {
+    form.value.description = tt.description
+  }
+}
 
 function resetForm() {
   const typeId = publishedTypes.value[0]?.id ?? ''
@@ -47,6 +65,8 @@ function resetForm() {
     name: typeId ? store.suggestTaskName(typeId) : '',
     taskTypeId: typeId,
     plannedTotal: undefined,
+    unlimitedQuantity: false,
+    longTerm: false,
     dateRange: ['2026-07-26', '2026-08-26'],
     dispatchMode: 'hall',
     assigneeIds: [],
@@ -54,6 +74,7 @@ function resetForm() {
     region: '',
     description: '',
   }
+  if (typeId) applyTaskTypeDefaults(typeId)
 }
 
 watch(
@@ -61,6 +82,7 @@ watch(
   (id) => {
     if (id && !editingId.value) {
       form.value.name = store.suggestTaskName(id)
+      applyTaskTypeDefaults(id)
     }
   },
 )
@@ -85,7 +107,9 @@ function openEdit(row: Task) {
     name: row.name,
     taskTypeId: row.taskTypeId,
     plannedTotal: row.plannedTotal,
-    dateRange: [row.startTime.slice(0, 10), row.endTime.slice(0, 10)],
+    unlimitedQuantity: row.unlimitedQuantity ?? row.plannedTotal == null,
+    longTerm: row.longTerm ?? false,
+    dateRange: row.longTerm ? [] : [row.startTime.slice(0, 10), row.endTime.slice(0, 10)],
     dispatchMode: row.dispatchMode,
     assigneeIds: row.assigneeIds ? [...row.assigneeIds] : [],
     maxPerPerson: row.maxPerPerson ?? 5,
@@ -104,8 +128,20 @@ function validate() {
     ElMessage.warning('请选择任务类型')
     return false
   }
-  if (!form.value.dateRange?.length || form.value.dateRange.length < 2) {
-    ElMessage.warning('请设置任务时间范围')
+  if (!form.value.unlimitedQuantity && (!form.value.plannedTotal || form.value.plannedTotal < 1)) {
+    ElMessage.warning('请填写任务数量或选择无上限')
+    return false
+  }
+  if (!form.value.longTerm && (!form.value.dateRange?.length || form.value.dateRange.length < 2)) {
+    ElMessage.warning('请设置任务期限或选择长期')
+    return false
+  }
+  if (!form.value.region.trim()) {
+    ElMessage.warning('请填写任务地点')
+    return false
+  }
+  if (!form.value.description.trim()) {
+    ElMessage.warning('请填写任务内容')
     return false
   }
   if (form.value.dispatchMode === 'assign' && !form.value.assigneeIds.length) {
@@ -116,16 +152,26 @@ function validate() {
 }
 
 function buildPayload() {
+  const now = new Date()
+  const start = form.value.longTerm
+    ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T00:00:00.000Z`
+    : `${form.value.dateRange[0]}T00:00:00.000Z`
+  const end = form.value.longTerm
+    ? '2099-12-31T23:59:59.000Z'
+    : `${form.value.dateRange[1]}T23:59:59.000Z`
+
   return {
     name: form.value.name.trim(),
     taskTypeId: form.value.taskTypeId,
-    plannedTotal: form.value.plannedTotal,
-    startTime: `${form.value.dateRange[0]}T00:00:00.000Z`,
-    endTime: `${form.value.dateRange[1]}T23:59:59.000Z`,
+    unlimitedQuantity: form.value.unlimitedQuantity,
+    plannedTotal: form.value.unlimitedQuantity ? undefined : form.value.plannedTotal,
+    longTerm: form.value.longTerm,
+    startTime: start,
+    endTime: end,
     dispatchMode: form.value.dispatchMode,
     assigneeIds: form.value.dispatchMode === 'assign' ? form.value.assigneeIds : undefined,
     maxPerPerson: form.value.maxPerPerson,
-    region: form.value.region.trim() || undefined,
+    region: form.value.region.trim(),
     description: form.value.description.trim(),
   }
 }
@@ -203,7 +249,7 @@ async function cancelRow(row: Task) {
     <div class="page-header">
       <div>
         <h2 class="page-title">任务发布</h2>
-        <p class="text-muted">基于已发布任务类型创建具体任务，指派灵工或发布至任务大厅</p>
+        <p class="text-muted">发起任务 · 基于已审批任务类型创建具体任务，指派灵工或发布至任务大厅</p>
       </div>
       <el-button type="primary" @click="openCreate">创建任务</el-button>
     </div>
@@ -211,15 +257,14 @@ async function cancelRow(row: Task) {
     <el-table :data="tableData" border stripe>
       <el-table-column prop="name" label="任务名称" min-width="160" />
       <el-table-column prop="taskTypeName" label="任务类型" width="130" />
+      <el-table-column prop="quantityLabel" label="任务数量" width="100" />
       <el-table-column prop="dispatchLabel" label="派单方式" width="100" />
-      <el-table-column label="时间范围" min-width="180">
-        <template #default="{ row }">
-          {{ row.startTime.slice(0, 10) }} ~ {{ row.endTime.slice(0, 10) }}
-        </template>
+      <el-table-column label="任务期限" min-width="180">
+        <template #default="{ row }">{{ row.periodLabel }}</template>
       </el-table-column>
       <el-table-column label="进度" min-width="140">
         <template #default="{ row }">
-          接单 {{ row.acceptedCount }} · 完成 {{ row.completedCount }} · 验收 {{ row.approvedCount }}
+          接单 {{ row.acceptedCount }} · 完成 {{ row.completedCount }}
         </template>
       </el-table-column>
       <el-table-column label="状态" width="90">
@@ -256,57 +301,80 @@ async function cancelRow(row: Task) {
   <el-dialog
     v-model="dialogVisible"
     :title="editingId ? '编辑任务' : '创建任务'"
-    width="680px"
+    width="720px"
     destroy-on-close
+    class="task-form-dialog"
   >
-    <el-form label-width="110px">
-      <el-form-item label="任务类型" required>
-        <el-select v-model="form.taskTypeId" style="width: 100%">
-          <el-option
-            v-for="t in publishedTypes"
-            :key="t.id"
-            :label="t.name"
-            :value="t.id"
+    <el-form label-width="100px">
+      <TaskFormSection title="基本信息" subtitle="任务类型与名称" icon="基" icon-variant="blue">
+        <el-form-item label="任务类型" required>
+          <el-select v-model="form.taskTypeId" style="width: 100%">
+            <el-option
+              v-for="t in publishedTypes"
+              :key="t.id"
+              :label="t.name"
+              :value="t.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="任务名称" required>
+          <el-input v-model="form.name" placeholder="默认：类型名+年月，可编辑" />
+        </el-form-item>
+        <el-form-item label="任务数量" required>
+          <TaskQuantityField
+            v-model="form.plannedTotal"
+            v-model:unlimited="form.unlimitedQuantity"
           />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="任务名称" required>
-        <el-input v-model="form.name" placeholder="默认：类型名+年月，可编辑" />
-      </el-form-item>
-      <el-form-item label="计划完成数">
-        <el-input-number v-model="form.plannedTotal" :min="1" :max="99999" placeholder="非必填" />
-      </el-form-item>
-      <el-form-item label="时间范围" required>
-        <el-date-picker
-          v-model="form.dateRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          start-placeholder="开始"
-          end-placeholder="结束"
-        />
-      </el-form-item>
-      <el-form-item label="派单方式" required>
-        <el-radio-group v-model="form.dispatchMode">
-          <el-radio value="hall">发布到任务大厅</el-radio>
-          <el-radio value="assign">指派特定人员</el-radio>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item v-if="form.dispatchMode === 'assign'" label="指派人员" required>
-        <el-select v-model="form.assigneeIds" multiple filterable style="width: 100%">
-          <el-option v-for="w in workerOptions" :key="w.value" :label="w.label" :value="w.value" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="限领规则">
-        <span>每人最多</span>
-        <el-input-number v-model="form.maxPerPerson" :min="1" :max="99" style="margin: 0 8px" />
-        <span>单</span>
-      </el-form-item>
-      <el-form-item label="任务区域">
-        <el-input v-model="form.region" placeholder="可选，电子围栏范围描述" />
-      </el-form-item>
-      <el-form-item label="任务说明">
-        <el-input v-model="form.description" type="textarea" :rows="3" />
-      </el-form-item>
+        </el-form-item>
+      </TaskFormSection>
+
+      <TaskFormSection title="任务详情" subtitle="地点与内容均为必填" icon="详" icon-variant="green">
+        <el-form-item label="任务地点" required>
+          <el-input v-model="form.region" placeholder="如：北京市朝阳区建国路商圈" />
+        </el-form-item>
+        <el-form-item label="任务内容" required>
+          <el-input
+            v-model="form.description"
+            type="textarea"
+            :rows="4"
+            placeholder="详细说明任务要求、完成标准等"
+          />
+        </el-form-item>
+      </TaskFormSection>
+
+      <TaskFormSection title="期限与派单" subtitle="任务期限可选长期" icon="派" icon-variant="orange">
+        <el-form-item label="任务期限">
+          <el-radio-group v-model="form.longTerm">
+            <el-radio :value="false">指定时间段</el-radio>
+            <el-radio :value="true">长期</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="!form.longTerm" label="时间范围" required>
+          <el-date-picker
+            v-model="form.dateRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            start-placeholder="开始"
+            end-placeholder="结束"
+          />
+        </el-form-item>
+        <el-form-item label="派单方式" required>
+          <el-radio-group v-model="form.dispatchMode">
+            <el-radio value="hall">发布到任务大厅</el-radio>
+            <el-radio value="assign">指派特定人员</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.dispatchMode === 'assign'" label="指派人员" required>
+          <el-select v-model="form.assigneeIds" multiple filterable style="width: 100%">
+            <el-option v-for="w in workerOptions" :key="w.value" :label="w.label" :value="w.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="限领规则">
+          <span>每人最多</span>
+          <el-input-number v-model="form.maxPerPerson" :min="1" :max="99" style="margin: 0 8px" />
+          <span>单</span>
+        </el-form-item>
+      </TaskFormSection>
     </el-form>
     <template #footer>
       <el-button @click="dialogVisible = false">取消</el-button>

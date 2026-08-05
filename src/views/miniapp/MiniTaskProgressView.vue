@@ -1,17 +1,21 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { ref } from 'vue'
-import { useMiniAppBack } from '@/composables/useMiniAppBack'
+import { useRouter } from 'vue-router'
 import { useMiniWorkerTasks, type WorkerTaskStatus } from '@/composables/useMiniWorkerTasks'
 
-const { goBack } = useMiniAppBack('/miniapp/profile')
-const { counts, tasksByStatus } = useMiniWorkerTasks()
+const router = useRouter()
+
+const { counts, pendingMyActionCount, tasksByStatus } = useMiniWorkerTasks()
 
 const activeTab = ref<WorkerTaskStatus>('in_progress')
+const onlyPendingMine = ref(false)
 
 const tabs: { key: WorkerTaskStatus; label: string }[] = [
   { key: 'in_progress', label: '进行中' },
   { key: 'completed', label: '已完成' },
   { key: 'settled', label: '已结算' },
+  { key: 'cancelled', label: '已取消' },
 ]
 
 function formatDate(iso: string) {
@@ -22,16 +26,25 @@ function formatDate(iso: string) {
 function tabCount(key: WorkerTaskStatus) {
   return counts.value[key]
 }
+
+function displayedTasks() {
+  return tasksByStatus(activeTab.value, onlyPendingMine.value)
+}
+
+function togglePendingMine() {
+  onlyPendingMine.value = !onlyPendingMine.value
+  if (onlyPendingMine.value) activeTab.value = 'in_progress'
+}
 </script>
 
 <template>
   <div>
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/task-hall" />
       <div class="mini-nav-title">任务进度</div>
     </div>
     <div class="mini-page">
-      <div class="mini-tabs">
+      <div class="mini-tabs task-tabs">
         <button
           v-for="tab in tabs"
           :key="tab.key"
@@ -44,10 +57,27 @@ function tabCount(key: WorkerTaskStatus) {
         </button>
       </div>
 
-      <div v-for="t in tasksByStatus(activeTab)" :key="t.instance.id" class="mini-card task-card">
+      <div class="filter-row" v-if="activeTab === 'in_progress'">
+        <button
+          class="filter-chip"
+          :class="{ active: onlyPendingMine }"
+          type="button"
+          @click="togglePendingMine"
+        >
+          待我完成
+          <span v-if="pendingMyActionCount" class="chip-count">{{ pendingMyActionCount }}</span>
+        </button>
+      </div>
+
+      <div
+        v-for="t in displayedTasks()"
+        :key="t.instance.id"
+        class="mini-card task-card"
+        @click="router.push(`/miniapp/tasks/${t.instance.id}`)"
+      >
         <div class="task-head">
           <div class="task-name">{{ t.instance.taskName }}</div>
-          <span class="mini-tag" :class="activeTab === 'in_progress' ? 'orange' : activeTab === 'completed' ? 'blue' : 'green'">
+          <span class="mini-tag" :class="`tone-${t.statusTone}`">
             {{ t.instance.currentNodeName }}
           </span>
         </div>
@@ -70,18 +100,70 @@ function tabCount(key: WorkerTaskStatus) {
         </div>
       </div>
 
-      <div v-if="tasksByStatus(activeTab).length === 0" class="mini-empty">
-        暂无{{ tabs.find((t) => t.key === activeTab)?.label }}任务
+      <div v-if="displayedTasks().length === 0" class="mini-empty">
+        <template v-if="onlyPendingMine">暂无待您完成的任务</template>
+        <template v-else>暂无{{ tabs.find((t) => t.key === activeTab)?.label }}任务</template>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.task-card {
+  cursor: pointer;
+}
+
+.task-tabs .mini-tab {
+  padding: 8px 4px;
+  font-size: 12px;
+}
+
 .tab-count {
   margin-left: 2px;
   font-size: 11px;
   opacity: 0.85;
+}
+
+.filter-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--mini-border);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 13px;
+  color: var(--mini-text-secondary);
+  cursor: pointer;
+}
+
+.filter-chip.active {
+  border-color: var(--mini-primary);
+  background: #eff6ff;
+  color: var(--mini-primary);
+  font-weight: 600;
+}
+
+.chip-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--mini-primary);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.filter-chip.active .chip-count {
+  background: var(--mini-primary);
 }
 
 .task-head {
@@ -121,7 +203,7 @@ function tabCount(key: WorkerTaskStatus) {
 
 .task-progress-fill {
   height: 100%;
-  background: #e60012;
+  background: var(--mini-primary);
   border-radius: 3px;
 }
 
@@ -143,20 +225,40 @@ function tabCount(key: WorkerTaskStatus) {
 .task-amount {
   font-size: 16px;
   font-weight: 700;
-  color: #e60012;
+  color: #ef4444;
 }
 
 .task-time {
   color: #bbb;
 }
 
-.mini-tag.blue {
-  background: #f0f7ff;
-  color: #1890ff;
+.mini-tag.tone-blue {
+  background: #eff6ff;
+  color: #3b82f6;
 }
 
-.mini-tag.orange {
-  background: #fff7e6;
-  color: #fa8c16;
+.mini-tag.tone-orange {
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.mini-tag.tone-purple {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.mini-tag.tone-green {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.mini-tag.tone-gray {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.mini-tag.tone-amber {
+  background: #fffbeb;
+  color: #d97706;
 }
 </style>

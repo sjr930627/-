@@ -2,6 +2,10 @@ import { defineStore } from 'pinia'
 import type {
   AttendanceException,
   AttendanceGroup,
+  AttendanceGroupPricingConfig,
+  AttendanceGroupPricingTemplate,
+  AttendanceGroupSettlementOverride,
+  AttendanceManualAdjustment,
   AttendancePunch,
   AttendanceRule,
   AttendanceStatus,
@@ -13,6 +17,7 @@ import type {
   Talent,
   IntegrationLog,
   InvoiceApplication,
+  EnterpriseInvoiceProfile,
   LeaveRequest,
   MakeupPunchRequest,
   Notification,
@@ -23,21 +28,41 @@ import type {
   SchedulePublishRecord,
   ScheduleRule,
   ScheduleTemplate,
+  ShiftDemandDayCell,
+  TeamCycleScheduleRule,
+  WeeklyShiftDemandPlan,
   ServiceContract,
   ServiceProvider,
   Shift,
   SettlementBill,
+  SettlementBillLine,
+  SettlementBillSourceType,
+  SettlementBillSummary,
+  SettlementManageOrder,
+  SettlementManageType,
+  SettlementSlip,
+  SettlementSlipLine,
+  TaxDeclaration,
+  TaxDeclarationWorker,
+  TaxWithdrawalLine,
   BillingRule,
+  BillImportTemplate,
   GrabShiftSlot,
   GrabShiftApplication,
   GrabShiftWhitelistEntry,
+  CancelShiftRequest,
   SwapRequest,
   SystemRole,
   SystemAccount,
+  SystemOperationLog,
   Task,
   TaskInstance,
+  TaskInstanceLog,
   TaskType,
+  TaskTypeSettlementOverride,
   TaskWorkflow,
+  Enterprise,
+  EnterpriseSettlementConfig,
   Team,
   InsuranceProduct,
   InsurancePolicy,
@@ -55,7 +80,19 @@ import type {
   WorkerAgreement,
   WorkerPaymentBinding,
   WorkerProfileExt,
+  WorkerSchedulePreference,
+  WorkerPartTimePreference,
+  WorkerSkillCertificate,
+  ProviderFundAccount,
+  FundTransaction,
 } from '@/types'
+import {
+  createUnassignedDepartment,
+  isUnassignedDepartment,
+  isEnterpriseRootDepartment,
+  createEnterpriseRootDepartment,
+  createEnterpriseUnassignedDepartment,
+} from '@/constants/department'
 import {
   defaultAttendanceRule,
   defaultPayrollConfig,
@@ -74,6 +111,7 @@ import {
   seedPublishRecordsWithDemo,
   seedPunches,
   seedShifts,
+  seedCancelShiftRequests,
   seedSwapRequests,
   seedTeams,
 } from '@/mock/seed'
@@ -84,27 +122,51 @@ import {
   seedTalents,
 } from '@/mock/recruitmentSeed'
 import { seedAttendanceGroups } from '@/mock/attendanceGroupSeed'
-import { seedSystemRoles } from '@/mock/permissionSeed'
+import { seedPricingTemplates } from '@/mock/pricingTemplateSeed'
+import { normalizePricingConfig } from '@/constants/attendanceGroupPricing'
+import {
+  buildVersionRecord,
+  ensureGroupVersions,
+} from '@/services/attendanceGroupVersion'
+import { seedEnterpriseRoleTemplates, buildEnterpriseRolesForAll, buildEnterpriseRoleId, seedSystemRoles, findEnterpriseRoleByCode } from '@/mock/permissionSeed'
 import { seedSystemAccounts } from '@/mock/accountSeed'
+import { seedSystemOperationLogs } from '@/mock/operationLogSeed'
 import { seedServiceContracts, seedServiceProviders } from '@/mock/partnershipSeed'
+import { DEFAULT_WORKFORCE_ENTERPRISE_ID } from '@/constants/department'
+import { seedEnterpriseWorkforceSnapshots } from '@/mock/workforceSeed'
+import { mergeWorkforceSeed } from '@/mock/enterpriseWorkforceSeed'
+import { seedFundTransactions, seedProviderFundAccounts } from '@/mock/fundManagementSeed'
+import {
+  computeProviderPendingClaimable,
+  summarizeAllProviders,
+  summarizeProviderFunds,
+} from '@/services/fundManagement'
 import {
   platformPaymentAccount,
-  seedInvoiceApplications,
   seedPendingSettlements,
   seedSettlementBills,
 } from '@/mock/payrollBillSeed'
+import { seedInvoiceApplications, seedEnterpriseInvoiceProfiles } from '@/mock/invoiceSeed'
 import { seedBillingRules } from '@/mock/billingRuleSeed'
+import { seedBillImportTemplates } from '@/mock/billImportTemplateSeed'
+import { seedSettlementManageOrders, seedSettlementSlips } from '@/mock/settlementManageSeed'
+import { seedTaxDeclarations } from '@/mock/taxDeclarationSeed'
 import { seedGrabShiftSlots } from '@/mock/grabShiftSeed'
 import { seedGrabShiftApplications } from '@/mock/grabShiftApplicationSeed'
 import { seedGrabShiftWhitelist } from '@/mock/grabShiftWhitelistSeed'
 import { seedScheduleTemplates } from '@/mock/scheduleTemplateSeed'
+import {
+  seedTeamCycleScheduleRules,
+  seedWeeklyShiftDemandPlans,
+} from '@/mock/shiftDemandSeed'
+import { generateCycleSchedule } from '@/services/schedule'
 import { seedInsurancePolicies, seedInsuranceProducts } from '@/mock/insuranceSeed'
 import {
   seedExamAttempts,
-  seedTrainingMaterials,
   loadCourseLearningRecords,
   loadExamQuestions,
   loadTrainingCoursesAndExams,
+  loadTrainingMaterials,
 } from '@/mock/trainingSeed'
 import {
   seedMiniAppMessages,
@@ -115,6 +177,11 @@ import {
   seedWorkerProfileExts,
 } from '@/mock/miniappSeed'
 import {
+  calcProfileCompleteness,
+  inferScheduleVariant,
+  maskIdCard,
+} from '@/services/miniAppProfile'
+import {
   seedEnterprises,
   seedTaskInstances,
   seedTasks,
@@ -122,12 +189,45 @@ import {
   seedTaskWorkflows,
 } from '@/mock/taskSeed'
 import {
+  seedAttendanceGroupSettlementOverrides,
+  seedEnterpriseSettlementConfigs,
+  seedTaskTypeSettlementOverrides,
+} from '@/mock/settlementPriceSeed'
+import {
+  createDefaultEnterpriseSettlementConfig,
+  getAttendanceGroupsForEnterprise,
+  normalizeEnterpriseSettlementConfig,
+  resolveHourlySettlementPrice,
+  resolveTaskSettlementPrice,
+} from '@/services/settlementPrice'
+import {
+  advanceThroughSystemNodes,
+  extractEnterpriseActionNote,
   generateTaskName,
-  getEnterpriseReviewNode,
   getWorkerExecutingNode,
-  getWorkflowEndNode,
+  getWorkflowFieldsForNode,
+  isWorkflowCompletedEndNode,
+  resolveTransitionTarget,
+  validateWorkflowNodeFields,
 } from '@/services/task'
-import { generateId, ensureDemoBrandingVersion, loadFromStorage, saveToStorage } from '@/utils'
+import {
+  getCancelledEndNode,
+  getNodeById,
+  nodeHasAction,
+  resolveActionTargetNodeId,
+} from '@/utils/workflow'
+import {
+  calcTaskClaimAmount,
+  getWorkerClaimedQuantity,
+  pickWorkerSubmitAction,
+} from '@/services/miniTask'
+import { generateEnterpriseCode, normalizeEnterpriseModules } from '@/constants/enterprise'
+import { normalizeSystemAccount, accountHasRole } from '@/constants/account'
+import { unionMenuPermissions, unionPermissionIds } from '@/constants/permission'
+import { generateContractNo, generateServiceProviderCode } from '@/constants/partnership'
+import { generateId, ensureDemoBrandingVersion, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage } from '@/utils'
+import { generateBillNo, resolveServiceProviderForEnterprise } from '@/services/billSettlement'
+import { resolveWithdrawalChannel } from '@/constants/taxManage'
 import { deriveExceptions, getDatesBetween, buildDailyAttendanceList, getMonthDateRange } from '@/services/attendance'
 import {
   resolveGroupScheduleRule,
@@ -142,19 +242,55 @@ import {
 } from '@/services/insurance'
 import {
   countMaterialReferences,
+  formatCourseGateBlockMessage,
   generateAiRiskQuestions,
+  getBlockingCoursesForEmployee,
   getExamQuestions,
   gradeExamAnswers,
+  type CourseGateKind,
 } from '@/services/training'
+
+function normalizeManualOverrides(
+  raw: Record<string, AttendanceStatus | AttendanceManualAdjustment>,
+): Record<string, AttendanceManualAdjustment> {
+  const result: Record<string, AttendanceManualAdjustment> = {}
+  Object.entries(raw).forEach(([key, value]) => {
+    result[key] = typeof value === 'string' ? { status: value } : value
+  })
+  return result
+}
+
+function normalizeWorkforceEnterpriseId<T extends { enterpriseId?: string }>(items: T[]): T[] {
+  return items.map((item) => ({
+    ...item,
+    enterpriseId: item.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID,
+  }))
+}
+
+function loadWorkforceSeed() {
+  const merged = mergeWorkforceSeed(
+    loadFromStorage<Department[]>('departments', seedDepartments),
+    loadFromStorage<Employee[]>('employees', seedEmployees),
+    loadFromStorage<Team[]>('teams', seedTeams),
+    loadFromStorage<AttendanceGroup[]>('attendanceGroups', seedAttendanceGroups),
+  )
+  return {
+    departments: normalizeWorkforceEnterpriseId(merged.departments),
+    employees: normalizeWorkforceEnterpriseId(merged.employees),
+    teams: merged.teams,
+    attendanceGroups: merged.attendanceGroups,
+  }
+}
 
 export const useAppStore = defineStore('app', {
   state: () => {
     ensureDemoBrandingVersion()
     const trainingData = loadTrainingCoursesAndExams()
+    const workforceSeed = loadWorkforceSeed()
     return {
-    departments: loadFromStorage<Department[]>('departments', seedDepartments),
-    teams: loadFromStorage<Team[]>('teams', seedTeams),
-    employees: loadFromStorage<Employee[]>('employees', seedEmployees),
+    departments: workforceSeed.departments,
+    teams: workforceSeed.teams,
+    employees: workforceSeed.employees,
     shifts: loadFromStorage<Shift[]>('shifts', seedShifts),
     holidays: loadFromStorage<Holiday[]>('holidays', seedHolidays),
     scheduleRule: loadFromStorage<ScheduleRule>('scheduleRule', defaultScheduleRule),
@@ -169,17 +305,31 @@ export const useAppStore = defineStore('app', {
       seedGrabShiftWhitelist,
     ),
     scheduleTemplates: loadFromStorage<ScheduleTemplate[]>('scheduleTemplates', seedScheduleTemplates),
+    weeklyShiftDemandPlans: loadFromStorage<WeeklyShiftDemandPlan[]>(
+      'weeklyShiftDemandPlans',
+      seedWeeklyShiftDemandPlans,
+    ),
+    teamCycleScheduleRules: loadFromStorage<TeamCycleScheduleRule[]>(
+      'teamCycleScheduleRules',
+      seedTeamCycleScheduleRules,
+    ),
     publishRecords: loadFromStorage<SchedulePublishRecord[]>('publishRecords', seedPublishRecordsWithDemo),
     notifications: loadFromStorage<Notification[]>('notifications', seedNotifications),
     attendanceRule: loadFromStorage<AttendanceRule>('attendanceRule', defaultAttendanceRule),
     punches: loadFromStorage<AttendancePunch[]>('punches', seedPunches),
     leaveRequests: loadFromStorage<LeaveRequest[]>('leaveRequests', seedLeaveRequests),
     swapRequests: loadFromStorage<SwapRequest[]>('swapRequests', seedSwapRequests),
+    cancelShiftRequests: loadFromStorage<CancelShiftRequest[]>(
+      'cancelShiftRequests',
+      seedCancelShiftRequests,
+    ),
     makeupRequests: loadFromStorage<MakeupPunchRequest[]>('makeupRequests', seedMakeupRequests),
     exceptions: loadFromStorage<AttendanceException[]>('exceptions', seedExceptions),
-    manualOverrides: loadFromStorage<Record<string, AttendanceStatus>>(
-      'manualOverrides',
-      seedManualOverrides,
+    manualOverrides: normalizeManualOverrides(
+      loadFromStorage<Record<string, AttendanceStatus | AttendanceManualAdjustment>>(
+        'manualOverrides',
+        seedManualOverrides,
+      ),
     ),
     overtimeRequests: loadFromStorage<OvertimeRequest[]>('overtimeRequests', seedOvertimeRequests),
     payrollConfig: loadFromStorage<PayrollConfig>('payrollConfig', defaultPayrollConfig),
@@ -188,6 +338,19 @@ export const useAppStore = defineStore('app', {
     taskTypes: loadFromStorage<TaskType[]>('taskTypes', seedTaskTypes),
     tasks: loadFromStorage<Task[]>('tasks', seedTasks),
     taskInstances: loadFromStorage<TaskInstance[]>('taskInstances', seedTaskInstances),
+    enterprises: loadFromStorage<Enterprise[]>('enterprises', seedEnterprises),
+    enterpriseSettlementConfigs: loadFromStorage<EnterpriseSettlementConfig[]>(
+      'enterpriseSettlementConfigs',
+      seedEnterpriseSettlementConfigs,
+    ),
+    attendanceGroupSettlementOverrides: loadFromStorage<AttendanceGroupSettlementOverride[]>(
+      'attendanceGroupSettlementOverrides',
+      seedAttendanceGroupSettlementOverrides,
+    ),
+    taskTypeSettlementOverrides: loadFromStorage<TaskTypeSettlementOverride[]>(
+      'taskTypeSettlementOverrides',
+      seedTaskTypeSettlementOverrides,
+    ),
     currentEnterpriseId: loadFromStorage<string>(
       'currentEnterpriseId',
       'ent_china_mobile_agent',
@@ -195,32 +358,79 @@ export const useAppStore = defineStore('app', {
     jobRequirements: loadFromStorage<JobRequirement[]>('jobRequirements', seedJobRequirements),
     recruitmentLeads: loadFromStorage<RecruitmentLead[]>('recruitmentLeads', seedRecruitmentLeads),
     talents: loadFromStorage<Talent[]>('talents', seedTalents),
-    attendanceGroups: loadFromStorage<AttendanceGroup[]>('attendanceGroups', seedAttendanceGroups),
-    systemRoles: loadFromStorage<SystemRole[]>('systemRoles', seedSystemRoles),
-    systemAccounts: loadFromStorage<SystemAccount[]>('systemAccounts', seedSystemAccounts),
+    attendanceGroups: workforceSeed.attendanceGroups.map(
+      (g): AttendanceGroup => {
+        const normalized = {
+          ...g,
+          pricingConfig:
+            g.attendanceType === 'none'
+              ? undefined
+              : g.pricingConfig
+                ? normalizePricingConfig(g.pricingConfig)
+                : undefined,
+        }
+        return ensureGroupVersions(normalized)
+      },
+    ),
+    pricingTemplates: loadFromStorage<AttendanceGroupPricingTemplate[]>(
+      'pricingTemplates',
+      seedPricingTemplates,
+    ).map((t) => ({
+      ...t,
+      config: normalizePricingConfig(t.config),
+    })),
+    systemRoles: loadFromStorage<SystemRole[]>(
+      'systemRoles',
+      [...seedSystemRoles, ...buildEnterpriseRolesForAll(seedEnterprises)],
+    ),
+    enterpriseRoleTemplates: loadFromStorage<SystemRole[]>(
+      'enterpriseRoleTemplates',
+      seedEnterpriseRoleTemplates,
+    ),
+    systemAccounts: loadFromStorage<SystemAccount[]>('systemAccounts', seedSystemAccounts).map(
+      normalizeSystemAccount,
+    ),
+    systemOperationLogs: loadFromStorage<SystemOperationLog[]>(
+      'systemOperationLogs',
+      seedSystemOperationLogs,
+    ),
     serviceProviders: loadFromStorage<ServiceProvider[]>('serviceProviders', seedServiceProviders),
     serviceContracts: loadFromStorage<ServiceContract[]>('serviceContracts', seedServiceContracts),
     settlementBills: loadFromStorage<SettlementBill[]>('settlementBills', seedSettlementBills),
     billingRules: loadFromStorage<BillingRule[]>('billingRules', seedBillingRules),
+    billImportTemplates: loadFromStorage<BillImportTemplate[]>(
+      'billImportTemplates',
+      seedBillImportTemplates,
+    ),
     pendingSettlements: loadFromStorage<PendingSettlementItem[]>(
       'pendingSettlements',
       seedPendingSettlements,
     ),
+    settlementManageOrders: loadFromStorage<SettlementManageOrder[]>(
+      'settlementManageOrders',
+      seedSettlementManageOrders,
+    ),
+    settlementSlips: loadFromStorage<SettlementSlip[]>('settlementSlips', seedSettlementSlips),
+    taxDeclarations: loadFromStorage<TaxDeclaration[]>('taxDeclarations', seedTaxDeclarations),
     invoiceApplications: loadFromStorage<InvoiceApplication[]>(
       'invoiceApplications',
       seedInvoiceApplications,
     ),
+    enterpriseInvoiceProfiles: loadFromStorage<EnterpriseInvoiceProfile[]>(
+      'enterpriseInvoiceProfiles',
+      seedEnterpriseInvoiceProfiles,
+    ),
     insuranceProducts: loadFromStorage<InsuranceProduct[]>('insuranceProducts', seedInsuranceProducts),
     insurancePolicies: loadFromStorage<InsurancePolicy[]>('insurancePolicies', seedInsurancePolicies),
-    trainingMaterials: loadFromStorage<TrainingMaterial[]>('trainingMaterials', seedTrainingMaterials),
+    trainingMaterials: loadTrainingMaterials(),
     trainingCourses: trainingData.courses,
     trainingExams: trainingData.exams,
     examQuestions: loadExamQuestions(),
     courseLearningRecords: loadCourseLearningRecords(),
     examAttempts: loadFromStorage<ExamAttempt[]>('examAttempts', seedExamAttempts),
     miniAppMessages: loadFromStorage<MiniAppMessage[]>('miniAppMessages', seedMiniAppMessages),
-    workerIncomeRecords: loadFromStorage<WorkerIncomeRecord[]>(
-      'workerIncomeRecords',
+    workerIncomeRecords: ensureWorkerIncomeSeed(
+      loadFromStorage<WorkerIncomeRecord[]>('workerIncomeRecords', seedWorkerIncomeRecords),
       seedWorkerIncomeRecords,
     ),
     miniJobApplications: loadFromStorage<MiniJobApplication[]>(
@@ -237,6 +447,11 @@ export const useAppStore = defineStore('app', {
       seedWorkerProfileExts,
     ),
     platformPaymentAccount,
+    providerFundAccounts: loadFromStorage<ProviderFundAccount[]>(
+      'providerFundAccounts',
+      seedProviderFundAccounts,
+    ),
+    fundTransactions: loadFromStorage<FundTransaction[]>('fundTransactions', seedFundTransactions),
     }
   },
 
@@ -249,11 +464,14 @@ export const useAppStore = defineStore('app', {
       state.makeupRequests.filter((r) => r.status === 'pending').length +
       state.overtimeRequests.filter((r) => r.status === 'pending').length +
       state.taskTypes.filter((t) => t.status === 'pending').length,
+    pendingAttendanceApprovalCount: (state) =>
+      state.makeupRequests.filter((r) => r.status === 'pending').length +
+      state.cancelShiftRequests.filter((r) => r.status === 'pending').length +
+      state.overtimeRequests.filter((r) => r.status === 'pending').length,
     openExceptionCount: (state) =>
       state.exceptions.filter((e) => e.status === 'open' || e.status === 'appealed').length,
-    enterprises: () => seedEnterprises,
     currentEnterprise: (state) =>
-      seedEnterprises.find((e) => e.id === state.currentEnterpriseId) ?? seedEnterprises[0],
+      state.enterprises.find((e) => e.id === state.currentEnterpriseId) ?? state.enterprises[0],
     enabledWorkflows: (state) => state.taskWorkflows.filter((w) => w.status === 'enabled'),
     getScheduleRuleForGroup: (state) => (groupId: string): ScheduleRule => {
       const group = state.attendanceGroups.find((g) => g.id === groupId)
@@ -267,6 +485,125 @@ export const useAppStore = defineStore('app', {
     },
     getContractsByProvider: (state) => (providerId: string) =>
       state.serviceContracts.filter((c) => c.providerId === providerId),
+    getDepartmentsByEnterprise: (state) => (enterpriseId: string) =>
+      state.departments.filter(
+        (d) => (d.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId,
+      ),
+    getEnterpriseRoles: (state) => (enterpriseId: string) =>
+      state.systemRoles.filter(
+        (r) => r.rolePortal === 'enterprise' && r.enterpriseId === enterpriseId,
+      ),
+    getAccountRoles: (state) => (account: SystemAccount) =>
+      account.roleIds
+        .map((id) => state.systemRoles.find((r) => r.id === id))
+        .filter((r): r is SystemRole => Boolean(r)),
+    resolveAccountMenuPermissions: (state) => (account: SystemAccount) => {
+      const roles = account.roleIds
+        .map((id) => state.systemRoles.find((r) => r.id === id))
+        .filter((r): r is SystemRole => Boolean(r))
+      return unionMenuPermissions(roles.map((r) => r.menuPermissions ?? []))
+    },
+    resolveAccountPermissionIds: (state) => (account: SystemAccount) => {
+      const roles = account.roleIds
+        .map((id) => state.systemRoles.find((r) => r.id === id))
+        .filter((r): r is SystemRole => Boolean(r))
+      return unionPermissionIds(roles.map((r) => r.permissionIds))
+    },
+    getEmployeesByEnterprise: (state) => (enterpriseId: string) =>
+      state.employees.filter(
+        (e) => (e.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId,
+      ),
+    getEnterpriseSettlementConfig: (state) => (enterpriseId: string) => {
+      const found = state.enterpriseSettlementConfigs.find((c) => c.enterpriseId === enterpriseId)
+      return normalizeEnterpriseSettlementConfig(
+        found ?? createDefaultEnterpriseSettlementConfig(enterpriseId),
+      )
+    },
+    getAttendanceGroupsByEnterprise: (state) => (enterpriseId: string) =>
+      getAttendanceGroupsForEnterprise(enterpriseId, state.attendanceGroups, state.departments),
+    getTaskTypesByEnterprise: (state) => (enterpriseId: string) =>
+      state.taskTypes.filter((t) => t.enterpriseId === enterpriseId),
+    resolveGroupSettlementPrice: (state) => (enterpriseId: string, attendanceGroupId: string) =>
+      resolveHourlySettlementPrice(
+        enterpriseId,
+        attendanceGroupId,
+        state.enterpriseSettlementConfigs,
+        state.attendanceGroupSettlementOverrides,
+      ),
+    resolveTaskTypeSettlementPrice: (state) => (enterpriseId: string, taskType: TaskType) =>
+      resolveTaskSettlementPrice(
+        enterpriseId,
+        taskType,
+        state.enterpriseSettlementConfigs,
+        state.taskTypeSettlementOverrides,
+      ),
+    getFundAccountsByProvider: (state) => (providerId: string) =>
+      state.providerFundAccounts.filter((account) => account.providerId === providerId),
+    getFundTransactionsByProvider: (state) => (providerId: string) =>
+      state.fundTransactions
+        .filter((transaction) => transaction.providerId === providerId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    getProviderFundSummary: (state) => (providerId: string) => {
+      const pendingClaimable = computeProviderPendingClaimable(
+        providerId,
+        state.serviceProviders,
+        state.employees,
+        state.departments,
+        state.workerIncomeRecords,
+      )
+      return summarizeProviderFunds(providerId, state.providerFundAccounts, pendingClaimable)
+    },
+    getAllProviderFundSummaries: (state) =>
+      summarizeAllProviders(
+        state.serviceProviders,
+        state.providerFundAccounts,
+        state.employees,
+        state.departments,
+        state.workerIncomeRecords,
+      ),
+    getEnterpriseWorkforceStats: (state) => (enterpriseId: string) => {
+      const depts = state.departments.filter(
+        (d) => (d.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId,
+      )
+      const employees = state.employees.filter(
+        (e) => (e.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId,
+      )
+      const deptIds = new Set(depts.map((d) => d.id))
+      const teams = state.teams.filter((t) => deptIds.has(t.departmentId))
+      const snapshot = seedEnterpriseWorkforceSnapshots[enterpriseId]
+
+      const departmentCount = depts.filter(
+        (d) => !isUnassignedDepartment(d.id) && d.orgType !== 'enterprise',
+      ).length
+
+      if (employees.length > 0) {
+        return {
+          departmentCount,
+          activeCount: employees.filter((e) => e.status === 'active').length,
+          pendingCount: employees.filter((e) => e.status === 'pending').length,
+          resignedCount: employees.filter((e) => e.status === 'resigned').length,
+          teamCount: teams.length,
+        }
+      }
+
+      if (snapshot) {
+        return {
+          departmentCount: snapshot.departmentCount,
+          activeCount: snapshot.activeCount,
+          pendingCount: snapshot.pendingCount,
+          resignedCount: snapshot.resignedCount,
+          teamCount: snapshot.teamCount,
+        }
+      }
+
+      return {
+        departmentCount,
+        activeCount: 0,
+        pendingCount: 0,
+        resignedCount: 0,
+        teamCount: teams.length,
+      }
+    },
     invoiceableBills: (state) =>
       state.settlementBills.filter(
         (b) => b.status === 'paid' && b.invoicedAmount < b.totalPayable,
@@ -279,6 +616,47 @@ export const useAppStore = defineStore('app', {
     },
 
     // Department
+    ensureEnterpriseOrgStructure(enterpriseId: string) {
+      const ent = this.enterprises.find((e) => e.id === enterpriseId)
+      if (!ent) return
+
+      const rootId = createEnterpriseRootDepartment(enterpriseId, ent.name).id
+      const unassignedId = createEnterpriseUnassignedDepartment(enterpriseId).id
+      let changed = false
+
+      if (!this.departments.some((d) => d.id === rootId)) {
+        this.departments.push(createEnterpriseRootDepartment(enterpriseId, ent.name))
+        changed = true
+      } else {
+        const root = this.departments.find((d) => d.id === rootId)!
+        if (root.name !== ent.name) {
+          root.name = ent.name
+          changed = true
+        }
+        if (root.enterpriseId !== enterpriseId) {
+          root.enterpriseId = enterpriseId
+          changed = true
+        }
+      }
+
+      if (!this.departments.some((d) => d.id === unassignedId)) {
+        this.departments.push(createEnterpriseUnassignedDepartment(enterpriseId))
+        changed = true
+      } else {
+        const unassigned = this.departments.find((d) => d.id === unassignedId)!
+        if (unassigned.enterpriseId !== enterpriseId) {
+          unassigned.enterpriseId = enterpriseId
+          changed = true
+        }
+      }
+
+      if (changed) this.persist('departments')
+    },
+
+    ensureAllEnterpriseOrgStructures() {
+      this.enterprises.forEach((ent) => this.ensureEnterpriseOrgStructure(ent.id))
+    },
+
     addDepartment(dept: Omit<Department, 'id'>) {
       const item: Department = { ...dept, id: generateId('dept') }
       this.departments.push(item)
@@ -286,6 +664,11 @@ export const useAppStore = defineStore('app', {
       return item
     },
     updateDepartment(id: string, data: Partial<Department>) {
+      if (isUnassignedDepartment(id)) throw new Error('待分配人员为系统部门，不可编辑')
+      const existing = this.departments.find((d) => d.id === id)
+      if (existing && isEnterpriseRootDepartment(existing)) {
+        throw new Error('企业根节点不可编辑')
+      }
       const idx = this.departments.findIndex((d) => d.id === id)
       if (idx >= 0) {
         this.departments[idx] = { ...this.departments[idx], ...data }
@@ -293,10 +676,58 @@ export const useAppStore = defineStore('app', {
       }
     },
     removeDepartment(id: string) {
+      if (isUnassignedDepartment(id)) throw new Error('待分配人员为系统部门，不可删除')
+      const existing = this.departments.find((d) => d.id === id)
+      if (existing && isEnterpriseRootDepartment(existing)) {
+        throw new Error('企业根节点不可删除')
+      }
       const hasChildren = this.departments.some((d) => d.parentId === id)
       if (hasChildren) throw new Error('请先删除子部门')
       if (this.employees.some((e) => e.departmentId === id)) throw new Error('部门下仍有员工')
       this.departments = this.departments.filter((d) => d.id !== id)
+      this.persist('departments')
+    },
+    reorderDepartment(
+      dragId: string,
+      targetId: string,
+      position: 'before' | 'after' | 'inner',
+    ) {
+      if (isUnassignedDepartment(dragId) || isUnassignedDepartment(targetId)) {
+        throw new Error('待分配人员为系统部门，不可调整顺序')
+      }
+      const drag = this.departments.find((d) => d.id === dragId)
+      const target = this.departments.find((d) => d.id === targetId)
+      if (!drag || !target) return
+      if (isEnterpriseRootDepartment(drag) || isEnterpriseRootDepartment(target)) {
+        throw new Error('企业根节点不可调整顺序')
+      }
+
+      const descendantIds = getDepartmentDescendantIds(this.departments, dragId)
+      if (descendantIds.has(targetId)) throw new Error('不能移动到自身或子部门下')
+
+      const newParentId = position === 'inner' ? targetId : target.parentId
+      if (newParentId && descendantIds.has(newParentId)) {
+        throw new Error('不能移动到自身或子部门下')
+      }
+
+      drag.parentId = newParentId
+
+      const siblings = this.departments
+        .filter((d) => d.parentId === newParentId && d.id !== dragId)
+        .sort((a, b) => a.sort - b.sort)
+
+      let ordered: Department[]
+      if (position === 'inner') {
+        ordered = [...siblings, drag]
+      } else {
+        const targetIndex = siblings.findIndex((s) => s.id === targetId)
+        const insertAt = position === 'before' ? Math.max(targetIndex, 0) : targetIndex + 1
+        ordered = [...siblings.slice(0, insertAt), drag, ...siblings.slice(insertAt)]
+      }
+
+      ordered.forEach((dept, index) => {
+        dept.sort = index + 1
+      })
       this.persist('departments')
     },
 
@@ -327,8 +758,10 @@ export const useAppStore = defineStore('app', {
         ...emp,
         id: generateId('emp'),
         skills: emp.skills ?? [],
+        skillCertificates: emp.skillCertificates ?? [],
         preferredShiftIds: emp.preferredShiftIds ?? [],
         unavailableDates: emp.unavailableDates ?? [],
+        realNameVerified: emp.realNameVerified ?? false,
       }
       this.employees.push(item)
       this.persist('employees')
@@ -350,6 +783,20 @@ export const useAppStore = defineStore('app', {
       this.persist('employees')
       this.persist('teams')
       this.persist('assignments')
+    },
+    batchAssignEmployees(ids: string[], departmentId: string, position: string) {
+      if (isUnassignedDepartment(departmentId)) {
+        throw new Error('请选择具体部门进行分配')
+      }
+      if (!position.trim()) throw new Error('请填写岗位')
+      ids.forEach((id) => {
+        const existing = this.employees.find((e) => e.id === id)
+        this.updateEmployee(id, {
+          departmentId,
+          position: position.trim(),
+          ...(existing?.status !== 'resigned' ? { status: 'active' as const } : {}),
+        })
+      })
     },
 
     // Shift
@@ -397,6 +844,20 @@ export const useAppStore = defineStore('app', {
       this.persist('scheduleRule')
     },
 
+    assertCourseGateForEmployee(employeeId: string, gate: CourseGateKind) {
+      const blocked = getBlockingCoursesForEmployee(
+        employeeId,
+        this.trainingCourses,
+        this.courseLearningRecords,
+        this.employees,
+        this.departments,
+        gate,
+      )
+      if (blocked.length > 0) {
+        throw new Error(formatCourseGateBlockMessage(blocked, gate))
+      }
+    },
+
     // Assignment
     upsertAssignment(
       data: Omit<ScheduleAssignment, 'id' | 'published'> & {
@@ -407,15 +868,24 @@ export const useAppStore = defineStore('app', {
         manualEdited?: boolean
       },
     ) {
+      this.assertCourseGateForEmployee(data.employeeId, 'schedule')
+      const published = data.published ?? false
       const existing = this.assignments.find(
-        (a) => a.employeeId === data.employeeId && a.date === data.date,
+        (a) =>
+          a.employeeId === data.employeeId &&
+          a.date === data.date &&
+          a.published === published,
       )
       if (existing) {
         existing.shiftId = data.shiftId
         existing.teamId = data.teamId
-        existing.published = data.published ?? false
+        existing.published = published
         if (data.fromGrabSlotId) existing.fromGrabSlotId = data.fromGrabSlotId
-        if (data.confirmStatus !== undefined) existing.confirmStatus = data.confirmStatus
+        if (published) {
+          if (data.confirmStatus !== undefined) existing.confirmStatus = data.confirmStatus
+        } else {
+          existing.confirmStatus = undefined
+        }
         if (data.note !== undefined) existing.note = data.note
         if (data.manualEdited !== undefined) existing.manualEdited = data.manualEdited
       } else {
@@ -426,22 +896,27 @@ export const useAppStore = defineStore('app', {
           date: data.date,
           teamId: data.teamId,
           fromGrabSlotId: data.fromGrabSlotId,
-          published: data.published ?? false,
-          confirmStatus: data.confirmStatus ?? 'pending',
+          published,
+          confirmStatus: published ? (data.confirmStatus ?? 'pending') : undefined,
           note: data.note,
           manualEdited: data.manualEdited ?? false,
         })
       }
       this.persist('assignments')
     },
-    removeAssignment(employeeId: string, date: string) {
-      this.assignments = this.assignments.filter(
-        (a) => !(a.employeeId === employeeId && a.date === date),
-      )
+    removeAssignment(employeeId: string, date: string, published?: boolean) {
+      this.assignments = this.assignments.filter((a) => {
+        if (a.employeeId !== employeeId || a.date !== date) return true
+        if (published === undefined) return false
+        return a.published !== published
+      })
       this.persist('assignments')
     },
     getAssignment(employeeId: string, date: string) {
-      return this.assignments.find((a) => a.employeeId === employeeId && a.date === date)
+      const all = this.assignments.filter(
+        (a) => a.employeeId === employeeId && a.date === date,
+      )
+      return all.find((a) => a.published) ?? all[0]
     },
 
     publishSchedule(month: string, teamId: string, publishedBy = '排班员') {
@@ -490,16 +965,45 @@ export const useAppStore = defineStore('app', {
       const team = this.teams.find((t) => t.id === teamId)
       if (!team) throw new Error('班组不存在')
       const month = dates[0]?.slice(0, 7) ?? ''
-      const periodAssignments = this.assignments.filter(
-        (a) =>
-          a.teamId === teamId &&
-          dates.includes(a.date) &&
-          team.memberIds.includes(a.employeeId),
-      )
-      periodAssignments.forEach((a) => {
-        a.published = true
-        if (!a.confirmStatus || a.confirmStatus === 'pending') a.confirmStatus = 'confirming'
+      const nextAssignments: ScheduleAssignment[] = []
+
+      team.memberIds.forEach((employeeId) => {
+        dates.forEach((date) => {
+          const cell = this.assignments.filter(
+            (a) =>
+              a.employeeId === employeeId &&
+              a.date === date &&
+              a.teamId === teamId,
+          )
+          const draft = cell.find((a) => !a.published)
+          const published = cell.find((a) => a.published)
+          const source = draft ?? published
+          if (!source) return
+          nextAssignments.push({
+            ...source,
+            id: generateId('asn'),
+            published: true,
+            confirmStatus: 'pending',
+            manualEdited: false,
+          })
+        })
       })
+
+      this.assignments = this.assignments.filter(
+        (a) =>
+          !(
+            a.teamId === teamId &&
+            dates.includes(a.date) &&
+            team.memberIds.includes(a.employeeId)
+          ),
+      )
+      this.assignments.push(...nextAssignments)
+
+      const prevVersion = this.publishRecords
+        .filter((r) => r.teamId === teamId && r.month === month)
+        .reduce((max, r) => Math.max(max, r.version ?? 0), 0)
+      const version = prevVersion + 1
+
       const record: SchedulePublishRecord = {
         id: generateId('pub'),
         month,
@@ -507,7 +1011,12 @@ export const useAppStore = defineStore('app', {
         publishedAt: new Date().toISOString(),
         publishedBy,
         employeeCount: team.memberIds.length,
-        assignmentCount: periodAssignments.length,
+        assignmentCount: nextAssignments.length,
+        version,
+        periodStart: dates[0],
+        periodEnd: dates[dates.length - 1],
+        changeNote: version === 1 ? '首次发布' : '排班更新',
+        snapshot: JSON.parse(JSON.stringify(nextAssignments)) as ScheduleAssignment[],
       }
       this.publishRecords.unshift(record)
       this.pushNotification({
@@ -518,6 +1027,35 @@ export const useAppStore = defineStore('app', {
       this.persist('assignments')
       this.persist('publishRecords')
       return record
+    },
+
+    getSchedulePublishHistory(teamId: string, month?: string) {
+      return this.publishRecords
+        .filter((r) => r.teamId === teamId && (!month || r.month === month))
+        .sort((a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime())
+    },
+
+    restoreSchedulePublishVersion(recordId: string) {
+      const record = this.publishRecords.find((r) => r.id === recordId)
+      if (!record?.snapshot?.length) throw new Error('版本快照不存在')
+      const team = this.teams.find((t) => t.id === record.teamId)
+      if (!team) throw new Error('班组不存在')
+
+      record.snapshot.forEach((item) => {
+        this.removeAssignment(item.employeeId, item.date, false)
+        this.removeAssignment(item.employeeId, item.date, true)
+        this.upsertAssignment({
+          employeeId: item.employeeId,
+          shiftId: item.shiftId,
+          date: item.date,
+          teamId: item.teamId ?? record.teamId,
+          published: false,
+          note: item.note,
+          manualEdited: true,
+        })
+      })
+      this.persist('assignments')
+      return record.snapshot.length
     },
 
     revertDraftForPeriod(teamId: string, dates: string[]) {
@@ -570,7 +1108,6 @@ export const useAppStore = defineStore('app', {
             date,
             teamId,
             published: false,
-            confirmStatus: 'pending',
             manualEdited: false,
           })
           count += 1
@@ -599,7 +1136,6 @@ export const useAppStore = defineStore('app', {
             date: targetDates[idx],
             teamId,
             published: false,
-            confirmStatus: 'pending',
             manualEdited: true,
           })
           count += 1
@@ -634,7 +1170,6 @@ export const useAppStore = defineStore('app', {
               date,
               teamId,
               published: false,
-              confirmStatus: published.confirmStatus ?? 'pending',
               note: published.note,
               manualEdited: false,
             })
@@ -725,10 +1260,28 @@ export const useAppStore = defineStore('app', {
 
     setManualOverride(employeeId: string, date: string, status: AttendanceStatus, note?: string) {
       const key = `${employeeId}_${date}`
-      this.manualOverrides[key] = status
-      void note
+      this.manualOverrides[key] = {
+        ...this.manualOverrides[key],
+        status,
+        note: note ?? this.manualOverrides[key]?.note,
+      }
       this.persist('manualOverrides')
       this.syncExceptions()
+    },
+
+    setWorkHoursCorrection(
+      employeeId: string,
+      date: string,
+      workHours: number,
+      note?: string,
+    ) {
+      const key = `${employeeId}_${date}`
+      this.manualOverrides[key] = {
+        ...this.manualOverrides[key],
+        workHours,
+        note: note ?? this.manualOverrides[key]?.note,
+      }
+      this.persist('manualOverrides')
     },
 
     clearManualOverride(employeeId: string, date: string) {
@@ -861,7 +1414,75 @@ export const useAppStore = defineStore('app', {
       })
     },
 
+    submitCancelShiftRequest(
+      data: Omit<CancelShiftRequest, 'id' | 'status' | 'createdAt'>,
+    ) {
+      const dup = this.cancelShiftRequests.find(
+        (r) =>
+          r.employeeId === data.employeeId &&
+          r.date === data.date &&
+          r.status === 'pending',
+      )
+      if (dup) throw new Error('该日期已有待审批的取消班次申请')
+
+      const asn = this.getAssignment(data.employeeId, data.date)
+      if (!asn) throw new Error('该日期暂无排班，无法申请取消')
+
+      const teamId = data.teamId || asn.teamId
+      if (!teamId) throw new Error('无法确定班组信息')
+
+      const item: CancelShiftRequest = {
+        ...data,
+        shiftId: data.shiftId || asn.shiftId,
+        teamId,
+        id: generateId('cancel_shift'),
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      }
+      this.cancelShiftRequests.unshift(item)
+      this.persist('cancelShiftRequests')
+      const empName = this.employees.find((e) => e.id === data.employeeId)?.name ?? ''
+      this.pushNotification({
+        title: '取消班次申请待审批',
+        content: `${empName} 申请取消 ${data.date} 排班`,
+        type: 'approval',
+      })
+      return item
+    },
+
+    reviewCancelShiftRequest(id: string, approved: boolean, reviewNote = '', reviewedBy = '排班员') {
+      const req = this.cancelShiftRequests.find((r) => r.id === id)
+      if (!req || req.status !== 'pending') throw new Error('申请不存在或已处理')
+
+      req.status = approved ? 'approved' : 'rejected'
+      req.reviewedBy = reviewedBy
+      req.reviewedAt = new Date().toISOString()
+      req.reviewNote = reviewNote
+
+      if (approved) {
+        this.removeAssignment(req.employeeId, req.date, true)
+        this.removeAssignment(req.employeeId, req.date, false)
+      }
+
+      this.persist('cancelShiftRequests')
+      this.syncExceptions()
+      const empName = this.employees.find((e) => e.id === req.employeeId)?.name ?? ''
+      this.pushNotification({
+        title: approved ? '取消班次已通过' : '取消班次已驳回',
+        content: `${empName} ${req.date} 取消班次申请已${approved ? '通过，排班已移除' : '驳回'}`,
+        type: approved ? 'schedule' : 'approval',
+      })
+    },
+
     submitMakeupRequest(data: Omit<MakeupPunchRequest, 'id' | 'status' | 'createdAt'>) {
+      const pending = this.makeupRequests.find(
+        (r) =>
+          r.employeeId === data.employeeId &&
+          r.date === data.date &&
+          r.status === 'pending',
+      )
+      if (pending) throw new Error('该日期已有待审批的补卡申请')
+
       const month = data.date.slice(0, 7)
       const count = this.makeupRequests.filter(
         (r) =>
@@ -1069,6 +1690,7 @@ export const useAppStore = defineStore('app', {
       data: Omit<GrabShiftApplication, 'id' | 'status' | 'createdAt'>,
       options?: { forceManualReview?: boolean },
     ): GrabShiftApplication {
+      this.assertCourseGateForEmployee(data.employeeId, 'schedule')
       const slot = this.grabShiftSlots.find((s) => s.id === data.slotId)
       if (!slot) throw new Error('抢班班次不存在')
       if (slot.status === 'cancelled' || slot.status === 'full') {
@@ -1223,6 +1845,17 @@ export const useAppStore = defineStore('app', {
       return item
     },
 
+    addSystemOperationLog(log: Omit<SystemOperationLog, 'id' | 'operatedAt'>) {
+      const item: SystemOperationLog = {
+        ...log,
+        id: generateId('oplog'),
+        operatedAt: new Date().toISOString(),
+      }
+      this.systemOperationLogs.unshift(item)
+      this.persist('systemOperationLogs')
+      return item
+    },
+
     submitOvertimeRequest(data: Omit<OvertimeRequest, 'id' | 'status' | 'createdAt'>) {
       const item: OvertimeRequest = {
         ...data,
@@ -1301,7 +1934,10 @@ export const useAppStore = defineStore('app', {
       if (!source) throw new Error('工作流不存在')
       return this.addTaskWorkflow({
         name: `${source.name}（副本）`,
-        industryTags: [...source.industryTags],
+        description: source.description,
+        enterpriseScope: source.enterpriseScope,
+        enterpriseIds: source.enterpriseIds ? [...source.enterpriseIds] : undefined,
+        fields: source.fields?.map((f) => ({ ...f, id: generateId('field'), nodeIds: [...f.nodeIds] })),
         nodes: source.nodes.map((n) => ({ ...n, id: generateId('node') })),
         status: 'disabled',
       })
@@ -1357,9 +1993,353 @@ export const useAppStore = defineStore('app', {
     },
 
     setCurrentEnterprise(id: string) {
-      if (!seedEnterprises.some((e) => e.id === id)) throw new Error('企业不存在')
+      if (!this.enterprises.some((e) => e.id === id)) throw new Error('企业不存在')
       this.currentEnterpriseId = id
       this.persist('currentEnterpriseId')
+    },
+
+    addEnterprise(
+      data: Omit<Enterprise, 'id' | 'code' | 'createdAt' | 'status' | 'contact'> & {
+        status?: Enterprise['status']
+      },
+    ) {
+      const seq = this.enterprises.length + 158
+      const item: Enterprise = {
+        ...data,
+        id: generateId('ent'),
+        code: generateEnterpriseCode(seq),
+        status: data.status ?? 'active',
+        createdAt: new Date().toISOString().slice(0, 10),
+        contact: data.contactPerson,
+      }
+      this.enterprises.unshift(item)
+      this.persist('enterprises')
+      this.ensureEnterpriseRoles(item.id)
+      return item
+    },
+
+    updateEnterprise(id: string, data: Partial<Omit<Enterprise, 'id' | 'code' | 'createdAt'>>) {
+      const ent = this.enterprises.find((e) => e.id === id)
+      if (!ent) throw new Error('企业不存在')
+      Object.assign(ent, data)
+      if (data.contactPerson) ent.contact = data.contactPerson
+      this.persist('enterprises')
+    },
+
+    updateEnterpriseSettlementConfig(
+      enterpriseId: string,
+      data: Pick<
+        EnterpriseSettlementConfig,
+        'dayShiftRate' | 'nightShiftRate' | 'overtime' | 'weekend' | 'holiday' | 'taskUnitPrice'
+      >,
+    ) {
+      const now = new Date().toISOString()
+      const idx = this.enterpriseSettlementConfigs.findIndex((c) => c.enterpriseId === enterpriseId)
+      const item: EnterpriseSettlementConfig = normalizeEnterpriseSettlementConfig({
+        enterpriseId,
+        ...data,
+        updatedAt: now,
+      })
+      if (idx >= 0) {
+        this.enterpriseSettlementConfigs[idx] = item
+      } else {
+        this.enterpriseSettlementConfigs.push(item)
+      }
+      this.persist('enterpriseSettlementConfigs')
+    },
+
+    upsertAttendanceGroupSettlementOverride(
+      data: Omit<AttendanceGroupSettlementOverride, 'updatedAt'> & { updatedAt?: string },
+    ) {
+      const now = new Date().toISOString()
+      const idx = this.attendanceGroupSettlementOverrides.findIndex(
+        (o) =>
+          o.attendanceGroupId === data.attendanceGroupId && o.enterpriseId === data.enterpriseId,
+      )
+      const item: AttendanceGroupSettlementOverride = {
+        ...data,
+        updatedAt: now,
+      }
+      if (idx >= 0) {
+        this.attendanceGroupSettlementOverrides[idx] = item
+      } else {
+        this.attendanceGroupSettlementOverrides.push(item)
+      }
+      this.persist('attendanceGroupSettlementOverrides')
+    },
+
+    upsertTaskTypeSettlementOverride(
+      data: Omit<TaskTypeSettlementOverride, 'updatedAt'> & { updatedAt?: string },
+    ) {
+      const now = new Date().toISOString()
+      const idx = this.taskTypeSettlementOverrides.findIndex(
+        (o) => o.taskTypeId === data.taskTypeId && o.enterpriseId === data.enterpriseId,
+      )
+      const item: TaskTypeSettlementOverride = {
+        ...data,
+        updatedAt: now,
+      }
+      if (idx >= 0) {
+        this.taskTypeSettlementOverrides[idx] = item
+      } else {
+        this.taskTypeSettlementOverrides.push(item)
+      }
+      this.persist('taskTypeSettlementOverrides')
+    },
+
+    upsertProviderFundAccount(
+      data: Omit<ProviderFundAccount, 'id' | 'createdAt' | 'updatedAt' | 'balance'> & {
+        id?: string
+        balance?: number
+      },
+    ) {
+      const now = new Date().toISOString()
+      const idx = data.id
+        ? this.providerFundAccounts.findIndex((account) => account.id === data.id)
+        : -1
+      const item: ProviderFundAccount = {
+        id: data.id ?? generateId('fa'),
+        providerId: data.providerId,
+        name: data.name,
+        accountType: data.accountType,
+        balance: data.balance ?? (idx >= 0 ? this.providerFundAccounts[idx].balance : 0),
+        status: data.status,
+        alipayConfig: data.alipayConfig,
+        cmbConfig: data.cmbConfig,
+        isDefault: data.isDefault,
+        remark: data.remark,
+        createdAt: idx >= 0 ? this.providerFundAccounts[idx].createdAt : now,
+        updatedAt: now,
+      }
+      if (idx >= 0) {
+        this.providerFundAccounts[idx] = item
+      } else {
+        this.providerFundAccounts.push(item)
+      }
+      this.persist('providerFundAccounts')
+      return item
+    },
+
+    toggleEnterpriseTenantStatus(id: string) {
+      const ent = this.enterprises.find((e) => e.id === id)
+      if (!ent) throw new Error('企业不存在')
+      if (ent.status === 'terminated') throw new Error('已终止合作的企业不可启用')
+      ent.tenantDisabled = !ent.tenantDisabled
+      this.persist('enterprises')
+    },
+
+    updateEnterpriseModules(id: string, modules: Enterprise['serviceModules']) {
+      const ent = this.enterprises.find((e) => e.id === id)
+      if (!ent) throw new Error('企业不存在')
+      ent.serviceModules = normalizeEnterpriseModules(modules)
+      this.persist('enterprises')
+    },
+
+    getAccountsByEnterprise(enterpriseId: string) {
+      return this.systemAccounts.filter(
+        (a) => a.accountPortal === 'enterprise' && a.enterpriseId === enterpriseId,
+      )
+    },
+
+    ensureEnterpriseAdminAccount(enterprise: Enterprise, password?: string) {
+      const admin = enterprise.adminAccount
+      if (!admin) return null
+      this.ensureEnterpriseOrgStructure(enterprise.id)
+      const rootDept = this.departments.find(
+        (d) => d.enterpriseId === enterprise.id && d.parentId === null,
+      )
+      const entAdminRole = findEnterpriseRoleByCode(this.systemRoles, enterprise.id, 'ent_admin')
+
+      const existing = this.systemAccounts.find(
+        (a) =>
+          a.accountPortal === 'enterprise' &&
+          a.enterpriseId === enterprise.id &&
+          a.phone === admin.phone,
+      )
+
+      const pwd = password ?? admin.initialPassword ?? '123456'
+      const payload = {
+        username: existing?.username ?? `ent_${enterprise.code.replace(/[^a-zA-Z0-9]/g, '').slice(-8).toLowerCase() || enterprise.id.slice(-6)}`,
+        displayName: admin.name,
+        phone: admin.phone,
+        roleIds: [entAdminRole?.id ?? `role_ent_admin_${enterprise.id}`],
+        departmentId: rootDept?.id ?? 'dept_hr',
+        accountPortal: 'enterprise' as const,
+        enterpriseId: enterprise.id,
+        status: 'enabled' as const,
+      }
+
+      if (existing) {
+        this.updateSystemAccount(existing.id, {
+          displayName: payload.displayName,
+          phone: payload.phone,
+          roleIds: payload.roleIds,
+        })
+        return existing
+      }
+
+      const account = this.createSystemAccount(payload)
+      enterprise.adminAccount = {
+        ...admin,
+        initialPassword: pwd,
+        passwordMode: admin.passwordMode ?? 'auto',
+      }
+      this.persist('enterprises')
+      return account
+    },
+
+    resetEnterpriseTenantPassword(enterpriseId: string) {
+      const ent = this.enterprises.find((e) => e.id === enterpriseId)
+      if (!ent) throw new Error('企业不存在')
+      const accounts = this.getAccountsByEnterprise(enterpriseId)
+      const primary =
+        accounts.find((a) => a.phone === ent.adminAccount?.phone) ?? accounts[0]
+      if (!primary) throw new Error('该企业暂无登录账号')
+      this.resetAccountPassword(primary.id)
+      if (ent.adminAccount) {
+        ent.adminAccount.initialPassword = '123456'
+        this.persist('enterprises')
+      }
+      return primary
+    },
+
+    terminateEnterprise(id: string) {
+      const ent = this.enterprises.find((e) => e.id === id)
+      if (!ent) throw new Error('企业不存在')
+      ent.status = 'terminated'
+      this.persist('enterprises')
+    },
+
+    addServiceContract(
+      data: Omit<
+        ServiceContract,
+        | 'id'
+        | 'contractNo'
+        | 'status'
+        | 'createdAt'
+        | 'updatedAt'
+        | 'operationLogs'
+        | 'attachments'
+        | 'currency'
+      > & { currency?: string },
+    ) {
+      const seq = this.serviceContracts.length + 158
+      const now = new Date().toISOString()
+      const item: ServiceContract = {
+        ...data,
+        id: generateId('sc'),
+        contractNo: generateContractNo(seq),
+        currency: data.currency ?? 'CNY',
+        status: 'active',
+        attachments: [],
+        operationLogs: [
+          {
+            id: generateId('log'),
+            operator: '平台运营',
+            action: '创建了合约',
+            createdAt: new Date().toLocaleString('zh-CN'),
+          },
+        ],
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.serviceContracts.unshift(item)
+      this.persist('serviceContracts')
+      return item
+    },
+
+    updateServiceContract(
+      id: string,
+      data: Partial<
+        Omit<ServiceContract, 'id' | 'contractNo' | 'createdAt' | 'operationLogs' | 'attachments'>
+      >,
+    ) {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合约不存在')
+      Object.assign(contract, data, { updatedAt: new Date().toISOString() })
+      contract.operationLogs = [
+        ...(contract.operationLogs ?? []),
+        {
+          id: generateId('log'),
+          operator: '平台运营',
+          action: '修改了合约配置',
+          createdAt: new Date().toLocaleString('zh-CN'),
+        },
+      ]
+      this.persist('serviceContracts')
+      return contract
+    },
+
+    terminateServiceContract(id: string) {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合约不存在')
+      contract.status = 'terminated'
+      contract.updatedAt = new Date().toISOString()
+      contract.operationLogs = [
+        ...(contract.operationLogs ?? []),
+        {
+          id: generateId('log'),
+          operator: '平台运营',
+          action: '终止了合约合作',
+          createdAt: new Date().toLocaleString('zh-CN'),
+        },
+      ]
+      this.persist('serviceContracts')
+    },
+
+    renewServiceContract(id: string) {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合约不存在')
+      const base = contract.expiryDate ? new Date(contract.expiryDate) : new Date()
+      base.setFullYear(base.getFullYear() + 1)
+      contract.expiryDate = base.toISOString().slice(0, 10)
+      contract.status = 'active'
+      contract.updatedAt = new Date().toISOString()
+      contract.operationLogs = [
+        ...(contract.operationLogs ?? []),
+        {
+          id: generateId('log'),
+          operator: '平台运营',
+          action: '完成合约续约，到期日已延长一年',
+          createdAt: new Date().toLocaleString('zh-CN'),
+        },
+      ]
+      this.persist('serviceContracts')
+    },
+
+    addServiceProvider(
+      data: Omit<
+        ServiceProvider,
+        'id' | 'code' | 'status' | 'linkedEnterpriseIds' | 'createdAt' | 'updatedAt'
+      > & { status?: ServiceProvider['status'] },
+    ) {
+      const seq = this.serviceProviders.length + 1
+      const now = new Date().toISOString()
+      const item: ServiceProvider = {
+        ...data,
+        id: generateId('sp'),
+        code: generateServiceProviderCode(seq),
+        status: data.status ?? 'cooperating',
+        linkedEnterpriseIds: [],
+        signContractTemplates: data.signContractTemplates ?? [],
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.serviceProviders.unshift(item)
+      this.persist('serviceProviders')
+      return item
+    },
+
+    updateServiceProvider(id: string, data: Partial<ServiceProvider>) {
+      const provider = this.serviceProviders.find((p) => p.id === id)
+      if (!provider) throw new Error('服务商不存在')
+      Object.assign(provider, data, { updatedAt: new Date().toISOString() })
+      this.persist('serviceProviders')
+      return provider
+    },
+
+    updateServiceProviderStatus(id: string, status: ServiceProvider['status']) {
+      return this.updateServiceProvider(id, { status })
     },
 
     addEnterpriseTaskType(
@@ -1377,7 +2357,7 @@ export const useAppStore = defineStore('app', {
         | 'reviewNote'
       >,
     ) {
-      const ent = seedEnterprises.find((e) => e.id === enterpriseId)
+      const ent = this.enterprises.find((e) => e.id === enterpriseId)
       if (!ent) throw new Error('企业不存在')
       const item: TaskType = {
         ...data,
@@ -1409,7 +2389,7 @@ export const useAppStore = defineStore('app', {
         throw new Error('当前状态不可提交审批')
       }
       tt.status = 'pending'
-      tt.applicant = applicant ?? seedEnterprises.find((e) => e.id === tt.enterpriseId)?.contact
+      tt.applicant = applicant ?? this.enterprises.find((e) => e.id === tt.enterpriseId)?.contact
       tt.submittedAt = new Date().toISOString()
       tt.reviewedBy = undefined
       tt.reviewedAt = undefined
@@ -1446,7 +2426,7 @@ export const useAppStore = defineStore('app', {
         | 'createdAt'
       >,
     ) {
-      const ent = seedEnterprises.find((e) => e.id === enterpriseId)
+      const ent = this.enterprises.find((e) => e.id === enterpriseId)
       const tt = this.taskTypes.find((t) => t.id === data.taskTypeId)
       if (!ent) throw new Error('企业不存在')
       if (!tt || tt.enterpriseId !== enterpriseId) throw new Error('任务类型不存在')
@@ -1509,6 +2489,20 @@ export const useAppStore = defineStore('app', {
     },
 
     reviewTaskInstance(instanceId: string, approved: boolean, reviewNote = '') {
+      this.executeEnterpriseInstanceAction(instanceId, approved ? 'confirm' : 'reject', {
+        note: reviewNote,
+      })
+    },
+
+    executeEnterpriseInstanceAction(
+      instanceId: string,
+      action: import('@/types').WorkflowAction,
+      options: {
+        note?: string
+        fieldValues?: Record<string, string | number | boolean>
+        operator?: string
+      } = {},
+    ) {
       const instance = this.taskInstances.find((i) => i.id === instanceId)
       if (!instance) throw new Error('任务实例不存在')
 
@@ -1516,35 +2510,253 @@ export const useAppStore = defineStore('app', {
       const workflow = this.taskWorkflows.find((w) => w.id === task?.workflowId)
       if (!task || !workflow) throw new Error('关联任务或工作流不存在')
 
-      const reviewNode = getEnterpriseReviewNode(workflow)
-      if (!reviewNode || instance.currentNodeId !== reviewNode.id) {
-        throw new Error('该实例不在企业验收节点')
+      const currentNode = getNodeById(workflow.nodes, instance.currentNodeId)
+      if (!currentNode || currentNode.role !== 'enterprise') {
+        throw new Error('当前节点无需企业操作')
       }
+      if (!nodeHasAction(currentNode, action)) {
+        throw new Error('当前节点不支持该操作')
+      }
+
+      const nodeId = instance.currentNodeId
+      if (options.fieldValues) {
+        instance.fieldValues = { ...(instance.fieldValues ?? {}), ...options.fieldValues }
+      }
+      validateWorkflowNodeFields(workflow, nodeId, instance.fieldValues ?? {})
+
+      const nodeFields = getWorkflowFieldsForNode(workflow, nodeId)
+      const note =
+        options.note?.trim() ||
+        extractEnterpriseActionNote(nodeFields, instance.fieldValues ?? {}, action) ||
+        ''
+      const operator = options.operator ?? '企业'
+
+      if (action === 'reject' && !note) {
+        throw new Error('请填写驳回原因')
+      }
+      if (action === 'cancel' && !note) {
+        throw new Error('请填写中止原因')
+      }
+
+      const targetId = resolveActionTargetNodeId(currentNode, action, workflow.nodes)
+      let target = targetId ? getNodeById(workflow.nodes, targetId) : undefined
+      if (!target) throw new Error('流程流转失败')
 
       const now = new Date().toISOString()
-      instance.updatedAt = now
+      const prevName = instance.currentNodeName
 
-      if (approved) {
-        const endNode = getWorkflowEndNode(workflow)
-        if (!endNode) throw new Error('工作流缺少结束节点')
-        instance.currentNodeId = endNode.id
-        instance.currentNodeName = endNode.name
-        task.approvedCount += 1
-      } else {
-        const execNode = getWorkerExecutingNode(workflow)
-        if (!execNode) throw new Error('工作流缺少执行节点')
-        instance.currentNodeId = execNode.id
-        instance.currentNodeName = execNode.name
-        task.completedCount = Math.max(0, task.completedCount - 1)
+      instance.currentNodeId = target.id
+      instance.currentNodeName = target.name
+
+      if (action === 'confirm' || action === 'approve') {
+        target = advanceThroughSystemNodes(workflow, target)
+        instance.currentNodeId = target.id
+        instance.currentNodeName = target.name
       }
+
+      instance.updatedAt = now
+      instance.timeoutAt = undefined
+
+      if (!instance.logs) instance.logs = []
+      instance.logs.forEach((l) => {
+        if (l.tag === '当前') l.tag = undefined
+      })
+
+      let logTitle = `企业操作：${prevName}`
+      let logDesc = note
+
+      if (action === 'confirm' || action === 'approve') {
+        logTitle = '企业审核通过'
+        logDesc = note || '审核通过，任务已完成'
+        if (isWorkflowCompletedEndNode(target)) {
+          task.completedCount += instance.claimQuantity ?? 1
+        }
+        this.addMiniAppMessage(
+          instance.workerId,
+          'task',
+          '任务审核通过',
+          `「${instance.taskName}」已通过企业审核${note ? `：${note}` : ''}。`,
+        )
+        this.pushNotification({
+          title: '任务审核通过',
+          content: `「${instance.taskName}」${instance.workerName} 的提交已通过${note ? `：${note}` : ''}`,
+          type: 'approval',
+        })
+      } else if (action === 'reject') {
+        logTitle = '企业审核驳回'
+        logDesc = note || '已驳回，需重新提交'
+        this.addMiniAppMessage(
+          instance.workerId,
+          'task',
+          '任务被驳回',
+          `「${instance.taskName}」未通过审核，请修改后重新提交${note ? `。原因：${note}` : ''}。`,
+        )
+        this.pushNotification({
+          title: '任务审核驳回',
+          content: `「${instance.taskName}」${instance.workerName} 的提交已驳回${note ? `：${note}` : ''}`,
+          type: 'approval',
+        })
+      } else if (action === 'cancel') {
+        logTitle = '企业中止任务'
+        logDesc = note || '企业结束任务，认领已中止'
+        this.addMiniAppMessage(
+          instance.workerId,
+          'task',
+          '任务已中止',
+          `「${instance.taskName}」已被企业中止${note ? `。原因：${note}` : ''}。`,
+        )
+        this.pushNotification({
+          title: '任务已中止',
+          content: `「${instance.taskName}」${instance.workerName} 的认领已中止${note ? `：${note}` : ''}`,
+          type: 'approval',
+        })
+      }
+
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: logTitle,
+        tag: '企业操作',
+        operator,
+        time: now,
+        description: logDesc,
+        kind: 'manual',
+      })
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: `进入「${target.name}」节点`,
+        tag: '当前',
+        operator,
+        time: now,
+        description:
+          action === 'reject'
+            ? '驳回后灵工需重新执行并提交。'
+            : action === 'cancel'
+              ? '任务已中止。'
+              : '审核通过后进入该节点。',
+        kind: 'system',
+      })
 
       this.persist('taskInstances')
       this.persist('tasks')
-      this.pushNotification({
-        title: approved ? '任务验收通过' : '任务验收驳回',
-        content: `「${instance.taskName}」${instance.workerName} 的提交已${approved ? '通过' : '驳回'}${reviewNote ? `：${reviewNote}` : ''}`,
-        type: 'approval',
+    },
+
+    appendTaskInstanceLog(instanceId: string, log: Omit<TaskInstanceLog, 'id'>) {
+      const instance = this.taskInstances.find((i) => i.id === instanceId)
+      if (!instance) throw new Error('任务实例不存在')
+      if (!instance.logs) instance.logs = []
+      instance.logs.push({ ...log, id: generateId('tilog') })
+      instance.updatedAt = log.time
+    },
+
+    forceTransferTaskInstance(instanceId: string, targetNodeId: string, operator = '管理员') {
+      const instance = this.taskInstances.find((i) => i.id === instanceId)
+      if (!instance) throw new Error('任务实例不存在')
+      const task = this.tasks.find((t) => t.id === instance.taskId)
+      const workflow = this.taskWorkflows.find((w) => w.id === task?.workflowId)
+      if (!task || !workflow) throw new Error('关联任务或工作流不存在')
+      const target = getNodeById(workflow.nodes, targetNodeId)
+      if (!target) throw new Error('目标节点不存在')
+
+      const now = new Date().toISOString()
+      const prevName = instance.currentNodeName
+      instance.currentNodeId = target.id
+      instance.currentNodeName = target.name
+      instance.updatedAt = now
+      instance.timeoutAt = undefined
+
+      if (!instance.logs) instance.logs = []
+      instance.logs.forEach((l) => {
+        if (l.tag === '当前') l.tag = undefined
       })
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: `人工干预：强制流转节点`,
+        tag: '人工干预',
+        operator,
+        time: now,
+        description: `从「${prevName}」强制流转至「${target.name}」。`,
+        kind: 'manual',
+      })
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: `进入「${target.name}」节点`,
+        tag: '当前',
+        operator,
+        time: now,
+        description: '管理员强制流转后进入该节点。',
+        kind: 'system',
+      })
+
+      this.persist('taskInstances')
+    },
+
+    reassignTaskInstance(instanceId: string, newWorkerId: string, operator = '管理员') {
+      const instance = this.taskInstances.find((i) => i.id === instanceId)
+      if (!instance) throw new Error('任务实例不存在')
+      const emp = this.employees.find((e) => e.id === newWorkerId)
+      if (!emp) throw new Error('灵工不存在')
+      if (emp.id === instance.workerId) throw new Error('请选择不同的灵工')
+      this.assertCourseGateForEmployee(newWorkerId, 'task')
+
+      const now = new Date().toISOString()
+      const prevWorker = instance.workerName
+      instance.workerId = emp.id
+      instance.workerName = emp.name
+      instance.updatedAt = now
+
+      if (!instance.logs) instance.logs = []
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: '操作日志：人工干预-转派',
+        tag: '人工干预',
+        operator,
+        time: now,
+        description: `因原灵工未及时响应，将任务从「${prevWorker}」转派至「${emp.name}」。`,
+        kind: 'manual',
+      })
+
+      this.persist('taskInstances')
+      this.addMiniAppMessage(
+        emp.id,
+        'task',
+        '任务转派通知',
+        `您已被转派任务「${instance.taskName}」，请尽快处理。`,
+      )
+    },
+
+    forceCancelTaskInstance(instanceId: string, reason: string, operator = '管理员') {
+      const instance = this.taskInstances.find((i) => i.id === instanceId)
+      if (!instance) throw new Error('任务实例不存在')
+      const task = this.tasks.find((t) => t.id === instance.taskId)
+      const workflow = this.taskWorkflows.find((w) => w.id === task?.workflowId)
+      if (!task || !workflow) throw new Error('关联任务或工作流不存在')
+
+      const cancelNode = getCancelledEndNode(workflow.nodes)
+      if (!cancelNode) throw new Error('工作流缺少取消节点')
+
+      const now = new Date().toISOString()
+      instance.currentNodeId = cancelNode.id
+      instance.currentNodeName = cancelNode.name
+      instance.updatedAt = now
+      instance.timeoutAt = undefined
+      task.acceptedCount = Math.max(0, task.acceptedCount - instance.claimQuantity)
+
+      if (!instance.logs) instance.logs = []
+      instance.logs.forEach((l) => {
+        if (l.tag === '当前') l.tag = undefined
+      })
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: '人工干预：强制取消任务',
+        tag: '人工干预',
+        operator,
+        time: now,
+        description: reason,
+        kind: 'manual',
+      })
+
+      this.persist('taskInstances')
+      this.persist('tasks')
     },
 
     suggestTaskName(taskTypeId: string) {
@@ -1575,14 +2787,14 @@ export const useAppStore = defineStore('app', {
     publishJobRequirement(id: string) {
       const req = this.jobRequirements.find((r) => r.id === id)
       if (!req) throw new Error('岗位需求不存在')
-      req.status = 'active'
+      req.status = 'recruiting'
       this.persist('jobRequirements')
     },
 
     closeJobRequirement(id: string) {
       const req = this.jobRequirements.find((r) => r.id === id)
       if (!req) throw new Error('岗位需求不存在')
-      req.status = 'closed'
+      req.status = 'completed'
       this.persist('jobRequirements')
     },
 
@@ -1608,6 +2820,57 @@ export const useAppStore = defineStore('app', {
       this.persist('recruitmentLeads')
     },
 
+    transitionLeadStatus(
+      id: string,
+      targetStatus: RecruitmentLead['status'],
+      options?: { feedback?: string; deviateReason?: string; interviewScore?: number },
+    ) {
+      const lead = this.recruitmentLeads.find((l) => l.id === id)
+      if (!lead) throw new Error('线索不存在')
+      const from = lead.status
+      if (from === targetStatus) return
+
+      if (from === 'feedback_pending' && targetStatus === 'interview_pending') {
+        const cur = lead.currentRound ?? 1
+        const total = lead.totalRounds ?? 1
+        if (cur >= total) throw new Error('已是最后一轮面试')
+        lead.currentRound = cur + 1
+      }
+
+      if (
+        from === 'feedback_pending' &&
+        ['salary_negotiation', 'onboarding_pending'].includes(targetStatus) &&
+        (lead.currentRound ?? 1) < (lead.totalRounds ?? 1)
+      ) {
+        lead.ext = {
+          ...lead.ext,
+          deviated: true,
+          deviateReason: options?.deviateReason ?? `提前通过（跳过第 ${(lead.currentRound ?? 1) + 1} 轮）`,
+        }
+      }
+
+      lead.status = targetStatus
+      if (options?.feedback) lead.interviewFeedback = options.feedback
+      if (options?.interviewScore != null) {
+        lead.ext = { ...lead.ext, interviewScore: options.interviewScore }
+      }
+      lead.ext = {
+        ...lead.ext,
+        flowLog: [
+          ...(lead.ext?.flowLog ?? []),
+          { at: new Date().toISOString(), from, to: targetStatus, note: options?.feedback },
+        ],
+      }
+      lead.updatedAt = new Date().toISOString()
+
+      if (targetStatus === 'onboarded') {
+        const req = this.jobRequirements.find((r) => r.id === lead.requirementId)
+        if (req) req.filledCount += 1
+        this.persist('jobRequirements')
+      }
+      this.persist('recruitmentLeads')
+    },
+
     advanceLeadStatus(id: string, feedback?: string) {
       const lead = this.recruitmentLeads.find((l) => l.id === id)
       if (!lead) throw new Error('线索不存在')
@@ -1615,16 +2878,7 @@ export const useAppStore = defineStore('app', {
       if (idx < 0 || idx >= RECRUITMENT_STATUS_FLOW.length - 1) {
         throw new Error('已是最终状态')
       }
-      lead.status = RECRUITMENT_STATUS_FLOW[idx + 1]
-      if (feedback) lead.interviewFeedback = feedback
-      lead.updatedAt = new Date().toISOString()
-
-      if (lead.status === 'onboarded') {
-        const req = this.jobRequirements.find((r) => r.id === lead.requirementId)
-        if (req) req.filledCount += 1
-        this.persist('jobRequirements')
-      }
-      this.persist('recruitmentLeads')
+      this.transitionLeadStatus(id, RECRUITMENT_STATUS_FLOW[idx + 1], { feedback })
     },
 
     setLeadStatus(id: string, status: RecruitmentLead['status'], note?: string) {
@@ -1659,7 +2913,7 @@ export const useAppStore = defineStore('app', {
       const talent = this.talents.find((t) => t.id === talentId)
       const req = this.jobRequirements.find((r) => r.id === requirementId)
       if (!talent || !req) throw new Error('人才或岗位不存在')
-      if (req.status !== 'active') throw new Error('岗位未在招聘中')
+      if (req.status !== 'recruiting') throw new Error('岗位未在招聘中')
 
       const lead = this.addRecruitmentLead({
         requirementId: req.id,
@@ -1672,6 +2926,8 @@ export const useAppStore = defineStore('app', {
         position: req.title,
         source: talent.source,
         status: 'screening',
+        currentRound: 1,
+        totalRounds: req.interviewRounds ?? 1,
         talentId: talent.id,
       })
       talent.status = 'in_process'
@@ -1680,15 +2936,20 @@ export const useAppStore = defineStore('app', {
       return lead
     },
 
-    addAttendanceGroup(data: Omit<AttendanceGroup, 'id' | 'code' | 'createdAt' | 'updatedAt'>) {
+    addAttendanceGroup(data: Omit<AttendanceGroup, 'id' | 'code' | 'createdAt' | 'updatedAt' | 'currentVersion' | 'versions'>) {
       const now = new Date().toISOString()
       const seq = this.attendanceGroups.length + 1
       const item: AttendanceGroup = {
         ...data,
         id: generateId('ag'),
         code: `HQ-ATT-${String(seq).padStart(3, '0')}`,
+        currentVersion: 0,
+        versions: [],
         createdAt: now,
         updatedAt: now,
+      }
+      if (item.attendanceType === 'none') {
+        delete item.pricingConfig
       }
       this.attendanceGroups.unshift(item)
       this.persist('attendanceGroups')
@@ -1698,8 +2959,53 @@ export const useAppStore = defineStore('app', {
     updateAttendanceGroup(id: string, data: Partial<AttendanceGroup>) {
       const group = this.attendanceGroups.find((g) => g.id === id)
       if (!group) throw new Error('考勤组不存在')
-      Object.assign(group, data, { updatedAt: new Date().toISOString() })
+      const payload = { ...data }
+      if (payload.attendanceType === 'none' || group.attendanceType === 'none') {
+        delete payload.pricingConfig
+      }
+      if (payload.attendanceType === 'none') {
+        group.pricingConfig = undefined
+      }
+      Object.assign(group, payload, { updatedAt: new Date().toISOString() })
       this.persist('attendanceGroups')
+    },
+
+    publishAttendanceGroup(
+      id: string,
+      data: Partial<Omit<AttendanceGroup, 'id' | 'code' | 'createdAt' | 'currentVersion' | 'versions'>>,
+      changeNote?: string,
+    ) {
+      const group = this.attendanceGroups.find((g) => g.id === id)
+      if (!group) throw new Error('考勤组不存在')
+      const payload = { ...data }
+      if (payload.attendanceType === 'none' || group.attendanceType === 'none') {
+        delete payload.pricingConfig
+      }
+      Object.assign(group, payload, {
+        status: 'enabled',
+        updatedAt: new Date().toISOString(),
+      })
+      if (group.attendanceType === 'none') {
+        group.pricingConfig = undefined
+      }
+
+      const nextVersion = (group.currentVersion || 0) + 1
+      group.versions.forEach((v) => {
+        v.isActive = false
+      })
+      const record = buildVersionRecord(group, nextVersion, changeNote)
+      group.versions.unshift(record)
+      group.currentVersion = nextVersion
+      this.persist('attendanceGroups')
+      return record
+    },
+
+    publishNewAttendanceGroup(
+      data: Omit<AttendanceGroup, 'id' | 'code' | 'createdAt' | 'updatedAt' | 'currentVersion' | 'versions'>,
+      changeNote?: string,
+    ) {
+      const item = this.addAttendanceGroup({ ...data, status: 'enabled' })
+      return this.publishAttendanceGroup(item.id, {}, changeNote || '首次发布')
     },
 
     updateGroupScheduleRule(groupId: string, rule: ScheduleRule) {
@@ -1722,6 +3028,116 @@ export const useAppStore = defineStore('app', {
       this.persist('attendanceGroups')
     },
 
+    getWeeklyShiftDemandPlan(teamId: string, weekStart: string) {
+      return this.weeklyShiftDemandPlans.find(
+        (p) => p.teamId === teamId && p.weekStart === weekStart,
+      )
+    },
+
+    saveWeeklyShiftDemandPlan(data: {
+      teamId: string
+      weekStart: string
+      weekEnd: string
+      cells: ShiftDemandDayCell[]
+      status: WeeklyShiftDemandPlan['status']
+    }) {
+      const now = new Date().toISOString()
+      const existing = this.getWeeklyShiftDemandPlan(data.teamId, data.weekStart)
+      if (existing) {
+        existing.cells = data.cells.map((c) => ({ ...c }))
+        existing.status = data.status
+        existing.weekEnd = data.weekEnd
+        existing.updatedAt = now
+      } else {
+        const item: WeeklyShiftDemandPlan = {
+          id: generateId('wdp'),
+          teamId: data.teamId,
+          weekStart: data.weekStart,
+          weekEnd: data.weekEnd,
+          cells: data.cells.map((c) => ({ ...c })),
+          status: data.status,
+          createdAt: now,
+          updatedAt: now,
+        }
+        this.weeklyShiftDemandPlans.push(item)
+      }
+      this.persist('weeklyShiftDemandPlans')
+    },
+
+    getTeamCycleScheduleRules(teamId: string) {
+      return this.teamCycleScheduleRules.filter((r) => r.teamId === teamId)
+    },
+
+    saveTeamCycleScheduleRule(
+      data: Omit<TeamCycleScheduleRule, 'id' | 'createdAt' | 'updatedAt'> & { id?: string },
+    ) {
+      const now = new Date().toISOString()
+      if (data.id) {
+        const rule = this.teamCycleScheduleRules.find((r) => r.id === data.id)
+        if (!rule) throw new Error('周期规则不存在')
+        Object.assign(rule, data, { updatedAt: now })
+      } else {
+        const item: TeamCycleScheduleRule = {
+          ...data,
+          id: generateId('csr'),
+          createdAt: now,
+          updatedAt: now,
+        }
+        this.teamCycleScheduleRules.push(item)
+      }
+      this.persist('teamCycleScheduleRules')
+    },
+
+    removeTeamCycleScheduleRule(id: string) {
+      this.teamCycleScheduleRules = this.teamCycleScheduleRules.filter((r) => r.id !== id)
+      this.persist('teamCycleScheduleRules')
+    },
+
+    applyTeamCycleScheduleRule(
+      ruleId: string,
+      dates: string[],
+      memberIds: string[],
+    ): number {
+      const rule = this.teamCycleScheduleRules.find((r) => r.id === ruleId)
+      if (!rule) throw new Error('周期规则不存在')
+      if (!dates.length) throw new Error('请指定生成区间')
+      const employeeIds = rule.employeeIds.length ? rule.employeeIds : memberIds
+      const draft = generateCycleSchedule(
+        employeeIds,
+        rule.shiftPattern,
+        dates[0],
+        dates.length,
+        rule.teamId,
+      )
+      draft.forEach((item) => {
+        this.upsertAssignment({
+          ...item,
+          published: false,
+          manualEdited: true,
+        })
+      })
+      rule.lastGeneratedAt = new Date().toISOString()
+      rule.updatedAt = rule.lastGeneratedAt
+      this.persist('teamCycleScheduleRules')
+      return draft.length
+    },
+
+    tryAutoGenerateCycleRules(teamId: string, memberIds: string[], dates: string[]) {
+      let total = 0
+      this.getTeamCycleScheduleRules(teamId)
+        .filter((r) => r.enabled)
+        .forEach((rule) => {
+          const today = new Date().toISOString().slice(0, 10)
+          const leadDate = dates[0] ?? today
+          const shouldRun =
+            !rule.lastGeneratedAt ||
+            rule.lastGeneratedAt.slice(0, 10) < leadDate
+          if (!shouldRun) return
+          total += this.applyTeamCycleScheduleRule(rule.id, dates, memberIds)
+        })
+      return total
+    },
+
     toggleAttendanceGroupStatus(id: string) {
       const group = this.attendanceGroups.find((g) => g.id === id)
       if (!group) throw new Error('考勤组不存在')
@@ -1735,7 +3151,34 @@ export const useAppStore = defineStore('app', {
       this.persist('attendanceGroups')
     },
 
+    addPricingTemplate(name: string, config: AttendanceGroupPricingConfig) {
+      const trimmed = name.trim()
+      if (!trimmed) throw new Error('请填写模版名称')
+      if (this.pricingTemplates.some((t) => t.name === trimmed)) {
+        throw new Error('模版名称已存在')
+      }
+      const now = new Date().toISOString()
+      const item: AttendanceGroupPricingTemplate = {
+        id: generateId('ptpl'),
+        name: trimmed,
+        config: normalizePricingConfig(JSON.parse(JSON.stringify(config))),
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.pricingTemplates.unshift(item)
+      this.persist('pricingTemplates')
+      return item
+    },
+
+    removePricingTemplate(id: string) {
+      this.pricingTemplates = this.pricingTemplates.filter((t) => t.id !== id)
+      this.persist('pricingTemplates')
+    },
+
     createSystemRole(data: Omit<SystemRole, 'id' | 'updatedAt' | 'userCount' | 'isSystem'>) {
+      if (data.rolePortal === 'enterprise' && !data.enterpriseId) {
+        throw new Error('企业端角色必须指定所属企业')
+      }
       const item: SystemRole = {
         ...data,
         id: generateId('role'),
@@ -1749,13 +3192,16 @@ export const useAppStore = defineStore('app', {
     },
 
     updateSystemRole(id: string, data: Partial<SystemRole>) {
-      const role = this.systemRoles.find((r) => r.id === id)
+      const role =
+        this.systemRoles.find((r) => r.id === id) ??
+        this.enterpriseRoleTemplates.find((r) => r.id === id)
       if (!role) throw new Error('角色不存在')
       if (role.isSystem && data.code && data.code !== role.code) {
         throw new Error('系统内置角色不可修改编码')
       }
       Object.assign(role, data, { updatedAt: new Date().toISOString() })
-      this.persist('systemRoles')
+      if (role.isTemplate) this.persist('enterpriseRoleTemplates')
+      else this.persist('systemRoles')
     },
 
     updateRolePermissions(
@@ -1763,13 +3209,70 @@ export const useAppStore = defineStore('app', {
       permissionIds: string[],
       dataScope: SystemRole['dataScope'],
       customDepartmentIds: string[],
+      extras?: {
+        menuPermissions?: SystemRole['menuPermissions']
+        platformDataScope?: SystemRole['platformDataScope']
+        partialEnterpriseIds?: string[]
+      },
     ) {
-      const role = this.systemRoles.find((r) => r.id === id)
+      const role =
+        this.systemRoles.find((r) => r.id === id) ??
+        this.enterpriseRoleTemplates.find((r) => r.id === id)
       if (!role) throw new Error('角色不存在')
       role.permissionIds = permissionIds
       role.dataScope = dataScope
       role.customDepartmentIds = customDepartmentIds
+      if (extras?.menuPermissions) role.menuPermissions = extras.menuPermissions
+      if (extras?.platformDataScope) role.platformDataScope = extras.platformDataScope
+      if (extras?.partialEnterpriseIds) role.partialEnterpriseIds = extras.partialEnterpriseIds
       role.updatedAt = new Date().toISOString()
+      if (role.isTemplate) {
+        this.persist('enterpriseRoleTemplates')
+      } else {
+        this.persist('systemRoles')
+      }
+    },
+
+    ensureEnterpriseRoles(enterpriseId: string) {
+      const existing = this.systemRoles.some(
+        (r) => r.rolePortal === 'enterprise' && r.enterpriseId === enterpriseId,
+      )
+      if (existing) return
+      const roles = buildEnterpriseRolesForAll([{ id: enterpriseId }])
+      this.systemRoles.push(...roles)
+      this.persist('systemRoles')
+    },
+
+    applyRoleTemplateToEnterprise(templateId: string, enterpriseId: string) {
+      const template = this.enterpriseRoleTemplates.find((t) => t.id === templateId)
+      if (!template) throw new Error('模板不存在')
+      const roleId = buildEnterpriseRoleId(enterpriseId, template.code)
+      const existing = this.systemRoles.find((r) => r.id === roleId)
+      const payload = {
+        name: template.name,
+        description: template.description,
+        permissionIds: [...template.permissionIds],
+        menuPermissions: template.menuPermissions?.map((p) => ({ ...p })),
+        dataScope: template.dataScope,
+        customDepartmentIds: [...template.customDepartmentIds],
+        templateId: template.id,
+        updatedAt: new Date().toISOString(),
+      }
+      if (existing) {
+        Object.assign(existing, payload)
+      } else {
+        this.systemRoles.push({
+          ...payload,
+          id: roleId,
+          code: template.code,
+          rolePortal: 'enterprise',
+          enterpriseId,
+          status: template.status,
+          isSystem: false,
+          isTemplate: false,
+          userCount: 0,
+        })
+      }
       this.persist('systemRoles')
     },
 
@@ -1786,7 +3289,7 @@ export const useAppStore = defineStore('app', {
       const role = this.systemRoles.find((r) => r.id === id)
       if (!role) throw new Error('角色不存在')
       if (role.isSystem) throw new Error('系统内置角色不可删除')
-      const boundCount = this.systemAccounts.filter((a) => a.roleId === id).length
+      const boundCount = this.systemAccounts.filter((a) => accountHasRole(a, id)).length
       if (boundCount > 0) throw new Error('该角色下仍有用户，无法删除')
       this.systemRoles = this.systemRoles.filter((r) => r.id !== id)
       this.persist('systemRoles')
@@ -1794,21 +3297,59 @@ export const useAppStore = defineStore('app', {
 
     syncRoleUserCounts() {
       this.systemRoles.forEach((role) => {
-        role.userCount = this.systemAccounts.filter((a) => a.roleId === role.id).length
+        role.userCount = this.systemAccounts.filter((a) => accountHasRole(a, role.id)).length
       })
       this.persist('systemRoles')
+    },
+
+    syncUnassignedDepartment() {
+      if (this.departments.some((d) => isUnassignedDepartment(d.id))) return
+      this.departments.push(createUnassignedDepartment())
+      this.persist('departments')
+    },
+
+    syncEmployeeStatuses() {
+      let changed = false
+      this.employees.forEach((emp) => {
+        const rawStatus = emp.status as string
+        if (rawStatus === 'leave') {
+          emp.status = 'active'
+          changed = true
+        }
+        if (isUnassignedDepartment(emp.departmentId) && emp.status === 'active') {
+          emp.status = 'pending'
+          changed = true
+        }
+        const seed = seedEmployees.find((s) => s.id === emp.id)
+        if (seed && seed.realNameVerified != null && emp.realNameVerified !== seed.realNameVerified) {
+          emp.realNameVerified = seed.realNameVerified
+          changed = true
+        } else if (emp.realNameVerified === undefined) {
+          emp.realNameVerified = false
+          changed = true
+        }
+      })
+      if (changed) this.persist('employees')
+    },
+
+    validateAccountRoles(roleIds: string[]) {
+      if (!roleIds.length) throw new Error('请至少选择一个角色')
+      for (const id of roleIds) {
+        const role = this.systemRoles.find((r) => r.id === id)
+        if (!role) throw new Error('角色不存在')
+        if (role.status === 'disabled') throw new Error(`角色「${role.name}」已停用`)
+      }
     },
 
     createSystemAccount(data: Omit<SystemAccount, 'id' | 'createdAt' | 'updatedAt' | 'lastLoginAt'>) {
       if (this.systemAccounts.some((a) => a.username === data.username)) {
         throw new Error('登录账号已存在')
       }
-      const role = this.systemRoles.find((r) => r.id === data.roleId)
-      if (!role) throw new Error('角色不存在')
-      if (role.status === 'disabled') throw new Error('所选角色已停用')
+      this.validateAccountRoles(data.roleIds)
       const now = new Date().toISOString()
       const item: SystemAccount = {
         ...data,
+        accountPortal: data.accountPortal ?? 'platform',
         id: generateId('acc'),
         createdAt: now,
         updatedAt: now,
@@ -1827,15 +3368,17 @@ export const useAppStore = defineStore('app', {
           throw new Error('登录账号已存在')
         }
       }
-      if (data.roleId && data.roleId !== account.roleId) {
-        const role = this.systemRoles.find((r) => r.id === data.roleId)
-        if (!role) throw new Error('角色不存在')
-        if (role.status === 'disabled') throw new Error('所选角色已停用')
+      if (data.roleIds?.length) {
+        this.validateAccountRoles(data.roleIds)
       }
-      const prevRoleId = account.roleId
+      const prevRoleIds = new Set(account.roleIds)
       Object.assign(account, data, { updatedAt: new Date().toISOString() })
       this.persist('systemAccounts')
-      if (data.roleId && data.roleId !== prevRoleId) {
+      if (
+        data.roleIds &&
+        (data.roleIds.length !== prevRoleIds.size ||
+          data.roleIds.some((id) => !prevRoleIds.has(id)))
+      ) {
         this.syncRoleUserCounts()
       }
     },
@@ -1880,19 +3423,116 @@ export const useAppStore = defineStore('app', {
       this.persist('settlementBills')
     },
 
+    createSettlementBill(input: {
+      enterpriseId: string
+      periodStart: string
+      periodEnd: string
+      sourceType: SettlementBillSourceType
+      billingRuleId?: string
+      billingRuleName?: string
+      excelFileName?: string
+      importTemplateId?: string
+      importTemplateName?: string
+      lines: SettlementBillLine[]
+      payrollTotal: number
+      serviceFee: number
+      serviceFeeRate?: number
+      summary?: SettlementBillSummary
+      remark?: string
+      submit?: boolean
+    }) {
+      const enterprise = this.enterprises.find((e) => e.id === input.enterpriseId)
+      if (!enterprise) throw new Error('企业不存在')
+      const provider = resolveServiceProviderForEnterprise(
+        input.enterpriseId,
+        this.serviceProviders,
+        this.serviceContracts,
+      )
+      const now = new Date().toISOString()
+      const totalPayable = input.payrollTotal + input.serviceFee
+      const bill: SettlementBill = {
+        id: generateId('bill'),
+        billNo: generateBillNo(this.settlementBills),
+        enterpriseId: input.enterpriseId,
+        enterpriseName: enterprise.name,
+        serviceProviderId: provider?.id,
+        serviceProviderName: provider?.name ?? '未关联服务商',
+        periodStart: input.periodStart,
+        periodEnd: input.periodEnd,
+        payrollTotal: input.payrollTotal,
+        serviceFee: input.serviceFee,
+        totalPayable,
+        invoicedAmount: 0,
+        status: input.submit ? 'pending_confirm' : 'pending_submit',
+        lines: input.lines,
+        sourceType: input.sourceType,
+        billingRuleId: input.billingRuleId,
+        billingRuleName: input.billingRuleName,
+        excelFileName: input.excelFileName,
+        importTemplateId: input.importTemplateId,
+        importTemplateName: input.importTemplateName,
+        serviceFeeRate: input.serviceFeeRate,
+        summary: input.summary,
+        pushedAt: input.submit ? now : undefined,
+        remark: input.remark,
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.settlementBills.unshift(bill)
+      this.persist('settlementBills')
+      if (input.submit) {
+        this.pushNotification({
+          title: '账单已提交',
+          content: `账单 ${bill.billNo} 已推送至 ${enterprise.name} 待确认`,
+          type: 'approval',
+        })
+      }
+      return bill
+    },
+
+    submitSettlementBill(id: string) {
+      const bill = this.settlementBills.find((b) => b.id === id)
+      if (!bill) throw new Error('账单不存在')
+      if (bill.status !== 'pending_submit') throw new Error('仅待提交账单可提交')
+      const now = new Date().toISOString()
+      bill.status = 'pending_confirm'
+      bill.pushedAt = now
+      bill.updatedAt = now
+      this.persist('settlementBills')
+      this.pushNotification({
+        title: '账单已提交',
+        content: `账单 ${bill.billNo} 已推送至 ${bill.enterpriseName} 待确认`,
+        type: 'approval',
+      })
+    },
+
+    voidSettlementBill(id: string, reason?: string) {
+      const bill = this.settlementBills.find((b) => b.id === id)
+      if (!bill) throw new Error('账单不存在')
+      if (!['pending_submit', 'pending_confirm', 'pending_payment'].includes(bill.status)) {
+        throw new Error('当前状态不可作废')
+      }
+      bill.status = 'void'
+      bill.voidReason = reason?.trim() || '运营作废'
+      bill.updatedAt = new Date().toISOString()
+      this.persist('settlementBills')
+    },
+
     submitBillPayment(id: string, voucherFileName: string) {
       const bill = this.settlementBills.find((b) => b.id === id)
       if (!bill) throw new Error('账单不存在')
       if (bill.status !== 'pending_payment') throw new Error('当前状态不可付款')
       if (!voucherFileName.trim()) throw new Error('请上传付款凭证')
-      bill.status = 'pending_verify'
+      const now = new Date().toISOString()
+      bill.status = 'paid'
       bill.paymentVoucher = voucherFileName
-      bill.paymentSubmittedAt = new Date().toISOString()
-      bill.updatedAt = new Date().toISOString()
+      bill.paymentSubmittedAt = now
+      bill.paidAt = now
+      bill.updatedAt = now
       this.persist('settlementBills')
       this.pushNotification({
-        title: '付款凭证已提交',
-        content: `账单 ${bill.billNo} 已提交付款凭证，待运营核实`,
+        title: '付款已完成',
+        content: `账单 ${bill.billNo} 已确认付款`,
         type: 'approval',
       })
     },
@@ -1900,45 +3540,253 @@ export const useAppStore = defineStore('app', {
     verifyBillPayment(id: string) {
       const bill = this.settlementBills.find((b) => b.id === id)
       if (!bill) throw new Error('账单不存在')
-      if (bill.status !== 'pending_verify') throw new Error('当前状态不可核实')
-      bill.status = 'paid'
-      bill.paidAt = new Date().toISOString()
-      bill.updatedAt = new Date().toISOString()
-      this.persist('settlementBills')
-      this.pushNotification({
-        title: '到账已确认',
-        content: `账单 ${bill.billNo} 已确认收款`,
-        type: 'system',
-      })
+      if (bill.status === 'pending_payment') {
+        bill.status = 'paid'
+        bill.paidAt = new Date().toISOString()
+        bill.updatedAt = bill.paidAt
+        this.persist('settlementBills')
+        return
+      }
+      if (bill.status !== 'paid') throw new Error('当前状态不可核实')
     },
 
     applyInvoice(
       data: Omit<
         InvoiceApplication,
-        'id' | 'applicationNo' | 'status' | 'createdAt' | 'issuedAt' | 'electronicUrl' | 'expressNo'
-      >,
+        | 'id'
+        | 'applicationNo'
+        | 'status'
+        | 'createdAt'
+        | 'submittedAt'
+        | 'reviewedAt'
+        | 'issuedAt'
+        | 'electronicUrl'
+        | 'expressNo'
+        | 'rejectReason'
+        | 'invoiceFileName'
+      > & { id?: string },
+      options?: { asDraft?: boolean },
     ) {
-      const bill = this.settlementBills.find((b) => b.id === data.billId)
-      if (!bill) throw new Error('关联账单不存在')
-      if (bill.status !== 'paid') throw new Error('仅已支付账单可申请发票')
-      const remaining = bill.totalPayable - bill.invoicedAmount
-      if (data.amount <= 0 || data.amount > remaining) {
-        throw new Error(`开票金额不能超过剩余可开金额 ${remaining}`)
+      return options?.asDraft
+        ? this.saveInvoiceDraft(data)
+        : this.submitInvoiceApplication(data)
+    },
+
+    saveInvoiceDraft(
+      data: Omit<
+        InvoiceApplication,
+        | 'id'
+        | 'applicationNo'
+        | 'status'
+        | 'createdAt'
+        | 'submittedAt'
+        | 'reviewedAt'
+        | 'issuedAt'
+        | 'electronicUrl'
+        | 'expressNo'
+        | 'rejectReason'
+        | 'invoiceFileName'
+      > & { id?: string },
+    ) {
+      this.validateInvoiceApplication(data)
+
+      const now = new Date().toISOString()
+      if (data.id) {
+        const existing = this.invoiceApplications.find((item) => item.id === data.id)
+        if (!existing || existing.status !== 'draft') throw new Error('草稿不存在或不可编辑')
+        Object.assign(existing, data)
+        this.persist('invoiceApplications')
+        return existing
       }
-      const seq = this.invoiceApplications.length + 1
+
       const item: InvoiceApplication = {
         ...data,
         id: generateId('inv'),
-        applicationNo: `INV-${new Date().toISOString().slice(0, 7).replace('-', '')}-${String(seq).padStart(4, '0')}`,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
+        applicationNo: this.nextInvoiceApplicationNo(),
+        status: 'draft',
+        createdAt: now,
       }
-      bill.invoicedAmount += data.amount
-      bill.updatedAt = new Date().toISOString()
       this.invoiceApplications.unshift(item)
       this.persist('invoiceApplications')
-      this.persist('settlementBills')
       return item
+    },
+
+    submitInvoiceApplication(
+      data: Omit<
+        InvoiceApplication,
+        | 'id'
+        | 'applicationNo'
+        | 'status'
+        | 'createdAt'
+        | 'submittedAt'
+        | 'reviewedAt'
+        | 'issuedAt'
+        | 'electronicUrl'
+        | 'expressNo'
+        | 'rejectReason'
+        | 'invoiceFileName'
+      > & { id?: string },
+    ) {
+      this.validateInvoiceApplication(data, data.id)
+
+      const now = new Date().toISOString()
+      let item: InvoiceApplication
+      if (data.id) {
+        const existing = this.invoiceApplications.find((entry) => entry.id === data.id)
+        if (!existing) throw new Error('发票申请不存在')
+        if (!['draft', 'rejected'].includes(existing.status)) {
+          throw new Error('当前状态不可提交')
+        }
+        item = Object.assign(existing, data, {
+          status: 'pending_review',
+          submittedAt: now,
+          rejectReason: undefined,
+        })
+      } else {
+        item = {
+          ...data,
+          id: generateId('inv'),
+          applicationNo: this.nextInvoiceApplicationNo(),
+          status: 'pending_review',
+          createdAt: now,
+          submittedAt: now,
+        }
+        this.invoiceApplications.unshift(item)
+      }
+
+      this.reserveBillInvoiceAmounts(item.bills, now)
+      this.persist('invoiceApplications')
+      this.persist('settlementBills')
+      this.pushNotification({
+        title: '发票申请已提交',
+        content: `${item.applicationNo} 已进入审核流程`,
+        type: 'system',
+      })
+      return item
+    },
+
+    approveInvoiceApplication(id: string) {
+      const item = this.invoiceApplications.find((entry) => entry.id === id)
+      if (!item) throw new Error('发票申请不存在')
+      if (!['pending_review', 'reviewing'].includes(item.status)) {
+        throw new Error('当前状态不可审核通过')
+      }
+      item.status = 'issuing'
+      item.reviewedAt = new Date().toISOString()
+      this.persist('invoiceApplications')
+      return item
+    },
+
+    rejectInvoiceApplication(id: string, reason: string) {
+      const item = this.invoiceApplications.find((entry) => entry.id === id)
+      if (!item) throw new Error('发票申请不存在')
+      if (!['pending_review', 'reviewing'].includes(item.status)) {
+        throw new Error('当前状态不可驳回')
+      }
+      this.releaseBillInvoiceAmounts(item.bills)
+      item.status = 'rejected'
+      item.rejectReason = reason
+      item.reviewedAt = new Date().toISOString()
+      this.persist('invoiceApplications')
+      return item
+    },
+
+    completeInvoiceIssue(id: string, fileName: string) {
+      const item = this.invoiceApplications.find((entry) => entry.id === id)
+      if (!item) throw new Error('发票申请不存在')
+      if (item.status !== 'issuing') throw new Error('当前状态不可上传发票')
+      const now = new Date().toISOString()
+      item.status = 'issued'
+      item.invoiceFileName = fileName
+      item.electronicUrl = `/mock/invoices/${fileName}`
+      item.issuedAt = now
+      this.persist('invoiceApplications')
+      this.pushNotification({
+        title: '发票已开具',
+        content: `${item.applicationNo} 已完成开票`,
+        type: 'system',
+      })
+      return item
+    },
+
+    saveEnterpriseInvoiceProfile(data: EnterpriseInvoiceProfile) {
+      const idx = this.enterpriseInvoiceProfiles.findIndex(
+        (item) => item.enterpriseId === data.enterpriseId,
+      )
+      if (idx >= 0) this.enterpriseInvoiceProfiles[idx] = data
+      else this.enterpriseInvoiceProfiles.push(data)
+      this.persist('enterpriseInvoiceProfiles')
+      return data
+    },
+
+    nextInvoiceApplicationNo() {
+      const now = new Date()
+      const prefix = `INV-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}-`
+      const seq =
+        this.invoiceApplications.filter((item) => item.applicationNo.startsWith(prefix)).length + 1
+      return `${prefix}${String(seq).padStart(3, '0')}`
+    },
+
+    validateInvoiceApplication(
+      data: Pick<InvoiceApplication, 'bills' | 'amount' | 'enterpriseId'>,
+      excludeApplicationId?: string,
+    ) {
+      if (!data.bills.length) throw new Error('请至少选择一张账单')
+      const refsTotal = Math.round(data.bills.reduce((sum, bill) => sum + bill.amount, 0) * 100) / 100
+      if (Math.abs(refsTotal - data.amount) > 0.009) {
+        throw new Error('账单分摊金额与开票金额不一致')
+      }
+
+      let enterpriseId = ''
+      for (const ref of data.bills) {
+        const bill = this.settlementBills.find((item) => item.id === ref.billId)
+        if (!bill) throw new Error(`账单 ${ref.billNo} 不存在`)
+        if (bill.status !== 'paid') throw new Error(`账单 ${ref.billNo} 未完成，不可申请发票`)
+        if (!enterpriseId) enterpriseId = bill.enterpriseId
+        if (bill.enterpriseId !== enterpriseId) throw new Error('请选择同一企业的账单')
+        if (data.enterpriseId && bill.enterpriseId !== data.enterpriseId) {
+          throw new Error('账单企业与申请企业不一致')
+        }
+
+        const draftReserved = this.invoiceApplications
+          .filter(
+            (item) =>
+              item.status === 'draft' &&
+              item.id !== excludeApplicationId &&
+              item.bills.some((entry) => entry.billId === bill.id),
+          )
+          .reduce(
+            (sum, item) =>
+              sum + (item.bills.find((entry) => entry.billId === bill.id)?.amount ?? 0),
+            0,
+          )
+        const remaining = bill.totalPayable - bill.invoicedAmount - draftReserved
+        if (ref.amount <= 0 || ref.amount > remaining + 0.009) {
+          throw new Error(`账单 ${ref.billNo} 分摊金额超过剩余可开金额 ${remaining}`)
+        }
+      }
+
+      if (data.amount <= 0) throw new Error('开票金额必须大于 0')
+    },
+
+    reserveBillInvoiceAmounts(bills: InvoiceApplication['bills'], updatedAt: string) {
+      for (const ref of bills) {
+        const bill = this.settlementBills.find((item) => item.id === ref.billId)
+        if (!bill) throw new Error(`账单 ${ref.billNo} 不存在`)
+        bill.invoicedAmount = Math.round((bill.invoicedAmount + ref.amount) * 100) / 100
+        bill.updatedAt = updatedAt
+      }
+    },
+
+    releaseBillInvoiceAmounts(bills: InvoiceApplication['bills']) {
+      const now = new Date().toISOString()
+      for (const ref of bills) {
+        const bill = this.settlementBills.find((item) => item.id === ref.billId)
+        if (!bill) continue
+        bill.invoicedAmount = Math.max(0, Math.round((bill.invoicedAmount - ref.amount) * 100) / 100)
+        bill.updatedAt = now
+      }
+      this.persist('settlementBills')
     },
 
     saveBillingRule(
@@ -1969,6 +3817,204 @@ export const useAppStore = defineStore('app', {
         })
       }
       this.persist('billingRules')
+    },
+
+    saveBillImportTemplate(
+      data: Omit<BillImportTemplate, 'id' | 'createdAt' | 'updatedAt'> & { id?: string },
+    ) {
+      const now = new Date().toISOString()
+      if (data.id) {
+        const idx = this.billImportTemplates.findIndex((t) => t.id === data.id)
+        if (idx < 0) throw new Error('导入模板不存在')
+        this.billImportTemplates[idx] = {
+          ...this.billImportTemplates[idx],
+          ...data,
+          id: data.id,
+          updatedAt: now,
+        }
+      } else {
+        const item: BillImportTemplate = {
+          ...data,
+          id: generateId('bit'),
+          createdAt: now,
+          updatedAt: now,
+        }
+        this.billImportTemplates.unshift(item)
+      }
+      this.persist('billImportTemplates')
+    },
+
+    deleteBillImportTemplate(id: string) {
+      const idx = this.billImportTemplates.findIndex((t) => t.id === id)
+      if (idx < 0) throw new Error('导入模板不存在')
+      this.billImportTemplates.splice(idx, 1)
+      this.persist('billImportTemplates')
+    },
+
+    batchSettleWorkerLines(items: { orderId: string; lineId: string }[], type: SettlementManageType) {
+      if (!items.length) throw new Error('请选择待结算灵工')
+      const now = new Date().toISOString()
+      const slipLines: SettlementSlipLine[] = []
+
+      for (const { orderId, lineId } of items) {
+        const order = this.settlementManageOrders.find((o) => o.id === orderId)
+        if (!order || order.type !== type) continue
+        const line = order.workerLines.find((l) => l.id === lineId)
+        if (!line || line.status !== 'pending_settlement') continue
+
+        line.status = 'settled'
+        line.settledAt = now
+        order.updatedAt = now
+
+        slipLines.push({
+          orderId: order.id,
+          orderNo: order.orderNo,
+          orderName: order.orderName,
+          lineId: line.id,
+          enterpriseId: order.enterpriseId,
+          enterpriseName: order.enterpriseName,
+          employeeId: line.employeeId,
+          employeeName: line.employeeName,
+          employeeNo: line.employeeNo,
+          departmentName: line.departmentName,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          amount: line.amount,
+          periodStart: order.periodStart,
+          periodEnd: order.periodEnd,
+        })
+      }
+
+      if (!slipLines.length) throw new Error('所选灵工不可结算')
+
+      const slipNo = `STL${now.slice(0, 10).replace(/-/g, '')}${String(this.settlementSlips.length + 1).padStart(3, '0')}`
+      const slip: SettlementSlip = {
+        id: generateId('sms'),
+        slipNo,
+        type,
+        workerCount: slipLines.length,
+        totalQuantity: slipLines.reduce((sum, line) => sum + line.quantity, 0),
+        totalAmount: slipLines.reduce((sum, line) => sum + line.amount, 0),
+        lines: slipLines,
+        settledAt: now,
+        createdAt: now,
+      }
+
+      for (const slipLine of slipLines) {
+        const order = this.settlementManageOrders.find((o) => o.id === slipLine.orderId)
+        const line = order?.workerLines.find((l) => l.id === slipLine.lineId)
+        if (line) line.settlementSlipId = slip.id
+      }
+
+      this.settlementSlips.unshift(slip)
+      this.persist('settlementManageOrders')
+      this.persist('settlementSlips')
+      this.pushNotification({
+        title: '结算单已生成',
+        content: `${slipNo} 已结算 ${slip.workerCount} 名灵工，合计 ¥${slip.totalAmount.toLocaleString()}`,
+        type: 'system',
+      })
+      return slip
+    },
+
+    generateTaxDeclaration(serviceProviderId: string, month: string) {
+      const provider = this.serviceProviders.find((item) => item.id === serviceProviderId)
+      if (!provider) throw new Error('服务商不存在')
+      const existing = this.taxDeclarations.find(
+        (item) => item.serviceProviderId === serviceProviderId && item.month === month,
+      )
+      if (existing) throw new Error('该服务商本月申报表已存在')
+
+      const workerMap = new Map<string, TaxDeclarationWorker>()
+      let withdrawalSeq = 1
+      for (const slip of this.settlementSlips) {
+        if (slip.settledAt.slice(0, 7) !== month) continue
+        for (const line of slip.lines) {
+          const linkedProvider = resolveServiceProviderForEnterprise(
+            line.enterpriseId,
+            this.serviceProviders,
+            this.serviceContracts,
+          )
+          if (linkedProvider?.id !== serviceProviderId) continue
+
+          const taxAmount = Math.round(line.amount * 0.03 * 100) / 100
+          const netAmount = Math.round((line.amount - taxAmount) * 100) / 100
+          const withdrawalIndex = withdrawalSeq - 1
+          const withdrawal: TaxWithdrawalLine = {
+            id: generateId('txw'),
+            withdrawalNo: `WD${month.replace('-', '')}${String(withdrawalSeq).padStart(4, '0')}`,
+            channel: resolveWithdrawalChannel(
+              line.employeeId,
+              this.workerPaymentBindings,
+              withdrawalIndex,
+            ),
+            settlementAmount: line.amount,
+            taxAmount,
+            netAmount,
+            withdrawnAt: slip.settledAt,
+          }
+          withdrawalSeq += 1
+
+          let worker = workerMap.get(line.employeeId)
+          if (!worker) {
+            const employee = this.employees.find((item) => item.id === line.employeeId)
+            worker = {
+              employeeId: line.employeeId,
+              employeeName: line.employeeName,
+              phone: employee?.phone,
+              totalSettlementAmount: 0,
+              totalTaxAmount: 0,
+              totalNetAmount: 0,
+              withdrawals: [],
+            }
+            workerMap.set(line.employeeId, worker)
+          }
+          worker.withdrawals.push(withdrawal)
+          worker.totalSettlementAmount += line.amount
+          worker.totalTaxAmount += taxAmount
+          worker.totalNetAmount += netAmount
+        }
+      }
+
+      const workers = [...workerMap.values()].sort((a, b) =>
+        a.employeeName.localeCompare(b.employeeName, 'zh-CN'),
+      )
+      if (!workers.length) throw new Error('该月度暂无结算提现数据，无法生成申报表')
+
+      const now = new Date().toISOString()
+      const monthKey = month.replace('-', '')
+      const declaration: TaxDeclaration = {
+        id: generateId('taxd'),
+        declarationNo: `TAX-${monthKey}-${provider.code}`,
+        serviceProviderId: provider.id,
+        serviceProviderName: provider.name,
+        month,
+        workerCount: workers.length,
+        totalSettlementAmount: workers.reduce((sum, item) => sum + item.totalSettlementAmount, 0),
+        totalTaxAmount: workers.reduce((sum, item) => sum + item.totalTaxAmount, 0),
+        totalNetAmount: workers.reduce((sum, item) => sum + item.totalNetAmount, 0),
+        workers,
+        status: 'generated',
+        generatedAt: now,
+      }
+
+      this.taxDeclarations.unshift(declaration)
+      this.persist('taxDeclarations')
+      this.pushNotification({
+        title: '个税申报表已生成',
+        content: `${provider.shortName ?? provider.name} ${month} 申报表已生成`,
+        type: 'system',
+      })
+      return declaration
+    },
+
+    submitTaxDeclaration(id: string) {
+      const declaration = this.taxDeclarations.find((item) => item.id === id)
+      if (!declaration) throw new Error('申报表不存在')
+      if (declaration.status !== 'generated') throw new Error('当前状态不可提交')
+      declaration.status = 'submitted'
+      this.persist('taxDeclarations')
+      return declaration
     },
 
     toggleBillingRule(id: string, enabled: boolean) {
@@ -2074,6 +4120,7 @@ export const useAppStore = defineStore('app', {
         course.examId = examId
         course.updatedAt = new Date().toISOString()
         exam.courseId = courseId
+        exam.enterpriseId = course.enterpriseId
       } else {
         exam.courseId = undefined
       }
@@ -2325,7 +4372,7 @@ export const useAppStore = defineStore('app', {
     // ── 小程序端 ──
     applyForJob(employeeId: string, jobRequirementId: string) {
       const job = this.jobRequirements.find((j) => j.id === jobRequirementId)
-      if (!job || job.status !== 'active') throw new Error('岗位不可报名')
+      if (!job || job.status !== 'recruiting') throw new Error('岗位不可报名')
       const dup = this.miniJobApplications.find(
         (a) => a.employeeId === employeeId && a.jobRequirementId === jobRequirementId,
       )
@@ -2343,66 +4390,133 @@ export const useAppStore = defineStore('app', {
       return item
     },
 
-    acceptTaskFromHall(taskId: string, employeeId: string) {
+    acceptTaskFromHall(taskId: string, employeeId: string, quantity = 1) {
       const task = this.tasks.find((t) => t.id === taskId)
       if (!task || task.status !== 'active') throw new Error('任务不可领取')
       if (task.dispatchMode !== 'hall') throw new Error('该任务不支持大厅抢单')
       const emp = this.employees.find((e) => e.id === employeeId)
       if (!emp) throw new Error('人员不存在')
-      const myCount = this.taskInstances.filter(
-        (i) => i.taskId === taskId && i.workerId === employeeId,
-      ).length
-      if (task.maxPerPerson && myCount >= task.maxPerPerson) {
-        throw new Error(`每人最多领取 ${task.maxPerPerson} 次`)
+      this.assertCourseGateForEmployee(employeeId, 'task')
+      const q = Math.max(1, Math.floor(quantity))
+      const myClaimed = getWorkerClaimedQuantity(this.taskInstances, taskId, employeeId)
+      if (task.maxPerPerson && myClaimed + q > task.maxPerPerson) {
+        throw new Error(`每人最多领取 ${task.maxPerPerson} ${task.maxPerPerson === 1 ? '次' : '次/件'}`)
       }
+      if (task.plannedTotal != null && task.acceptedCount + q > task.plannedTotal) {
+        throw new Error('任务名额不足')
+      }
+      const taskType = this.taskTypes.find((t) => t.id === task.taskTypeId)
       const workflow = this.taskWorkflows.find((w) => w.id === task.workflowId)
       if (!workflow) throw new Error('工作流不存在')
-      const execNode = getWorkerExecutingNode(workflow)
       const startNode = workflow.nodes.find((n) => n.nodeType === 'start')
-      const node = execNode ?? startNode
+      const execNode = getWorkerExecutingNode(workflow)
+      const node = startNode ?? execNode
       if (!node) throw new Error('工作流节点异常')
+      const amount = taskType ? calcTaskClaimAmount(taskType, q) : 50 * q
       const now = new Date().toISOString()
       const item = {
         id: generateId('ti'),
         taskId: task.id,
         taskName: task.name,
         taskTypeName: task.taskTypeName,
+        enterpriseId: task.enterpriseId,
         enterpriseName: task.enterpriseName,
         workerId: employeeId,
         workerName: emp.name,
         currentNodeId: node.id,
         currentNodeName: node.name,
-        amount: 50,
+        claimQuantity: q,
+        amount,
+        fieldValues: {},
         createdAt: now,
         updatedAt: now,
       }
       this.taskInstances.unshift(item)
-      task.acceptedCount += 1
+      task.acceptedCount += q
       this.persist('taskInstances')
       this.persist('tasks')
-      this.addMiniAppMessage(employeeId, 'task', '任务领取成功', `您已领取「${task.name}」，请尽快执行。`)
+      this.addMiniAppMessage(employeeId, 'task', '任务领取成功', `您已领取「${task.name}」${q} 件/次，请尽快执行。`)
       return item
     },
 
-    claimWorkerIncome(ids: string[], employeeId: string) {
+    submitTaskInstanceWorkflow(
+      instanceId: string,
+      fieldValues: Record<string, string | number | boolean>,
+      action?: import('@/types').WorkflowAction,
+    ) {
+      const instance = this.taskInstances.find((i) => i.id === instanceId)
+      if (!instance) throw new Error('任务实例不存在')
+      const task = this.tasks.find((t) => t.id === instance.taskId)
+      const workflow = this.taskWorkflows.find((w) => w.id === task?.workflowId)
+      if (!task || !workflow) throw new Error('任务或工作流不存在')
+
+      instance.fieldValues = { ...(instance.fieldValues ?? {}), ...fieldValues }
+      const nodeFields = workflow.fields?.filter((f) => f.nodeIds.includes(instance.currentNodeId)) ?? []
+      for (const field of nodeFields) {
+        if (!field.required) continue
+        const val = instance.fieldValues[field.id]
+        if (val === undefined || val === null || val === '') {
+          throw new Error(`请填写${field.name}`)
+        }
+      }
+
+      const submitAction = action ?? pickWorkerSubmitAction(workflow, instance.currentNodeId)
+      if (!submitAction) throw new Error('当前节点无可执行操作')
+
+      const target = resolveTransitionTarget(workflow, instance.currentNodeId, submitAction)
+      if (!target) throw new Error('流程流转失败')
+
+      instance.currentNodeId = target.id
+      instance.currentNodeName = target.name
+      instance.updatedAt = new Date().toISOString()
+
+      if (target.nodeType === 'end' && target.name.includes('完成')) {
+        task.completedCount += instance.claimQuantity ?? 1
+        this.persist('tasks')
+      }
+
+      this.persist('taskInstances')
+      return instance
+    },
+
+    claimWorkerIncome(
+      ids: string[],
+      employeeId: string,
+      channel: 'alipay' | 'bank' = 'alipay',
+    ) {
       const records = this.workerIncomeRecords.filter(
         (r) => ids.includes(r.id) && r.employeeId === employeeId && r.status === 'claimable',
       )
       if (records.length === 0) throw new Error('没有可领取的收入')
+      const binding = this.workerPaymentBindings.find((b) => b.employeeId === employeeId)
+      if (channel === 'alipay' && !binding?.alipay) {
+        throw new Error('请先绑定支付宝账号')
+      }
+      if (channel === 'bank' && (!binding?.bankName || !binding?.bankCardLast4)) {
+        throw new Error('请先绑定银行卡')
+      }
       const now = new Date().toISOString()
+      const batchId = generateId('claim')
       for (const r of records) {
         r.tax = Math.round(r.amount * 0.03 * 100) / 100
         r.netAmount = Math.round((r.amount - r.tax) * 100) / 100
         r.status = 'claimed'
         r.claimedAt = now
+        r.claimBatchId = batchId
       }
       this.persist('workerIncomeRecords')
+      const gross = records.reduce((s, r) => s + r.amount, 0)
+      const tax = records.reduce((s, r) => s + (r.tax ?? 0), 0)
       const total = records.reduce((s, r) => s + (r.netAmount ?? 0), 0)
+      const dest =
+        channel === 'alipay'
+          ? `支付宝 ${binding!.alipay}`
+          : `${binding!.bankName} 尾号${binding!.bankCardLast4}`
       this.addMiniAppMessage(
         employeeId,
         'withdraw',
         '收入领取成功',
-        `已成功领取 ¥${total.toFixed(2)}，将转入绑定账户。`,
+        `已成功领取 ¥${total.toFixed(2)}（税前 ¥${gross.toFixed(2)}，个税 ¥${tax.toFixed(2)}），将转入${dest}。`,
       )
       return records
     },
@@ -2435,6 +4549,35 @@ export const useAppStore = defineStore('app', {
       }
     },
 
+    markAllMiniMessagesRead(employeeId: string) {
+      let changed = false
+      for (const msg of this.miniAppMessages) {
+        if (msg.employeeId === employeeId && !msg.read) {
+          msg.read = true
+          changed = true
+        }
+      }
+      if (changed) this.persist('miniAppMessages')
+    },
+
+    confirmScheduleMessage(id: string) {
+      const msg = this.miniAppMessages.find((m) => m.id === id)
+      if (!msg?.scheduleDetail) throw new Error('排班消息不存在')
+      msg.scheduleDetail.confirmStatus = 'accepted'
+      msg.read = true
+      this.persist('miniAppMessages')
+      return msg
+    },
+
+    rejectScheduleMessage(id: string) {
+      const msg = this.miniAppMessages.find((m) => m.id === id)
+      if (!msg?.scheduleDetail) throw new Error('排班消息不存在')
+      msg.scheduleDetail.confirmStatus = 'rejected'
+      msg.read = true
+      this.persist('miniAppMessages')
+      return msg
+    },
+
     signWorkerAgreement(id: string, employeeId: string) {
       const agr = this.workerAgreements.find((a) => a.id === id && a.employeeId === employeeId)
       if (!agr) throw new Error('协议不存在')
@@ -2458,6 +4601,134 @@ export const useAppStore = defineStore('app', {
       }
       this.persist('workerPaymentBindings')
       return binding
+    },
+
+    ensureWorkerProfileExt(employeeId: string): WorkerProfileExt {
+      let profile = this.workerProfileExts.find((p) => p.employeeId === employeeId)
+      if (!profile) {
+        profile = {
+          employeeId,
+          level: '新手灵工',
+          levelScore: 0,
+          creditScore: 80,
+          creditLevel: '良好',
+          certificates: [],
+          faceVerifyStatus: 'unverified',
+          schedulePreferences: [],
+          partTimePreference: {},
+          basicProofs: [
+            { type: 'real_name', status: 'missing' },
+            { type: 'health_cert', status: 'missing' },
+          ],
+          skillCertificates: [],
+          profileCompleteness: 0,
+        }
+        this.workerProfileExts.push(profile)
+        this.persist('workerProfileExts')
+      }
+      return profile
+    },
+
+    updateWorkerProfileExt(
+      employeeId: string,
+      data: Partial<Omit<WorkerProfileExt, 'employeeId'>>,
+    ) {
+      const profile = this.ensureWorkerProfileExt(employeeId)
+      Object.assign(profile, data)
+      profile.profileCompleteness = calcProfileCompleteness(profile)
+      this.persist('workerProfileExts')
+      return profile
+    },
+
+    completeWorkerRealName(employeeId: string, realName: string, idCard: string) {
+      const employee = this.employees.find((e) => e.id === employeeId)
+      if (employee) {
+        employee.name = realName.trim()
+        employee.realNameVerified = true
+        this.persist('employees')
+      }
+      const proofs = this.ensureWorkerProfileExt(employeeId).basicProofs ?? []
+      const nextProofs = [
+        { type: 'real_name' as const, status: 'verified' as const },
+        proofs.find((p) => p.type === 'health_cert') ?? { type: 'health_cert' as const, status: 'missing' as const },
+      ]
+      return this.updateWorkerProfileExt(employeeId, {
+        realName: realName.trim(),
+        idCardMasked: maskIdCard(idCard),
+        basicProofs: nextProofs,
+      })
+    },
+
+    completeWorkerFaceVerify(employeeId: string, success = true) {
+      return this.updateWorkerProfileExt(employeeId, {
+        faceVerifyStatus: success ? 'verified' : 'failed',
+        faceVerifiedAt: success ? new Date().toISOString() : undefined,
+      })
+    },
+
+    upsertWorkerSchedulePreference(employeeId: string, pref: WorkerSchedulePreference) {
+      const profile = this.ensureWorkerProfileExt(employeeId)
+      const list = [...(profile.schedulePreferences ?? [])]
+      const idx = list.findIndex((p) => p.id === pref.id)
+      const normalized: WorkerSchedulePreference = {
+        ...pref,
+        variant: pref.variant ?? inferScheduleVariant(pref.weekdays),
+      }
+      if (idx >= 0) list[idx] = normalized
+      else list.push(normalized)
+      return this.updateWorkerProfileExt(employeeId, { schedulePreferences: list })
+    },
+
+    removeWorkerSchedulePreference(employeeId: string, prefId: string) {
+      const profile = this.ensureWorkerProfileExt(employeeId)
+      const list = (profile.schedulePreferences ?? []).filter((p) => p.id !== prefId)
+      return this.updateWorkerProfileExt(employeeId, { schedulePreferences: list })
+    },
+
+    updateWorkerPartTimePreference(employeeId: string, pref: Partial<WorkerPartTimePreference>) {
+      const profile = this.ensureWorkerProfileExt(employeeId)
+      return this.updateWorkerProfileExt(employeeId, {
+        partTimePreference: { ...profile.partTimePreference, ...pref },
+      })
+    },
+
+    updateWorkerSkillCertificates(employeeId: string, certs: WorkerSkillCertificate[]) {
+      return this.updateWorkerProfileExt(employeeId, { skillCertificates: certs })
+    },
+
+    updateWorkerPermanentAddress(employeeId: string, address: string) {
+      const employee = this.employees.find((e) => e.id === employeeId)
+      if (employee) {
+        employee.address = address.trim()
+        this.persist('employees')
+      }
+      return this.updateWorkerProfileExt(employeeId, { permanentAddress: address.trim() })
+    },
+
+    registerMiniAppWorker(payload: { phone: string; password: string; name: string }) {
+      const phone = payload.phone.trim()
+      const existing = this.employees.find((e) => e.phone === phone)
+      if (existing) throw new Error('该手机号已注册，请直接登录')
+
+      const id = `emp_mini_${Date.now()}`
+      const employee: Employee = {
+        id,
+        name: payload.name.trim() || '新灵工',
+        employeeNo: `M${String(Date.now()).slice(-6)}`,
+        departmentId: 'dept_unassigned',
+        position: '待完善',
+        hireDate: new Date().toISOString().slice(0, 10),
+        skills: [],
+        preferredShiftIds: [],
+        unavailableDates: [],
+        status: 'active',
+        phone,
+        realNameVerified: false,
+      }
+      this.employees.push(employee)
+      this.persist('employees')
+      this.ensureWorkerProfileExt(id)
+      return { employeeId: id, employee }
     },
   },
 })

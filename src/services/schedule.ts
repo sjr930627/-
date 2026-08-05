@@ -1,5 +1,35 @@
-import type { Employee, Holiday, ScheduleAssignment, ScheduleRule, Shift } from '@/types'
+import type {
+  AttendanceGroupShiftTemplate,
+  Employee,
+  Holiday,
+  ScheduleAssignment,
+  ScheduleRule,
+  Shift,
+} from '@/types'
 import { calcShiftHours, getMonthDays, isWeekend } from '@/utils'
+
+export type DateDemandKind = 'weekday' | 'weekend' | 'holiday'
+
+export function getDateDemandKind(date: string, holidays: Holiday[]): DateDemandKind {
+  const holiday = getHolidayForDate(holidays, date)
+  if (holiday && !holiday.isWorkday) return 'holiday'
+  if (isWeekend(date) && !holiday?.isWorkday) return 'weekend'
+  return 'weekday'
+}
+
+export function getShiftDemandHeadcount(
+  tpl: Pick<
+    AttendanceGroupShiftTemplate,
+    'requiredHeadcount' | 'weekendRequiredHeadcount' | 'holidayRequiredHeadcount'
+  >,
+  date: string,
+  holidays: Holiday[],
+): number {
+  const kind = getDateDemandKind(date, holidays)
+  if (kind === 'holiday') return tpl.holidayRequiredHeadcount ?? tpl.requiredHeadcount ?? 0
+  if (kind === 'weekend') return tpl.weekendRequiredHeadcount ?? tpl.requiredHeadcount ?? 0
+  return tpl.requiredHeadcount ?? 0
+}
 
 export interface ScheduleConflict {
   type: 'duplicate' | 'consecutive' | 'daily_hours' | 'weekly_hours' | 'holiday' | 'weekend' | 'unavailable'

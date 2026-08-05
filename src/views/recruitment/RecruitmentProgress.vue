@@ -1,26 +1,34 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
 import {
-  getNextLeadStatus,
+  formatRoundHint,
+  getAvailableTransitions,
+  isLeadTerminal,
   recruitmentLeadStatusMap,
   recruitmentLeadStatusType,
   recruitmentStatusOptions,
 } from '@/constants/recruitment'
 import type { RecruitmentLead, RecruitmentLeadStatus } from '@/types'
+import LeadStatusTransitionDialog from '@/components/recruitment/LeadStatusTransitionDialog.vue'
+import RecruitmentLeadDetailDrawer from '@/components/recruitment/RecruitmentLeadDetailDrawer.vue'
 
 const store = useAppStore()
 const route = useRoute()
+const { isEnterprise } = usePortal()
 
 const statusFilter = ref<RecruitmentLeadStatus | 'all'>('all')
 const enterpriseFilter = ref('')
 const requirementFilter = ref('')
 const dialogVisible = ref(false)
-const feedbackDialog = ref(false)
-const advancingId = ref<string | null>(null)
-const feedbackText = ref('')
+const transitionDialog = ref(false)
+const detailDrawer = ref(false)
+const detailLeadId = ref<string | null>(null)
+const transitionLead = ref<RecruitmentLead | null>(null)
+const highlightLeadId = ref<string | null>(null)
 
 const form = ref({
   requirementId: '',
@@ -30,8 +38,6 @@ const form = ref({
   position: '',
   source: '',
   notes: '',
-  interviewDate: '',
-  interviewTime: '',
 })
 
 watch(
@@ -42,40 +48,71 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => route.query.lead,
+  async (id) => {
+    if (typeof id !== 'string') {
+      highlightLeadId.value = null
+      return
+    }
+    const lead = store.recruitmentLeads.find((l) => l.id === id)
+    if (!lead) return
+    highlightLeadId.value = id
+    statusFilter.value = lead.status
+    enterpriseFilter.value = lead.enterpriseId
+    requirementFilter.value = lead.requirementId
+    await nextTick()
+    document.querySelector(`[data-lead-id="${id}"]`)?.scrollIntoView({ block: 'center' })
+  },
+  { immediate: true },
+)
+
+const scopedLeads = computed(() => {
+  let list = store.recruitmentLeads
+  if (isEnterprise.value) {
+    list = list.filter((l) => l.enterpriseId === store.currentEnterpriseId)
+  }
+  return list
+})
+
 const statusCounts = computed(() => {
-  const counts: Record<string, number> = { all: store.recruitmentLeads.length }
+  const counts: Record<string, number> = { all: scopedLeads.value.length }
   for (const opt of recruitmentStatusOptions) {
-    counts[opt.value] = store.recruitmentLeads.filter((l) => l.status === opt.value).length
+    counts[opt.value] = scopedLeads.value.filter((l) => l.status === opt.value).length
   }
   return counts
 })
 
-const activeRequirements = computed(() =>
-  store.jobRequirements.filter((r) => r.status === 'active'),
+const recruitingRequirements = computed(() =>
+  store.jobRequirements.filter((r) => r.status === 'recruiting'),
 )
 
 const tableData = computed(() =>
-  store.recruitmentLeads
+  scopedLeads.value
     .filter((l) => {
       if (statusFilter.value !== 'all' && l.status !== statusFilter.value) return false
       if (enterpriseFilter.value && l.enterpriseId !== enterpriseFilter.value) return false
       if (requirementFilter.value && l.requirementId !== requirementFilter.value) return false
       return true
     })
-    .map((l) => ({
-      ...l,
-      statusLabel: recruitmentLeadStatusMap[l.status],
-      statusType: recruitmentLeadStatusType[l.status],
-      nextStatus: getNextLeadStatus(l.status),
-      nextLabel: getNextLeadStatus(l.status)
-        ? recruitmentLeadStatusMap[getNextLeadStatus(l.status)!]
-        : null,
-      updatedLabel: new Date(l.updatedAt).toLocaleString('zh-CN'),
-    })),
+    .map((l) => {
+      const req = store.jobRequirements.find((r) => r.id === l.requirementId)
+      const totalRounds = l.totalRounds ?? req?.interviewRounds ?? 1
+      return {
+        ...l,
+        totalRounds,
+        currentRound: l.currentRound ?? 1,
+        statusLabel: recruitmentLeadStatusMap[l.status],
+        statusType: recruitmentLeadStatusType[l.status],
+        roundHint: formatRoundHint({ ...l, totalRounds }),
+        transitions: getAvailableTransitions(l.status, { ...l, totalRounds }),
+        updatedLabel: new Date(l.updatedAt).toLocaleString('zh-CN'),
+      }
+    }),
 )
 
 function openCreate() {
-  const req = activeRequirements.value[0]
+  const req = recruitingRequirements.value[0]
   form.value = {
     requirementId: req?.id ?? '',
     candidateName: '',
@@ -84,8 +121,6 @@ function openCreate() {
     position: req?.title ?? '',
     source: '',
     notes: '',
-    interviewDate: '',
-    interviewTime: '',
   }
   dialogVisible.value = true
 }
@@ -109,42 +144,27 @@ function submitLead() {
     position: form.value.position.trim() || req.title,
     source: form.value.source.trim() || '手动录入',
     status: 'screening',
+    currentRound: 1,
+    totalRounds: req.interviewRounds ?? 1,
     notes: form.value.notes.trim() || undefined,
-    interviewDate: form.value.interviewDate || undefined,
-    interviewTime: form.value.interviewTime || undefined,
   })
   ElMessage.success('线索已录入')
   dialogVisible.value = false
 }
 
-function advance(row: RecruitmentLead) {
-  if (row.status === 'feedback_pending') {
-    advancingId.value = row.id
-    feedbackText.value = ''
-    feedbackDialog.value = true
-    return
-  }
-  if (row.status === 'interview_pending' && !row.interviewDate) {
-    ElMessage.warning('请先安排面试日期')
-    return
-  }
-  try {
-    store.advanceLeadStatus(row.id)
-    ElMessage.success('状态已更新')
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
-  }
+function openDetail(row: RecruitmentLead) {
+  detailLeadId.value = row.id
+  detailDrawer.value = true
 }
 
-function submitFeedback() {
-  if (!advancingId.value) return
-  if (!feedbackText.value.trim()) {
-    ElMessage.warning('请填写面试反馈')
-    return
-  }
-  store.advanceLeadStatus(advancingId.value, feedbackText.value.trim())
-  ElMessage.success('反馈已提交，状态已更新')
-  feedbackDialog.value = false
+function openTransitionFromDetail(lead: RecruitmentLead) {
+  transitionLead.value = lead
+  transitionDialog.value = true
+}
+
+function openTransition(row: RecruitmentLead) {
+  transitionLead.value = row
+  transitionDialog.value = true
 }
 
 async function closeLead(row: RecruitmentLead) {
@@ -168,10 +188,17 @@ async function scheduleInterview(row: RecruitmentLead) {
       inputValue: row.interviewTime ?? '14:00',
     })
     store.updateRecruitmentLead(row.id, { interviewDate: date, interviewTime: time })
+    if (row.status === 'screening') {
+      store.transitionLeadStatus(row.id, 'interview_pending')
+    }
     ElMessage.success('面试已安排')
   } catch {
     // cancelled
   }
+}
+
+function leadRowClassName({ row }: { row: RecruitmentLead }) {
+  return row.id === highlightLeadId.value ? 'lead-row-highlight' : ''
 }
 </script>
 
@@ -180,7 +207,7 @@ async function scheduleInterview(row: RecruitmentLead) {
     <div class="page-header">
       <div>
         <h2 class="page-title">招聘进度</h2>
-        <p class="text-muted">根据岗位录入人员跟进线索，管理全流程状态</p>
+        <p class="text-muted">候选人 × 需求维度的 10 态状态机流转与动态字段编辑</p>
       </div>
       <el-button type="primary" @click="openCreate">录入线索</el-button>
     </div>
@@ -205,7 +232,7 @@ async function scheduleInterview(row: RecruitmentLead) {
     </div>
 
     <div class="page-toolbar">
-      <el-select v-model="enterpriseFilter" placeholder="企业" clearable style="width: 200px">
+      <el-select v-if="!isEnterprise" v-model="enterpriseFilter" placeholder="企业" clearable style="width: 200px">
         <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
       </el-select>
       <el-select v-model="requirementFilter" placeholder="岗位" clearable style="width: 200px">
@@ -218,26 +245,35 @@ async function scheduleInterview(row: RecruitmentLead) {
       </el-select>
     </div>
 
-    <el-table :data="tableData" border stripe>
-      <el-table-column prop="candidateName" label="姓名" width="90" />
+    <el-table :data="tableData" border stripe :row-class-name="leadRowClassName">
+      <el-table-column prop="candidateName" label="姓名" width="90">
+        <template #default="{ row }">
+          <span :data-lead-id="row.id">{{ row.candidateName }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="phone" label="手机号" width="120" />
-      <el-table-column prop="enterpriseName" label="企业" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="requirementTitle" label="岗位" min-width="130" />
-      <el-table-column prop="source" label="来源" width="100" />
+      <el-table-column prop="enterpriseName" label="企业" min-width="130" show-overflow-tooltip />
+      <el-table-column prop="requirementTitle" label="岗位" min-width="120" />
+      <el-table-column prop="source" label="来源" width="90" />
+      <el-table-column label="轮次" width="70" align="center">
+        <template #default="{ row }">{{ row.currentRound }}/{{ row.totalRounds }}</template>
+      </el-table-column>
       <el-table-column label="面试安排" width="140">
         <template #default="{ row }">
           <span v-if="row.interviewDate">{{ row.interviewDate }} {{ row.interviewTime ?? '' }}</span>
           <span v-else class="text-muted">未安排</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="110">
+      <el-table-column label="状态" width="120">
         <template #default="{ row }">
           <el-tag size="small" :type="row.statusType">{{ row.statusLabel }}</el-tag>
+          <el-tag v-if="row.ext?.deviated" size="small" type="warning" class="deviate-tag">偏离</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="updatedLabel" label="更新时间" width="170" />
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column prop="updatedLabel" label="更新时间" width="160" />
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <el-button
             v-if="row.status === 'screening' || row.status === 'interview_pending'"
             link
@@ -247,19 +283,14 @@ async function scheduleInterview(row: RecruitmentLead) {
             安排面试
           </el-button>
           <el-button
-            v-if="row.nextLabel && row.status !== 'closed'"
+            v-if="row.transitions.length && !isLeadTerminal(row.status)"
             link
             type="success"
-            @click="advance(row)"
+            @click="openTransition(row)"
           >
-            → {{ row.nextLabel }}
+            编辑状态
           </el-button>
-          <el-button
-            v-if="!['closed', 'settled'].includes(row.status)"
-            link
-            type="danger"
-            @click="closeLead(row)"
-          >
+          <el-button v-if="!isLeadTerminal(row.status)" link type="danger" @click="closeLead(row)">
             结束
           </el-button>
         </template>
@@ -267,50 +298,54 @@ async function scheduleInterview(row: RecruitmentLead) {
     </el-table>
   </div>
 
+  <RecruitmentLeadDetailDrawer
+    v-model="detailDrawer"
+    :lead-id="detailLeadId"
+    @advance="openTransitionFromDetail"
+  />
+
+  <LeadStatusTransitionDialog
+    v-model="transitionDialog"
+    :lead="transitionLead"
+  />
+
   <el-dialog v-model="dialogVisible" title="录入跟进线索" width="560px">
     <el-form label-width="90px">
       <el-form-item label="关联岗位" required>
         <el-select v-model="form.requirementId" style="width: 100%">
           <el-option
-            v-for="r in activeRequirements"
+            v-for="r in recruitingRequirements"
             :key="r.id"
             :label="`${r.enterpriseName} - ${r.title}`"
             :value="r.id"
           />
         </el-select>
       </el-form-item>
-      <el-form-item label="姓名" required>
-        <el-input v-model="form.candidateName" />
-      </el-form-item>
-      <el-form-item label="手机号" required>
-        <el-input v-model="form.phone" />
-      </el-form-item>
-      <el-form-item label="身份证号">
-        <el-input v-model="form.idCard" placeholder="脱敏存储" />
-      </el-form-item>
-      <el-form-item label="来源">
-        <el-input v-model="form.source" placeholder="Boss直聘 / 内推" />
-      </el-form-item>
-      <el-form-item label="备注">
-        <el-input v-model="form.notes" type="textarea" :rows="2" />
-      </el-form-item>
+      <el-form-item label="姓名" required><el-input v-model="form.candidateName" /></el-form-item>
+      <el-form-item label="手机号" required><el-input v-model="form.phone" /></el-form-item>
+      <el-form-item label="来源"><el-input v-model="form.source" placeholder="Boss直聘 / 内推" /></el-form-item>
+      <el-form-item label="备注"><el-input v-model="form.notes" type="textarea" :rows="2" /></el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="dialogVisible = false">取消</el-button>
       <el-button type="primary" @click="submitLead">录入（待筛选）</el-button>
     </template>
   </el-dialog>
-
-  <el-dialog v-model="feedbackDialog" title="面试反馈" width="480px">
-    <el-input
-      v-model="feedbackText"
-      type="textarea"
-      :rows="4"
-      placeholder="请填写面试评价与反馈..."
-    />
-    <template #footer>
-      <el-button @click="feedbackDialog = false">取消</el-button>
-      <el-button type="primary" @click="submitFeedback">提交并推进至待入职</el-button>
-    </template>
-  </el-dialog>
 </template>
+
+<style scoped>
+:deep(.lead-row-highlight) {
+  background: #fff7ed !important;
+}
+
+.deviate-tag {
+  margin-left: 4px;
+}
+
+.round-hint {
+  display: block;
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+</style>

@@ -1,251 +1,475 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
+import { formatMoney } from '@/constants/payrollBill'
 import {
-  billRemainingInvoiceAmount,
-  formatMoney,
-  invoiceStatusMap,
+  defaultInvoiceProfile,
+  formatInvoiceBillLabel,
+  invoiceApplicationsForEnterprise,
+  invoiceStats,
   invoiceTypeMap,
-} from '@/constants/payrollBill'
-import type { InvoiceType } from '@/types'
+  normalizeInvoiceType,
+  resolveInvoiceStatusMeta,
+} from '@/constants/invoice'
+import type { InvoiceApplication, InvoiceStatus } from '@/types'
 
 const store = useAppStore()
-const route = useRoute()
+const router = useRouter()
+const { pathPrefix, isEnterprise, isPlatform } = usePortal()
 
-const applyVisible = ref(false)
-const detailVisible = ref(false)
-const viewingId = ref<string | null>(null)
+const statusFilter = ref<'all' | InvoiceStatus>('all')
+const keyword = ref('')
+const uploadVisible = ref(false)
+const uploadTargetId = ref<string | null>(null)
+const uploadFileName = ref('')
 
-const form = ref({
-  billId: '',
-  invoiceType: 'special' as InvoiceType,
-  title: '华信通信服务有限公司',
-  taxNo: '91610131MA6TXY8X1K',
-  amount: 0,
-  recipientName: '',
-  recipientPhone: '',
-  recipientAddress: '',
-  email: '',
-})
+const enterpriseId = computed(() =>
+  isEnterprise.value ? store.currentEnterprise?.id : undefined,
+)
 
-const invoiceableBills = computed(() =>
-  store.settlementBills.filter((b) => b.status === 'paid' && billRemainingInvoiceAmount(b) > 0),
+const scopedApplications = computed(() =>
+  invoiceApplicationsForEnterprise(store.invoiceApplications, enterpriseId.value)
+    .filter((item) => item.status !== 'draft'),
+)
+
+const stats = computed(() =>
+  invoiceStats(store.invoiceApplications, store.settlementBills, enterpriseId.value),
+)
+
+const invoiceProfile = computed(() =>
+  defaultInvoiceProfile(store.enterpriseInvoiceProfiles, enterpriseId.value),
 )
 
 const tableData = computed(() =>
-  store.invoiceApplications.map((inv) => ({
-    ...inv,
-    typeLabel: invoiceTypeMap[inv.invoiceType],
-    amountLabel: formatMoney(inv.amount),
-    statusLabel: invoiceStatusMap[inv.status].label,
-    statusType: invoiceStatusMap[inv.status].type,
-    timeLabel: new Date(inv.createdAt).toLocaleString('zh-CN'),
-  })),
-)
-
-const viewingInvoice = computed(() =>
-  viewingId.value ? store.invoiceApplications.find((i) => i.id === viewingId.value) : null,
-)
-
-onMounted(() => {
-  const billId = route.query.billId
-  if (typeof billId === 'string') {
-    openApply(billId)
-  }
-})
-
-function openApply(billId?: string) {
-  const bill = billId
-    ? store.settlementBills.find((b) => b.id === billId)
-    : invoiceableBills.value[0]
-  if (!bill) {
-    ElMessage.warning('暂无可申请发票的账单')
-    return
-  }
-  form.value = {
-    billId: bill.id,
-    invoiceType: 'special',
-    title: bill.enterpriseName,
-    taxNo: '91610131MA6TXY8X1K',
-    amount: billRemainingInvoiceAmount(bill),
-    recipientName: '',
-    recipientPhone: '',
-    recipientAddress: '',
-    email: '',
-  }
-  applyVisible.value = true
-}
-
-function onBillChange(billId: string) {
-  const bill = store.settlementBills.find((b) => b.id === billId)
-  if (bill) {
-    form.value.title = bill.enterpriseName
-    form.value.amount = billRemainingInvoiceAmount(bill)
-  }
-}
-
-function submitApply() {
-  const bill = store.settlementBills.find((b) => b.id === form.value.billId)
-  if (!bill) return
-  if (form.value.invoiceType === 'special' && !form.value.email && !form.value.recipientAddress) {
-    ElMessage.warning('请填写电子发票邮箱或纸质发票收件信息')
-    return
-  }
-  try {
-    store.applyInvoice({
-      billId: bill.id,
-      billNo: bill.billNo,
-      enterpriseId: bill.enterpriseId,
-      enterpriseName: bill.enterpriseName,
-      invoiceType: form.value.invoiceType,
-      title: form.value.title,
-      taxNo: form.value.taxNo,
-      amount: form.value.amount,
-      recipientName: form.value.recipientName || undefined,
-      recipientPhone: form.value.recipientPhone || undefined,
-      recipientAddress: form.value.recipientAddress || undefined,
-      email: form.value.email || undefined,
+  scopedApplications.value
+    .filter((item) => {
+      if (statusFilter.value !== 'all' && item.status !== statusFilter.value) return false
+      if (keyword.value.trim()) {
+        const kw = keyword.value.trim().toLowerCase()
+        const haystack = [
+          item.applicationNo,
+          ...item.bills.map((bill) => bill.billNo),
+          item.enterpriseName,
+          item.invoiceContent,
+          item.title,
+        ]
+          .join(' ')
+          .toLowerCase()
+        if (!haystack.includes(kw)) return false
+      }
+      return true
     })
-    applyVisible.value = false
-    ElMessage.success('发票申请已提交')
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '提交失败')
-  }
+    .map((item) => ({
+      ...item,
+      typeLabel: invoiceTypeMap[normalizeInvoiceType(item.invoiceType)],
+      amountLabel: formatMoney(item.amount),
+      categoryLabel: item.invoiceCategory ?? '—',
+      billLabel: formatInvoiceBillLabel(item.bills),
+      statusMeta: resolveInvoiceStatusMeta(item.status),
+      createdLabel: new Date(item.createdAt).toLocaleString('zh-CN'),
+      issuedLabel: item.issuedAt ? new Date(item.issuedAt).toLocaleString('zh-CN') : '—',
+    })),
+)
+
+function goApply() {
+  router.push(`${pathPrefix.value}/payroll/invoices/apply`)
 }
 
 function openDetail(id: string) {
-  viewingId.value = id
-  detailVisible.value = true
+  router.push(`${pathPrefix.value}/payroll/invoices/${id}`)
 }
 
-function downloadInvoice(row: { electronicUrl?: string; applicationNo: string }) {
+function resubmit(row: InvoiceApplication) {
+  router.push({
+    path: `${pathPrefix.value}/payroll/invoices/apply`,
+    query: { resubmitId: row.id },
+  })
+}
+
+async function approve(row: InvoiceApplication) {
+  try {
+    store.approveInvoiceApplication(row.id)
+    ElMessage.success('审核通过，已进入开票中')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+async function reject(row: InvoiceApplication) {
+  try {
+    const { value } = await ElMessageBox.prompt('请输入驳回原因', '驳回申请', {
+      confirmButtonText: '确认驳回',
+      cancelButtonText: '取消',
+      inputPlaceholder: '驳回原因',
+      inputValidator: (val) => !!val?.trim() || '请填写驳回原因',
+    })
+    store.rejectInvoiceApplication(row.id, value.trim())
+    ElMessage.success('已驳回申请')
+  } catch {
+    // cancelled
+  }
+}
+
+function openUpload(row: InvoiceApplication) {
+  uploadTargetId.value = row.id
+  uploadFileName.value = `${row.applicationNo}.pdf`
+  uploadVisible.value = true
+}
+
+function confirmUpload() {
+  if (!uploadTargetId.value || !uploadFileName.value.trim()) return
+  try {
+    store.completeInvoiceIssue(uploadTargetId.value, uploadFileName.value.trim())
+    uploadVisible.value = false
+    ElMessage.success('发票已上传，开票完成')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '上传失败')
+  }
+}
+
+function downloadInvoice(row: InvoiceApplication) {
   if (row.electronicUrl) {
-    ElMessage.success(`正在下载 ${row.applicationNo} 电子发票（演示）`)
+    ElMessage.success(`正在下载 ${row.applicationNo} 发票文件（演示）`)
   }
 }
 </script>
 
 <template>
-  <div class="page-card">
+  <div class="page-card invoice-page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">发票管理</h2>
-        <p class="text-muted">对已支付账单申请开具发票，跟踪开票进度</p>
+        <h2 class="page-title">
+          发票管理
+          <el-tag v-if="isEnterprise" size="small" type="info" class="edition-tag">企业版</el-tag>
+        </h2>
+        <p class="text-muted">
+          {{
+            isEnterprise
+              ? '对已付款结算单发起开票申请，跟踪审核与开具进度'
+              : '审核企业发票申请，开具并上传发票完成流程'
+          }}
+        </p>
       </div>
-      <el-button type="primary" @click="openApply()">申请发票</el-button>
+      <el-button v-if="isEnterprise" type="primary" :icon="Plus" @click="goApply">
+        申请开票
+      </el-button>
+    </div>
+
+    <el-row v-if="isEnterprise" :gutter="16" class="stats-row">
+      <el-col :span="6">
+        <div class="stat-card">
+          <div class="stat-label">可申请开票总额</div>
+          <div class="stat-value">{{ formatMoney(stats.invoiceableTotal) }}</div>
+          <div class="stat-sub">已付款结算单剩余可开金额</div>
+        </div>
+      </el-col>
+      <el-col :span="6">
+        <div class="stat-card success">
+          <div class="stat-label">已开票金额</div>
+          <div class="stat-value">{{ formatMoney(stats.issuedAmount) }}</div>
+          <div class="stat-sub">已完成开具的发票合计</div>
+        </div>
+      </el-col>
+      <el-col :span="6">
+        <div class="stat-card warning">
+          <div class="stat-label">待开票金额</div>
+          <div class="stat-value">{{ formatMoney(stats.pendingAmount) }}</div>
+          <div class="stat-sub">审核中与开票中的申请</div>
+        </div>
+      </el-col>
+      <el-col :span="6">
+        <div class="stat-card purple">
+          <div class="stat-label">发票单总数</div>
+          <div class="stat-value">{{ stats.totalApplications }}</div>
+          <div class="stat-sub">张</div>
+        </div>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="16" class="middle-row">
+      <el-col v-if="isEnterprise" :span="14">
+        <div class="panel-card">
+          <div class="panel-title">发票单进度</div>
+          <div class="progress-bar">
+            <div class="seg success" :style="{ width: `${stats.progress.approved * 8}px` }">
+              已开票 {{ stats.progress.approved }}
+            </div>
+            <div class="seg warning" :style="{ width: `${stats.progress.reviewing * 8}px` }">
+              审核中 {{ stats.progress.reviewing }}
+            </div>
+            <div class="seg danger" :style="{ width: `${Math.max(stats.progress.rejected, 1) * 8}px` }">
+              已驳回 {{ stats.progress.rejected }}
+            </div>
+          </div>
+          <div class="progress-summary">
+            <span class="box success">已开具 {{ stats.progress.approved }}</span>
+            <span class="box warning">开票中 {{ stats.progress.reviewing }}</span>
+          </div>
+        </div>
+      </el-col>
+      <el-col :span="isEnterprise ? 10 : 24">
+        <div class="panel-card">
+          <div class="panel-title">开票信息</div>
+          <template v-if="invoiceProfile">
+            <dl class="profile-inline">
+              <div><dt>企业名称</dt><dd>{{ invoiceProfile.title }}</dd></div>
+              <div><dt>纳税人识别号</dt><dd>{{ invoiceProfile.taxNo }}</dd></div>
+              <div><dt>默认发票类型</dt><dd>{{ invoiceTypeMap[normalizeInvoiceType(invoiceProfile.defaultInvoiceType)] }}</dd></div>
+              <div><dt>开户银行</dt><dd>{{ invoiceProfile.bankName }}</dd></div>
+              <div><dt>银行账号</dt><dd>{{ invoiceProfile.bankAccount }}</dd></div>
+            </dl>
+          </template>
+        </div>
+      </el-col>
+    </el-row>
+
+    <div class="page-toolbar">
+      <el-radio-group v-model="statusFilter">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="pending_review">待审核</el-radio-button>
+        <el-radio-button value="reviewing">审核中</el-radio-button>
+        <el-radio-button value="issuing">开票中</el-radio-button>
+        <el-radio-button value="issued">已开票</el-radio-button>
+        <el-radio-button value="rejected">已驳回</el-radio-button>
+      </el-radio-group>
+      <el-input
+        v-model="keyword"
+        placeholder="搜索发票单号、结算单号、企业"
+        clearable
+        prefix-icon="Search"
+        style="width: 260px"
+      />
     </div>
 
     <el-table :data="tableData" border stripe empty-text="暂无发票申请">
-      <el-table-column prop="applicationNo" label="发票申请编号" width="160" />
-      <el-table-column prop="billNo" label="关联账单编号" width="160" />
-      <el-table-column prop="typeLabel" label="发票类型" width="140" />
-      <el-table-column prop="amountLabel" label="发票金额" width="130" align="right" />
-      <el-table-column prop="timeLabel" label="申请时间" width="170" />
-      <el-table-column label="开票状态" width="100">
+      <el-table-column prop="applicationNo" label="发票单号" min-width="160">
         <template #default="{ row }">
-          <el-tag size="small" :type="row.statusType">{{ row.statusLabel }}</el-tag>
+          <el-button link type="primary" @click="openDetail(row.id)">{{ row.applicationNo }}</el-button>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" fixed="right">
+      <el-table-column prop="createdLabel" label="申请时间" width="170" />
+      <el-table-column prop="typeLabel" label="发票类型" width="140" />
+      <el-table-column prop="categoryLabel" label="开票类目" min-width="160" />
+      <el-table-column prop="billLabel" label="关联账单" min-width="180" />
+      <el-table-column prop="amountLabel" label="开票金额" width="130" align="right" />
+      <el-table-column v-if="isPlatform" prop="enterpriseName" label="企业" min-width="160" />
+      <el-table-column prop="title" label="发票抬头" min-width="160" />
+      <el-table-column label="状态" width="100">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row.id)">查看详情</el-button>
+          <el-tag size="small" :type="row.statusMeta.type">{{ row.statusMeta.label }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column prop="issuedLabel" label="开票时间" width="170" />
+      <el-table-column label="操作" width="220" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="openDetail(row.id)">查看</el-button>
+          <template v-if="isPlatform">
+            <el-button
+              v-if="['pending_review', 'reviewing'].includes(row.status)"
+              link
+              type="primary"
+              @click="approve(row)"
+            >
+              审核通过
+            </el-button>
+            <el-button
+              v-if="['pending_review', 'reviewing'].includes(row.status)"
+              link
+              type="danger"
+              @click="reject(row)"
+            >
+              驳回
+            </el-button>
+            <el-button v-if="row.status === 'issuing'" link type="primary" @click="openUpload(row)">
+              上传发票
+            </el-button>
+          </template>
+          <el-button
+            v-if="isEnterprise && row.status === 'rejected'"
+            link
+            type="primary"
+            @click="resubmit(row)"
+          >
+            重新提交
+          </el-button>
           <el-button
             v-if="row.status === 'issued' && row.electronicUrl"
             link
             @click="downloadInvoice(row)"
           >
-            下载电子发票
+            下载
           </el-button>
         </template>
       </el-table-column>
     </el-table>
   </div>
 
-  <el-dialog v-model="applyVisible" title="申请发票" width="560px" destroy-on-close>
-    <el-form label-width="110px">
-      <el-form-item label="关联账单" required>
-        <el-select v-model="form.billId" style="width: 100%" @change="onBillChange">
-          <el-option
-            v-for="b in invoiceableBills"
-            :key="b.id"
-            :label="`${b.billNo}（剩余 ${formatMoney(billRemainingInvoiceAmount(b))}）`"
-            :value="b.id"
-          />
-        </el-select>
+  <el-dialog v-model="uploadVisible" title="上传发票" width="480px">
+    <el-form label-width="90px">
+      <el-form-item label="发票文件">
+        <el-input v-model="uploadFileName" placeholder="如 INV-20250115-001.pdf" />
       </el-form-item>
-      <el-form-item label="发票类型" required>
-        <el-radio-group v-model="form.invoiceType">
-          <el-radio value="special">增值税专用发票</el-radio>
-          <el-radio value="normal">增值税普通发票</el-radio>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item label="发票抬头" required>
-        <el-input v-model="form.title" />
-      </el-form-item>
-      <el-form-item label="税号" required>
-        <el-input v-model="form.taxNo" />
-      </el-form-item>
-      <el-form-item label="发票金额" required>
-        <el-input-number v-model="form.amount" :min="0.01" :precision="2" style="width: 100%" />
-        <p class="field-tip">默认账单剩余可开金额，支持分次开票</p>
-      </el-form-item>
-      <el-divider content-position="left">收件信息</el-divider>
-      <el-form-item label="电子邮箱">
-        <el-input v-model="form.email" placeholder="电子发票接收邮箱" />
-      </el-form-item>
-      <el-form-item label="收件人">
-        <el-input v-model="form.recipientName" placeholder="纸质发票" />
-      </el-form-item>
-      <el-form-item label="联系电话">
-        <el-input v-model="form.recipientPhone" />
-      </el-form-item>
-      <el-form-item label="收件地址">
-        <el-input v-model="form.recipientAddress" type="textarea" :rows="2" />
-      </el-form-item>
+      <p class="field-tip">演示环境填写文件名即可，上传后状态变为已开票</p>
     </el-form>
     <template #footer>
-      <el-button @click="applyVisible = false">取消</el-button>
-      <el-button type="primary" @click="submitApply">提交申请</el-button>
+      <el-button @click="uploadVisible = false">取消</el-button>
+      <el-button type="primary" @click="confirmUpload">确认上传</el-button>
     </template>
   </el-dialog>
-
-  <el-drawer v-model="detailVisible" title="发票申请详情" size="480px">
-    <template v-if="viewingInvoice">
-      <el-descriptions :column="1" border>
-        <el-descriptions-item label="申请编号">{{ viewingInvoice.applicationNo }}</el-descriptions-item>
-        <el-descriptions-item label="关联账单">{{ viewingInvoice.billNo }}</el-descriptions-item>
-        <el-descriptions-item label="发票类型">
-          {{ invoiceTypeMap[viewingInvoice.invoiceType] }}
-        </el-descriptions-item>
-        <el-descriptions-item label="发票抬头">{{ viewingInvoice.title }}</el-descriptions-item>
-        <el-descriptions-item label="税号">{{ viewingInvoice.taxNo }}</el-descriptions-item>
-        <el-descriptions-item label="发票金额">
-          {{ formatMoney(viewingInvoice.amount) }}
-        </el-descriptions-item>
-        <el-descriptions-item label="开票状态">
-          {{ invoiceStatusMap[viewingInvoice.status].label }}
-        </el-descriptions-item>
-        <el-descriptions-item v-if="viewingInvoice.email" label="邮箱">
-          {{ viewingInvoice.email }}
-        </el-descriptions-item>
-        <el-descriptions-item v-if="viewingInvoice.recipientAddress" label="收件地址">
-          {{ viewingInvoice.recipientName }} {{ viewingInvoice.recipientPhone }}
-          {{ viewingInvoice.recipientAddress }}
-        </el-descriptions-item>
-        <el-descriptions-item v-if="viewingInvoice.expressNo" label="快递单号">
-          {{ viewingInvoice.expressNo }}
-        </el-descriptions-item>
-      </el-descriptions>
-    </template>
-  </el-drawer>
 </template>
 
 <style scoped>
-.field-tip {
-  margin: 6px 0 0;
+.edition-tag {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.stats-row {
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  background: linear-gradient(135deg, #f5f9ff, #fff);
+  border: 1px solid #dbeafe;
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 108px;
+}
+
+.stat-card.success {
+  background: linear-gradient(135deg, #f0fdf4, #fff);
+  border-color: #bbf7d0;
+}
+
+.stat-card.warning {
+  background: linear-gradient(135deg, #fffbeb, #fff);
+  border-color: #fde68a;
+}
+
+.stat-card.purple {
+  background: linear-gradient(135deg, #faf5ff, #fff);
+  border-color: #e9d5ff;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.stat-value {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.stat-sub {
+  margin-top: 6px;
   font-size: 12px;
-  color: #909399;
+  color: var(--el-text-color-secondary);
+}
+
+.middle-row {
+  margin-bottom: 16px;
+}
+
+.panel-card {
+  background: #fff;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 180px;
+}
+
+.panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.progress-bar {
+  display: flex;
+  height: 28px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f3f4f6;
+  margin-bottom: 12px;
+}
+
+.progress-bar .seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 72px;
+  color: #fff;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.progress-bar .success {
+  background: #22c55e;
+}
+
+.progress-bar .warning {
+  background: #f59e0b;
+}
+
+.progress-bar .danger {
+  background: #ef4444;
+}
+
+.progress-summary {
+  display: flex;
+  gap: 12px;
+}
+
+.progress-summary .box {
+  flex: 1;
+  text-align: center;
+  padding: 12px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.progress-summary .box.success {
+  background: #ecfdf5;
+  color: #059669;
+}
+
+.progress-summary .box.warning {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.profile-inline div {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.profile-inline dt {
+  color: var(--el-text-color-secondary);
+}
+
+.profile-inline dd {
+  margin: 0;
+}
+
+.page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.field-tip {
+  margin: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

@@ -1,30 +1,37 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
-  hourlyPayrollFormulaFields,
+  billingFormulaExamples,
   billingFormulaFieldMap,
-  billingScopeMap,
+  buildFormulaFieldContext,
+  formatBillingEnterpriseLabel,
   formatBillingFormulaDisplay,
   parseBillingFormulaStorage,
+  resolveBillingEnterpriseScope,
+  resolvePayrollFormulaGroupKey,
   defaultPayrollFormulaDisplay,
   defaultServiceFeeFormulaDisplay,
 } from '@/constants/billingRule'
-import type { BillingRule, BillingFormulaFieldKey } from '@/types'
+import type { BillingRule } from '@/types'
+import type { BillingFormulaExampleKey, PayrollFormulaGroupKey } from '@/constants/billingRule'
 
 const store = useAppStore()
 const route = useRoute()
 
 const dialogVisible = ref(false)
 const editingId = ref<string | null>(null)
+const formulaGroup = ref<PayrollFormulaGroupKey>('hourly')
 
 const emptyForm = (): Omit<BillingRule, 'id' | 'createdAt' | 'updatedAt'> => ({
   name: '',
   code: '',
   description: '',
-  scope: 'enterprise',
+  scope: 'global',
+  enterpriseScope: 'all',
+  enterpriseIds: [],
   payrollFormula: defaultPayrollFormulaDisplay,
   serviceFeeFormula: defaultServiceFeeFormulaDisplay,
   enabled: true,
@@ -32,20 +39,51 @@ const emptyForm = (): Omit<BillingRule, 'id' | 'createdAt' | 'updatedAt'> => ({
 })
 
 const form = ref(emptyForm())
-const payrollFormulaRef = ref<HTMLTextAreaElement | null>(null)
+const settlementFormulaRef = ref<HTMLTextAreaElement | null>(null)
+const serviceFeeFormulaRef = ref<HTMLTextAreaElement | null>(null)
+
+const enterpriseOptions = computed(() =>
+  store.enterprises.filter((e) => e.status !== 'terminated').map((e) => ({ value: e.id, label: e.name })),
+)
+
+const formulaContext = computed(() => buildFormulaFieldContext(store.billImportTemplates))
+
+const settlementFormulaFields = computed(() => formulaContext.value.settlementFields)
+
+const serviceFeeFormulaFields = computed(() => formulaContext.value.serviceFields)
 
 const tableData = computed(() =>
-  store.billingRules.map((r) => ({
-    ...r,
-    scopeLabel: billingScopeMap[r.scope],
-    formulaDisplay: formatBillingFormulaDisplay(r.payrollFormula),
-    updatedLabel: new Date(r.updatedAt).toLocaleString('zh-CN'),
-  })),
+  store.billingRules.map((r) => {
+    const scope = resolveBillingEnterpriseScope(r)
+    return {
+      ...r,
+      enterpriseScope: scope,
+      enterpriseLabel: formatBillingEnterpriseLabel(
+        { enterpriseScope: scope, enterpriseIds: r.enterpriseIds },
+        store.enterprises,
+      ),
+      formulaTypeLabel:
+        billingFormulaExamples.find((e) => e.formula === r.payrollFormula)?.label ??
+        detectFormulaTypeLabel(r.payrollFormula),
+      settlementFormulaDisplay: formatBillingFormulaDisplay(r.payrollFormula, store.billImportTemplates),
+      serviceFeeFormulaDisplay: formatBillingFormulaDisplay(r.serviceFeeFormula, store.billImportTemplates),
+      updatedLabel: new Date(r.updatedAt).toLocaleString('zh-CN'),
+    }
+  }),
 )
+
+function detectFormulaTypeLabel(formula: string) {
+  const hasHourly = /work_hours|hourly_rate|attendance_days|overtime_hours/.test(formula)
+  const hasTask = /task_count|task_unit_price/.test(formula)
+  if (hasHourly && hasTask) return '工时+任务'
+  if (hasTask) return '任务计薪'
+  return '工时计薪'
+}
 
 function openCreate() {
   editingId.value = null
   form.value = emptyForm()
+  formulaGroup.value = 'hourly'
   dialogVisible.value = true
 }
 
@@ -55,22 +93,52 @@ function openEdit(row: BillingRule) {
     name: row.name,
     code: row.code,
     description: row.description ?? '',
-    scope: row.scope,
-    payrollFormula: formatBillingFormulaDisplay(row.payrollFormula),
-    serviceFeeFormula: row.serviceFeeFormula,
+    scope: row.scope ?? 'global',
+    enterpriseScope: resolveBillingEnterpriseScope(row),
+    enterpriseIds: row.enterpriseIds ? [...row.enterpriseIds] : [],
+    payrollFormula: formatBillingFormulaDisplay(row.payrollFormula, store.billImportTemplates),
+    serviceFeeFormula: formatBillingFormulaDisplay(row.serviceFeeFormula, store.billImportTemplates),
     enabled: row.enabled,
     isDefault: row.isDefault ?? false,
   }
+  const matched = billingFormulaExamples.find((e) => e.formula === row.payrollFormula)
+  formulaGroup.value = matched ? resolvePayrollFormulaGroupKey(matched.key) : 'hourly'
   dialogVisible.value = true
 }
 
-function insertField(field: BillingFormulaFieldKey) {
-  const label = billingFormulaFieldMap[field].label
-  form.value.payrollFormula += form.value.payrollFormula ? ` + ${label}` : label
-  payrollFormulaRef.value?.focus()
+function applyFormulaExample(key: BillingFormulaExampleKey) {
+  const example = billingFormulaExamples.find((e) => e.key === key)
+  if (!example) return
+  formulaGroup.value = resolvePayrollFormulaGroupKey(key)
+  form.value.payrollFormula = example.display
+  if (!(form.value.description ?? '').trim()) {
+    form.value.description = example.description
+  }
 }
 
+function insertField(fieldKey: string, target: 'settlement' | 'service_fee') {
+  const label =
+    formulaContext.value.fieldMap[fieldKey]?.label ??
+    billingFormulaFieldMap[fieldKey as keyof typeof billingFormulaFieldMap]?.label ??
+    fieldKey
+  if (target === 'settlement') {
+    form.value.payrollFormula += form.value.payrollFormula ? ` + ${label}` : label
+    settlementFormulaRef.value?.focus()
+  } else {
+    form.value.serviceFeeFormula += form.value.serviceFeeFormula ? ` + ${label}` : label
+    serviceFeeFormulaRef.value?.focus()
+  }
+}
+
+watch(
+  () => form.value.enterpriseScope,
+  (scope) => {
+    if (scope === 'all') form.value.enterpriseIds = []
+  },
+)
+
 function submitForm() {
+  const enterpriseIds = form.value.enterpriseIds ?? []
   if (!form.value.name.trim()) {
     ElMessage.warning('请填写规则名称')
     return
@@ -79,17 +147,25 @@ function submitForm() {
     ElMessage.warning('请填写规则编码')
     return
   }
+  if (form.value.enterpriseScope === 'specific' && !enterpriseIds.length) {
+    ElMessage.warning('请选择适配企业')
+    return
+  }
   if (!form.value.payrollFormula.trim()) {
-    ElMessage.warning('请填写时薪计薪公式')
+    ElMessage.warning('请填写结算金额公式')
+    return
+  }
+  if (!form.value.serviceFeeFormula.trim()) {
+    ElMessage.warning('请填写服务费金额公式')
     return
   }
   try {
     store.saveBillingRule({
       ...form.value,
-      payrollFormula: parseBillingFormulaStorage(form.value.payrollFormula),
-      serviceFeeFormula: parseBillingFormulaStorage(
-        form.value.serviceFeeFormula || defaultServiceFeeFormulaDisplay,
-      ),
+      scope: 'global',
+      enterpriseIds: form.value.enterpriseScope === 'specific' ? [...enterpriseIds] : undefined,
+      payrollFormula: parseBillingFormulaStorage(form.value.payrollFormula, store.billImportTemplates),
+      serviceFeeFormula: parseBillingFormulaStorage(form.value.serviceFeeFormula, store.billImportTemplates),
       id: editingId.value ?? undefined,
     })
     dialogVisible.value = false
@@ -123,20 +199,26 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">计薪规则</h2>
-        <p class="text-muted">配置时薪计薪公式，基于出勤工时、时薪单价等字段计算灵工薪酬</p>
+        <p class="text-muted">配置结算金额公式与服务费金额公式，支持按企业适配</p>
       </div>
       <el-button type="primary" @click="openCreate">新建规则</el-button>
     </div>
 
-    <el-alert
-      type="info"
-      :closable="false"
-      title="公式由时薪相关字段与运算符（+、-、*、/、括号）组成。常用示例：出勤工时 × 时薪单价；考勤天数 × 时薪单价 × 8；出勤工时 × 时薪单价 + 加班工时 × 加班单价 - 扣款。"
-      style="margin-bottom: 16px"
-    />
+    <div class="example-cards">
+      <div v-for="example in billingFormulaExamples" :key="example.key" class="example-card">
+        <div class="example-head">
+          <span class="example-title">{{ example.label }}</span>
+          <el-button size="small" link type="primary" @click="openCreate(); applyFormulaExample(example.key)">
+            使用示例
+          </el-button>
+        </div>
+        <code class="formula-preview">{{ example.display }}</code>
+        <p class="example-desc">{{ example.description }}</p>
+      </div>
+    </div>
 
     <el-table :data="tableData" border stripe row-key="id">
-      <el-table-column prop="name" label="规则名称" min-width="160">
+      <el-table-column prop="name" label="规则名称" min-width="140">
         <template #default="{ row }">
           <span :data-rule-id="row.id" class="rule-name">
             {{ row.name }}
@@ -146,23 +228,28 @@ onMounted(() => {
           </span>
         </template>
       </el-table-column>
-      <el-table-column prop="code" label="编码" width="160" />
-      <el-table-column prop="description" label="说明" min-width="200" show-overflow-tooltip />
-      <el-table-column prop="scopeLabel" label="适用范围" width="100" />
-      <el-table-column label="时薪计薪公式" min-width="280">
+      <el-table-column prop="code" label="编码" width="140" />
+      <el-table-column prop="formulaTypeLabel" label="计薪类型" width="100" />
+      <el-table-column prop="enterpriseLabel" label="适配企业" min-width="140" show-overflow-tooltip />
+      <el-table-column label="结算金额公式" min-width="240">
         <template #default="{ row }">
-          <code class="formula-preview">{{ row.formulaDisplay }}</code>
+          <code class="formula-preview">{{ row.settlementFormulaDisplay }}</code>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90">
+      <el-table-column label="服务费金额公式" min-width="200">
+        <template #default="{ row }">
+          <code class="formula-preview">{{ row.serviceFeeFormulaDisplay }}</code>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag size="small" :type="row.enabled ? 'success' : 'info'">
             {{ row.enabled ? '启用' : '停用' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="updatedLabel" label="更新时间" width="170" />
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column prop="updatedLabel" label="更新时间" width="160" />
+      <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link @click="toggleRule(row)">
@@ -176,66 +263,133 @@ onMounted(() => {
   <el-dialog
     v-model="dialogVisible"
     :title="editingId ? '编辑计薪规则' : '新建计薪规则'"
-    width="680px"
+    width="760px"
     destroy-on-close
   >
-    <el-form label-width="100px">
+    <el-form label-width="110px">
       <el-row :gutter="16">
         <el-col :span="12">
           <el-form-item label="规则名称" required>
-            <el-input v-model="form.name" placeholder="如：标准时薪计薪" />
+            <el-input v-model="form.name" placeholder="如：标准工时计薪" />
           </el-form-item>
         </el-col>
         <el-col :span="12">
           <el-form-item label="规则编码" required>
-            <el-input v-model="form.code" placeholder="如：HOURLY_STANDARD" />
+            <el-input v-model="form.code" placeholder="如：PAYROLL_HOURLY" />
           </el-form-item>
         </el-col>
       </el-row>
-      <el-form-item label="适用范围">
-        <el-radio-group v-model="form.scope">
-          <el-radio value="global">全局</el-radio>
-          <el-radio value="enterprise">企业</el-radio>
-          <el-radio value="department">部门</el-radio>
-        </el-radio-group>
+
+      <el-form-item label="适配企业" required>
+        <div class="enterprise-scope">
+          <el-radio-group v-model="form.enterpriseScope">
+            <el-radio value="all">全部企业</el-radio>
+            <el-radio value="specific">特定企业</el-radio>
+          </el-radio-group>
+          <el-select
+            v-if="form.enterpriseScope === 'specific'"
+            v-model="form.enterpriseIds"
+            multiple
+            collapse-tags
+            placeholder="选择企业"
+            style="width: 100%; margin-top: 8px"
+          >
+            <el-option v-for="opt in enterpriseOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+        </div>
       </el-form-item>
+
       <el-form-item label="说明">
         <el-input v-model="form.description" type="textarea" :rows="2" placeholder="规则适用场景说明" />
       </el-form-item>
 
-      <el-divider content-position="left">时薪字段</el-divider>
+      <el-divider content-position="left">结算金额公式</el-divider>
+      <div class="example-actions">
+        <span class="section-hint">结算类型示例：</span>
+        <el-button
+          v-for="example in billingFormulaExamples"
+          :key="example.key"
+          size="small"
+          :type="formulaGroup === example.key ? 'primary' : 'default'"
+          @click="applyFormulaExample(example.key)"
+        >
+          {{ example.label }}
+        </el-button>
+      </div>
       <div class="field-tags">
         <el-tooltip
-          v-for="f in hourlyPayrollFormulaFields"
+          v-for="f in settlementFormulaFields"
           :key="f.key"
           :content="`${f.description}${f.unit ? `（${f.unit}）` : ''}`"
           placement="top"
         >
-          <el-tag class="field-tag" size="small" effect="plain">
-            {{ f.label }}
-          </el-tag>
+          <el-tag class="field-tag" size="small" effect="plain">{{ f.label }}</el-tag>
         </el-tooltip>
       </div>
-
-      <el-form-item label="计薪公式" required style="margin-top: 16px">
+      <div v-if="formulaContext.templateFields.length" class="field-tags import-field-tags">
+        <span class="section-hint">导入模板字段：</span>
+        <el-tooltip
+          v-for="f in formulaContext.templateFields"
+          :key="`tpl-${f.key}`"
+          :content="f.description"
+          placement="top"
+        >
+          <el-tag class="field-tag" size="small" type="success" effect="plain">{{ f.label }}</el-tag>
+        </el-tooltip>
+      </div>
+      <el-form-item label="结算金额" required>
         <div class="formula-editor">
           <div class="insert-bar">
             <span class="insert-label">插入字段：</span>
             <el-button
-              v-for="f in hourlyPayrollFormulaFields"
+              v-for="f in settlementFormulaFields"
               :key="f.key"
               size="small"
-              @click="insertField(f.key)"
+              @click="insertField(f.key, 'settlement')"
             >
               {{ f.label }}
             </el-button>
           </div>
           <el-input
-            ref="payrollFormulaRef"
+            ref="settlementFormulaRef"
             v-model="form.payrollFormula"
             type="textarea"
-            :rows="3"
-            placeholder="如：出勤工时 * 时薪单价 + 加班工时 * 加班单价 - 扣款"
+            :rows="2"
+            placeholder="如：出勤工时 * 时薪单价 - 扣款"
+          />
+        </div>
+      </el-form-item>
+
+      <el-divider content-position="left">服务费金额公式</el-divider>
+      <div class="field-tags">
+        <el-tooltip
+          v-for="f in serviceFeeFormulaFields"
+          :key="f.key"
+          :content="`${f.description}${f.unit ? `（${f.unit}）` : ''}`"
+          placement="top"
+        >
+          <el-tag class="field-tag" size="small" effect="plain">{{ f.label }}</el-tag>
+        </el-tooltip>
+      </div>
+      <el-form-item label="服务费金额" required>
+        <div class="formula-editor">
+          <div class="insert-bar">
+            <span class="insert-label">插入字段：</span>
+            <el-button
+              v-for="f in serviceFeeFormulaFields"
+              :key="f.key"
+              size="small"
+              @click="insertField(f.key, 'service_fee')"
+            >
+              {{ f.label }}
+            </el-button>
+          </div>
+          <el-input
+            ref="serviceFeeFormulaRef"
+            v-model="form.serviceFeeFormula"
+            type="textarea"
+            :rows="2"
+            placeholder="如：灵工薪酬 * 服务费率"
           />
         </div>
       </el-form-item>
@@ -253,6 +407,39 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.example-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.example-card {
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fafafa;
+}
+
+.example-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.example-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.example-desc {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
 .formula-preview {
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 12px;
@@ -265,11 +452,29 @@ onMounted(() => {
   align-items: center;
 }
 
+.enterprise-scope {
+  width: 100%;
+}
+
+.example-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding-left: 110px;
+  margin-bottom: 8px;
+}
+
+.section-hint {
+  font-size: 12px;
+  color: #909399;
+}
+
 .field-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 0 0 100px;
+  padding: 0 0 8px 110px;
 }
 
 .field-tag {
@@ -292,5 +497,11 @@ onMounted(() => {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   flex-shrink: 0;
+}
+
+@media (max-width: 1200px) {
+  .example-cards {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

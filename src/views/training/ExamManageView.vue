@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { CheckboxValueType } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { useTrainingScope } from '@/composables/useTrainingScope'
+import { trainingOwnerTypeOptions, trainingTypeFilterOptions } from '@/constants/trainingOwner'
 import {
   aiDifficultyOptions,
   aiScenarioOptions,
@@ -15,6 +17,8 @@ import {
   getExamLinkedCourseLabel,
   getExamQuestions,
   getExamTotalScore,
+  isGlobalTrainingOwner,
+  type TrainingOwnerScope,
 } from '@/services/training'
 import type {
   AiQuestionDifficulty,
@@ -26,6 +30,18 @@ import type {
 
 const store = useAppStore()
 const router = useRouter()
+const {
+  isPlatform,
+  isEnterprise,
+  typeFilter,
+  enterpriseFilter,
+  defaultEnterpriseId,
+  filterByTrainingType,
+  filterPeersForOwner,
+  ownerTypeLabel,
+  examResultPath,
+} = useTrainingScope()
+
 const activeExamId = ref<string | null>(null)
 const examDialogVisible = ref(false)
 const questionDialogVisible = ref(false)
@@ -36,6 +52,8 @@ const editingQuestionId = ref<string | null>(null)
 const previewQuestion = ref<ExamQuestion | null>(null)
 
 const examForm = ref({
+  ownerType: 'enterprise' as TrainingOwnerScope,
+  enterpriseId: defaultEnterpriseId.value as string | null,
   name: '',
   description: '',
   courseId: '' as string,
@@ -67,26 +85,49 @@ const aiForm = ref({
   difficulty: 'medium' as AiQuestionDifficulty,
 })
 
+const formOwnerEnterpriseId = computed(() =>
+  examForm.value.ownerType === 'global' ? null : examForm.value.enterpriseId,
+)
+
 const courseOptions = computed(() =>
-  store.trainingCourses.map((c) => ({
+  filterPeersForOwner(store.trainingCourses, formOwnerEnterpriseId.value).map((c) => ({
     id: c.id,
     label: `${c.name}${c.status === 'published' ? '' : '（草稿）'}`,
     disabled: !!c.examId && (!editingExamId.value || c.examId !== editingExamId.value),
   })),
 )
 
-const examList = computed(() =>
-  store.trainingExams.map((e) => {
-    const questions = getExamQuestions(e.id, store.examQuestions)
-    return {
-      ...e,
-      statusLabel: examStatusMap[e.status],
-      questionCount: questions.length,
-      totalScore: getExamTotalScore(questions),
-      linkedCourses: countCoursesUsingExam(store.trainingCourses, e.id),
-      courseName: getExamLinkedCourseLabel(store.trainingCourses, e),
+watch(
+  () => [examForm.value.ownerType, examForm.value.enterpriseId] as const,
+  () => {
+    if (examForm.value.ownerType === 'global') examForm.value.enterpriseId = null
+    else if (!examForm.value.enterpriseId) examForm.value.enterpriseId = defaultEnterpriseId.value
+    if (examForm.value.courseId && !courseOptions.value.some((c) => c.id === examForm.value.courseId)) {
+      examForm.value.courseId = ''
     }
-  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+  },
+)
+
+const examList = computed(() =>
+  filterByTrainingType(store.trainingExams)
+    .map((e) => {
+      const questions = getExamQuestions(e.id, store.examQuestions)
+      return {
+        ...e,
+        ownerTypeLabel: ownerTypeLabel(e.enterpriseId),
+        statusLabel: examStatusMap[e.status],
+        questionCount: questions.length,
+        totalScore: getExamTotalScore(questions),
+        linkedCourses: countCoursesUsingExam(store.trainingCourses, e.id),
+        courseName: getExamLinkedCourseLabel(store.trainingCourses, e),
+        enterpriseName: isGlobalTrainingOwner(e.enterpriseId)
+          ? '-'
+          : store.enterprises.find((x) => x.id === e.enterpriseId)?.shortName ||
+            store.enterprises.find((x) => x.id === e.enterpriseId)?.name ||
+            '-',
+      }
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
 )
 
 const currentQuestions = computed(() => {
@@ -105,6 +146,8 @@ const activeExam = computed(() =>
 function openCreateExam() {
   editingExamId.value = null
   examForm.value = {
+    ownerType: 'enterprise',
+    enterpriseId: defaultEnterpriseId.value,
     name: '',
     description: '',
     courseId: '',
@@ -123,6 +166,8 @@ function openEditExam(row: TrainingExam) {
   }
   editingExamId.value = row.id
   examForm.value = {
+    ownerType: isGlobalTrainingOwner(row.enterpriseId) ? 'global' : 'enterprise',
+    enterpriseId: row.enterpriseId ?? defaultEnterpriseId.value,
     name: row.name,
     description: row.description ?? '',
     courseId: row.courseId ?? store.trainingCourses.find((c) => c.examId === row.id)?.id ?? '',
@@ -135,6 +180,11 @@ function openEditExam(row: TrainingExam) {
 }
 
 function submitExam() {
+  const isGlobal = examForm.value.ownerType === 'global'
+  if (!isGlobal && !examForm.value.enterpriseId) {
+    ElMessage.warning('请选择所属企业')
+    return
+  }
   if (!examForm.value.name.trim()) {
     ElMessage.warning('请填写考核名称')
     return
@@ -144,6 +194,7 @@ function submitExam() {
     return
   }
   const payload = {
+    enterpriseId: isGlobal ? null : examForm.value.enterpriseId,
     name: examForm.value.name.trim(),
     description: examForm.value.description.trim(),
     courseId: examForm.value.courseId,
@@ -301,7 +352,7 @@ function onOptionCorrectChange(optKey: string, checked: CheckboxValueType) {
 }
 
 function viewResults(examId: string) {
-  router.push({ path: '/training/exam-results', query: { exam: examId } })
+  router.push(examResultPath(examId))
 }
 </script>
 
@@ -310,12 +361,46 @@ function viewResults(examId: string) {
     <div class="page-header">
       <div>
         <h2 class="page-title">考核管理</h2>
-        <p class="text-muted">创建考试并关联课程；学员须完成课程全部资料学习后，方可参加考核</p>
+        <p class="text-muted">按类型区分企业考核与通用考核；学员须完成关联课程学习后方可参加</p>
       </div>
       <el-button type="primary" @click="openCreateExam">创建考核</el-button>
     </div>
 
+    <div class="page-toolbar">
+      <el-select v-if="isPlatform" v-model="typeFilter" placeholder="类型" style="width: 120px">
+        <el-option
+          v-for="o in trainingTypeFilterOptions"
+          :key="o.value"
+          :label="o.label"
+          :value="o.value"
+        />
+      </el-select>
+      <el-select
+        v-if="isPlatform && typeFilter !== 'global'"
+        v-model="enterpriseFilter"
+        placeholder="所属企业"
+        clearable
+        style="width: 200px"
+      >
+        <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
+      </el-select>
+    </div>
+
     <el-table :data="examList" border stripe>
+      <el-table-column v-if="isPlatform" label="类型" width="80">
+        <template #default="{ row }">
+          <el-tag size="small" :type="row.enterpriseId == null ? 'warning' : 'primary'">
+            {{ row.ownerTypeLabel }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column
+        v-if="isPlatform"
+        prop="enterpriseName"
+        label="所属企业"
+        width="120"
+        show-overflow-tooltip
+      />
       <el-table-column prop="name" label="考核名称" min-width="160" />
       <el-table-column label="题目数" width="80" align="center">
         <template #default="{ row }">{{ row.questionCount }}</template>
@@ -386,6 +471,27 @@ function viewResults(examId: string) {
 
   <el-dialog v-model="examDialogVisible" :title="editingExamId ? '编辑考核' : '创建考核'" width="560px">
     <el-form label-width="100px">
+      <el-form-item v-if="isPlatform" label="类型" required>
+        <el-radio-group v-model="examForm.ownerType">
+          <el-radio
+            v-for="o in trainingOwnerTypeOptions"
+            :key="o.value"
+            :value="o.value"
+          >
+            {{ o.label }}
+          </el-radio>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item v-if="examForm.ownerType === 'enterprise'" label="所属企业" required>
+        <el-select
+          v-model="examForm.enterpriseId"
+          style="width: 100%"
+          :disabled="isEnterprise"
+          placeholder="选择企业"
+        >
+          <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="考核名称" required>
         <el-input v-model="examForm.name" placeholder="如：安全生产规范考核" />
       </el-form-item>

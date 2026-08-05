@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -207,7 +208,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="learn-page">
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/training/materials" />
       <div class="mini-nav-title">{{ material?.name ?? '学习' }}</div>
     </div>
 

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
 import {
-  billStatusMap,
+  resolveBillStatusMeta,
   formatMoney,
   formatPeriod,
   billRemainingInvoiceAmount,
@@ -16,12 +17,17 @@ import { formatBillingFormulaDisplay } from '@/constants/billingRule'
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
+const { isEnterprise, pathPrefix } = usePortal()
 
 const paymentVisible = ref(false)
 const voucherFile = ref('')
 
 const bill = computed(() =>
   store.settlementBills.find((b) => b.id === route.params.id as string),
+)
+
+const billStatus = computed(() =>
+  bill.value ? resolveBillStatusMeta(bill.value.status) : { label: '', type: 'info' as const },
 )
 
 const billingRule = computed(() =>
@@ -51,9 +57,9 @@ const feeRows = computed(() => {
     { label: '任务薪酬', amount: summary.value.taskPay, note: '按完成任务数计薪' },
     { label: '加班薪酬', amount: summary.value.overtimePay, note: '加班工时 × 加班单价' },
     { label: '扣款', amount: -summary.value.deductions, note: '考勤/违规等扣款', danger: true },
-    { label: '薪酬小计', amount: bill.value.payrollTotal, note: `${summary.value.workerCount} 名灵工`, bold: true },
+    { label: '结算金额', amount: bill.value.payrollTotal, note: `${summary.value.workerCount} 名灵工`, bold: true },
     { label: '服务费', amount: bill.value.serviceFee, note: `费率 ${rateLabel}`, bold: true },
-    { label: '企业应付总额', amount: bill.value.totalPayable, note: '薪酬 + 服务费', highlight: true },
+    { label: '总计金额', amount: bill.value.totalPayable, note: '结算金额 + 服务费', highlight: true },
   ]
 })
 
@@ -61,10 +67,10 @@ const timelineSteps = computed(() => {
   if (!bill.value) return []
   const b = bill.value
   return [
-    { label: '账单推送', time: b.pushedAt ?? b.createdAt, done: true },
+    { label: '创建账单', time: b.createdAt, done: true },
+    { label: '提交至企业', time: b.pushedAt, done: !!b.pushedAt },
     { label: '企业确认', time: b.confirmedAt, done: !!b.confirmedAt },
-    { label: '提交付款', time: b.paymentSubmittedAt, done: !!b.paymentSubmittedAt },
-    { label: '确认到账', time: b.paidAt, done: !!b.paidAt },
+    { label: '确认付款', time: b.paidAt ?? b.paymentSubmittedAt, done: !!b.paidAt },
   ]
 })
 
@@ -74,7 +80,7 @@ function formatTime(iso?: string) {
 }
 
 function goBack() {
-  router.push('/payroll/bills')
+  router.push(`${pathPrefix.value}/payroll/bills`)
 }
 
 function confirmBill() {
@@ -97,30 +103,50 @@ function submitPayment() {
   try {
     store.submitBillPayment(bill.value.id, voucherFile.value || 'payment_voucher.pdf')
     paymentVisible.value = false
-    ElMessage.success('付款凭证已提交，待运营核实到账')
+    ElMessage.success('付款已确认，账单状态为已付款')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '提交失败')
   }
 }
 
-function verifyPayment() {
+function applyInvoice() {
+  if (!bill.value) return
+  router.push({
+    path: `${pathPrefix.value}/payroll/invoices/apply`,
+    query: { billId: bill.value.id },
+  })
+}
+
+function submitBill() {
   if (!bill.value) return
   try {
-    store.verifyBillPayment(bill.value.id)
-    ElMessage.success('已确认到账，账单状态为已支付')
+    store.submitSettlementBill(bill.value.id)
+    ElMessage.success('账单已提交，等待企业确认')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '操作失败')
   }
 }
 
-function applyInvoice() {
+async function voidBill() {
   if (!bill.value) return
-  router.push({ path: '/payroll/invoices', query: { billId: bill.value.id } })
+  try {
+    const { value } = await ElMessageBox.prompt('请输入作废原因（可选）', '作废账单', {
+      confirmButtonText: '确认作废',
+      cancelButtonText: '取消',
+    })
+    store.voidSettlementBill(bill.value.id, value)
+    ElMessage.success('账单已作废')
+  } catch {
+    // cancelled
+  }
 }
 
 function viewBillingRule() {
   if (bill.value?.billingRuleId) {
-    router.push({ path: '/payroll/billing-rules', query: { highlight: bill.value.billingRuleId } })
+    router.push({
+      path: `${pathPrefix.value}/payroll/billing-rules`,
+      query: { highlight: bill.value.billingRuleId },
+    })
   }
 }
 </script>
@@ -131,37 +157,50 @@ function viewBillingRule() {
       <div class="header-left">
         <el-button :icon="ArrowLeft" link @click="goBack">返回账单列表</el-button>
         <h2 class="page-title">{{ bill.billNo }}</h2>
-        <el-tag size="large" :type="billStatusMap[bill.status].type">
-          {{ billStatusMap[bill.status].label }}
+        <el-tag size="large" :type="billStatus.type">
+          {{ billStatus.label }}
         </el-tag>
       </div>
       <div class="header-actions">
         <el-button
-          v-if="bill.status === 'pending_confirm'"
+          v-if="!isEnterprise && bill.status === 'pending_submit'"
+          type="primary"
+          @click="submitBill"
+        >
+          提交至企业
+        </el-button>
+        <el-button
+          v-if="!isEnterprise && ['pending_submit', 'pending_confirm', 'pending_payment'].includes(bill.status)"
+          type="danger"
+          plain
+          @click="voidBill"
+        >
+          作废
+        </el-button>
+        <el-button
+          v-if="isEnterprise && bill.status === 'pending_confirm'"
           type="primary"
           @click="confirmBill"
         >
           确认账单
         </el-button>
         <el-button
-          v-if="bill.status === 'pending_payment'"
+          v-if="isEnterprise && bill.status === 'pending_payment'"
           type="primary"
           @click="openPayment"
         >
           确认付款
         </el-button>
-        <el-button v-if="bill.status === 'pending_verify'" type="success" @click="verifyPayment">
-          核实到账（运营）
-        </el-button>
         <el-button
-          v-if="bill.status === 'paid' && billRemainingInvoiceAmount(bill) > 0"
+          v-if="isEnterprise && bill.status === 'paid' && billRemainingInvoiceAmount(bill) > 0"
+          type="primary"
           @click="applyInvoice"
         >
           申请发票
         </el-button>
         <el-button
-          v-if="bill.status === 'paid' && billRemainingInvoiceAmount(bill) <= 0"
-          @click="router.push('/payroll/invoices')"
+          v-if="isEnterprise && bill.status === 'paid'"
+          @click="router.push(`${pathPrefix}/payroll/invoices`)"
         >
           查看发票
         </el-button>
@@ -171,7 +210,7 @@ function viewBillingRule() {
     <el-row :gutter="16" class="stat-row">
       <el-col :xs="12" :sm="6">
         <div class="stat-card">
-          <span class="stat-label">薪酬总额</span>
+          <span class="stat-label">结算金额</span>
           <span class="stat-value">{{ formatMoney(bill.payrollTotal) }}</span>
         </div>
       </el-col>
@@ -183,7 +222,7 @@ function viewBillingRule() {
       </el-col>
       <el-col :xs="12" :sm="6">
         <div class="stat-card highlight">
-          <span class="stat-label">企业应付总额</span>
+          <span class="stat-label">总计金额</span>
           <span class="stat-value">{{ formatMoney(bill.totalPayable) }}</span>
         </div>
       </el-col>
@@ -199,8 +238,21 @@ function viewBillingRule() {
       <h3 class="section-title">基本信息</h3>
       <el-descriptions :column="3" border>
         <el-descriptions-item label="企业">{{ bill.enterpriseName }}</el-descriptions-item>
-        <el-descriptions-item label="结算周期" :span="2">
+        <el-descriptions-item label="服务商">{{ bill.serviceProviderName ?? '—' }}</el-descriptions-item>
+        <el-descriptions-item label="结算周期">
           {{ formatPeriod(bill.periodStart, bill.periodEnd) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="数据来源">
+          {{
+            bill.sourceType === 'excel'
+              ? `Excel 导入${bill.excelFileName ? `（${bill.excelFileName}）` : ''}`
+              : bill.sourceType === 'rule'
+                ? '计费规则'
+                : '—'
+          }}
+        </el-descriptions-item>
+        <el-descriptions-item v-if="bill.importTemplateName" label="导入模板">
+          {{ bill.importTemplateName }}
         </el-descriptions-item>
         <el-descriptions-item label="计费规则">
           <el-button
@@ -255,7 +307,7 @@ function viewBillingRule() {
             <div class="formula-box">
               <div class="formula-row">
                 <span class="formula-label">灵工薪酬</span>
-                <code>{{ formatBillingFormulaDisplay(billingRule.payrollFormula) }}</code>
+                <code>{{ formatBillingFormulaDisplay(billingRule.payrollFormula, store.billImportTemplates) }}</code>
               </div>
             </div>
           </template>

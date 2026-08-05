@@ -1,15 +1,35 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
+import {
+  CreditCard,
+  Document,
+  EditPen,
+  List,
+  Medal,
+  Reading,
+  SwitchButton,
+  Tickets,
+  User,
+  Wallet,
+} from '@element-plus/icons-vue'
+import type { Component } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppAuth } from '@/composables/useMiniAppAuth'
 import { useMiniInsuranceStatus } from '@/composables/useMiniInsuranceStatus'
+import { useMiniFaceVerifyStatus } from '@/composables/useMiniFaceVerifyStatus'
 import { workerLevelColors } from '@/constants/miniapp'
 
 const router = useRouter()
 const store = useAppStore()
 const { employee, department, profileExt, paymentBinding } = useMiniAppWorker()
+const { onboardingComplete, logout } = useMiniAppAuth()
 const { statusLabel, isInsuredToday } = useMiniInsuranceStatus()
+const { statusMeta: faceVerifyMeta } = useMiniFaceVerifyStatus()
+
+const showOnboardingBanner = computed(() => !onboardingComplete.value)
 
 const incomeSummary = computed(() => {
   const empId = employee.value?.id ?? ''
@@ -17,28 +37,53 @@ const incomeSummary = computed(() => {
   const pending = store.pendingSettlements.find((p) => p.employeeId === empId)
   return {
     claimable: records.filter((r) => r.status === 'claimable').reduce((s, r) => s + r.amount, 0),
-    pending: pending?.estimatedIncome ?? records.filter((r) => r.status === 'pending_settlement').reduce((s, r) => s + r.amount, 0),
+    pending:
+      pending?.estimatedIncome ??
+      records.filter((r) => r.status === 'pending_settlement').reduce((s, r) => s + r.amount, 0),
     claimed: records.filter((r) => r.status === 'claimed').reduce((s, r) => s + (r.netAmount ?? r.amount), 0),
   }
 })
 
-/** 培训与考核标题下的全部入口（统一宫格） */
-const iconItems = [
-  { path: '/miniapp/training/materials', icon: '📚', label: '我的培训', bg: '#fff5f5' },
-  { path: '/miniapp/training/exams', icon: '📝', label: '我的考核', bg: '#fff7e6' },
-  { path: '/miniapp/income', icon: '💰', label: '我的收入', bg: '#fff7e6' },
-  { path: '/miniapp/tasks', icon: '📋', label: '任务进度', bg: '#f0f7ff' },
-  { path: '/miniapp/applications', icon: '📝', label: '我的报名', bg: '#fff1f0' },
-  { path: '/miniapp/payment', icon: '💳', label: '收款绑定', bg: '#f9f0ff' },
-  { path: '/miniapp/agreements', icon: '📄', label: '协议管理', bg: '#fafafa' },
-  { path: '/miniapp/my-info', icon: '👤', label: '我的资料', bg: '#f0f7ff' },
-  { path: '/miniapp/credit', icon: '⭐', label: '等级信用', bg: '#fffbe6' },
+const iconItems: {
+  path: string
+  icon: Component
+  label: string
+  bg: string
+  color: string
+}[] = [
+  { path: '/miniapp/training/materials', icon: Reading, label: '我的培训', bg: '#f0fdf4', color: '#22c55e' },
+  { path: '/miniapp/training/exams', icon: EditPen, label: '我的考核', bg: '#fff7ed', color: '#f97316' },
+  { path: '/miniapp/income', icon: Wallet, label: '我的收入', bg: '#fff7ed', color: '#f97316' },
+  { path: '/miniapp/tasks', icon: List, label: '任务进度', bg: '#eff6ff', color: '#3b82f6' },
+  { path: '/miniapp/applications', icon: Tickets, label: '我的报名', bg: '#eff6ff', color: '#3b82f6' },
+  { path: '/miniapp/payment', icon: CreditCard, label: '收款绑定', bg: '#fff7ed', color: '#f97316' },
+  { path: '/miniapp/agreements', icon: Document, label: '协议管理', bg: '#faf5ff', color: '#a855f7' },
+  { path: '/miniapp/worker-archive', icon: User, label: '我的资料', bg: '#eff6ff', color: '#3b82f6' },
+  { path: '/miniapp/credit', icon: Medal, label: '等级信用', bg: '#f3f4f6', color: '#6b7280' },
 ]
+
+async function handleLogout() {
+  await ElMessageBox.confirm('确定退出登录？', '提示', { type: 'warning' })
+  logout()
+  router.replace('/miniapp/login')
+}
 </script>
 
 <template>
   <div class="mini-page profile-page">
-    <div class="mini-card profile-card">
+    <div
+      v-if="showOnboardingBanner"
+      class="onboarding-banner"
+      @click="router.push('/miniapp/onboarding')"
+    >
+      <div class="banner-text">
+        <div class="banner-title">档案尚未完善</div>
+        <div class="banner-desc">完成实名认证、人脸识别与偏好设置后可正常接单</div>
+      </div>
+      <span class="banner-action">去完善 ›</span>
+    </div>
+
+    <div class="mini-card profile-card" @click="router.push('/miniapp/worker-archive')">
       <div class="profile-row">
         <div class="profile-avatar">{{ employee?.name?.slice(0, 1) ?? '灵' }}</div>
         <div class="profile-info">
@@ -47,7 +92,10 @@ const iconItems = [
           <div v-if="profileExt" class="profile-tags">
             <span
               class="mini-tag"
-              :style="{ background: (workerLevelColors[profileExt.level] ?? '#999') + '22', color: workerLevelColors[profileExt.level] }"
+              :style="{
+                background: (workerLevelColors[profileExt.level] ?? '#999') + '22',
+                color: workerLevelColors[profileExt.level],
+              }"
             >
               {{ profileExt.level }}
             </span>
@@ -58,6 +106,13 @@ const iconItems = [
               @click.stop="router.push('/miniapp/insurance')"
             >
               {{ statusLabel }}
+            </span>
+            <span
+              class="mini-tag face-verify-status"
+              :style="{ background: faceVerifyMeta.bg, color: faceVerifyMeta.color }"
+              @click.stop="router.push('/miniapp/face-verify')"
+            >
+              {{ faceVerifyMeta.label }}
             </span>
           </div>
         </div>
@@ -89,7 +144,9 @@ const iconItems = [
           class="icon-item"
           @click="router.push(item.path)"
         >
-          <div class="icon-box" :style="{ background: item.bg }">{{ item.icon }}</div>
+          <div class="icon-box" :style="{ background: item.bg, color: item.color }">
+            <el-icon :size="22"><component :is="item.icon" /></el-icon>
+          </div>
           <span>{{ item.label }}</span>
         </div>
       </div>
@@ -97,22 +154,51 @@ const iconItems = [
 
     <div v-if="paymentBinding" class="mini-card pay-tip">
       支付宝 {{ paymentBinding.alipay ?? '未绑定' }}
-      · 银行卡 {{ paymentBinding.bankName ? `${paymentBinding.bankName} *${paymentBinding.bankCardLast4}` : '未绑定' }}
+      · 银行卡
+      {{ paymentBinding.bankName ? `${paymentBinding.bankName} *${paymentBinding.bankCardLast4}` : '未绑定' }}
     </div>
+
+    <button class="logout-btn" type="button" @click="handleLogout">
+      <el-icon :size="16"><SwitchButton /></el-icon>
+      退出登录
+    </button>
   </div>
 </template>
 
 <style scoped>
-.profile-page { padding-top: 0; }
-.profile-card, .income-card, .menu-section { cursor: default; }
-.income-card { cursor: pointer; }
+.profile-page {
+  padding-top: 0;
+}
 
-.profile-row { display: flex; align-items: center; gap: 14px; }
+.profile-card,
+.income-card,
+.menu-section {
+  /* base card styles */
+}
+
+.profile-card {
+  cursor: pointer;
+}
+
+.income-card {
+  cursor: pointer;
+}
+
+.menu-section {
+  cursor: default;
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
 .profile-avatar {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #e60012, #ff8a80);
+  background: linear-gradient(135deg, #3b82f6, #60a5fa);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -121,22 +207,42 @@ const iconItems = [
   font-weight: 700;
   flex-shrink: 0;
 }
-.profile-name { font-size: 18px; font-weight: 700; color: #333; }
-.profile-sub { font-size: 12px; color: #999; margin-top: 2px; }
-.profile-tags { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
+
+.profile-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #333;
+}
+
+.profile-sub {
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
+}
+
+.profile-tags {
+  margin-top: 6px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
 
 .insurance-status {
   cursor: pointer;
 }
 
 .insurance-status.insured {
-  background: #fff0f0;
-  color: #e60012;
+  background: #eff6ff;
+  color: #3b82f6;
 }
 
 .insurance-status.uninsured {
   background: #f5f5f5;
   color: #999;
+}
+
+.face-verify-status {
+  cursor: pointer;
 }
 
 .income-brief {
@@ -158,7 +264,7 @@ const iconItems = [
 }
 
 .brief-value.highlight {
-  color: #e60012;
+  color: #ef4444;
 }
 
 .brief-label {
@@ -189,8 +295,61 @@ const iconItems = [
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
 }
 
-.pay-tip { font-size: 12px; color: #999; cursor: default; }
+.pay-tip {
+  font-size: 12px;
+  color: #999;
+  cursor: default;
+}
+
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #eff6ff, #dbeafe);
+  cursor: pointer;
+}
+
+.banner-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1d4ed8;
+}
+
+.banner-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #3b82f6;
+  line-height: 1.4;
+}
+
+.banner-action {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2563eb;
+}
+
+.logout-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 14px;
+  border: none;
+  border-radius: 14px;
+  background: #fff;
+  color: #ef4444;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
 </style>

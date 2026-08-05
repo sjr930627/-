@@ -1,12 +1,12 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { buildJobApplicationDisplay, jobStatusTagClass } from '@/services/miniApplication'
 
 const route = useRoute()
-const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 
@@ -54,7 +54,7 @@ function formatTime(iso: string) {
 <template>
   <div class="detail-page">
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">←</button>
+      <MiniNavBack fallback="/miniapp/applications" />
       <div class="mini-nav-title">岗位报名详情</div>
     </div>
 
@@ -100,7 +100,7 @@ function formatTime(iso: string) {
 
       <div class="mini-card">
         <div class="mini-card-title">报名信息</div>
-        <div class="info-row"><span>薪酬方式</span><span>{{ display.salaryLabel }}</span></div>
+        <div class="info-row"><span>薪酬方式</span><span class="money-text">{{ display.salaryLabel }}</span></div>
         <div class="info-row"><span>报名时间</span><span>{{ formatTime(display.createdAt) }}</span></div>
         <div class="info-row"><span>报名岗位</span><span>{{ display.title }}</span></div>
         <div class="info-row"><span>所属企业</span><span>{{ display.enterprise }}</span></div>
@@ -141,7 +141,12 @@ function formatTime(iso: string) {
   margin-top: 10px;
   font-size: 16px;
   font-weight: 600;
-  color: var(--app-primary);
+  color: #ef4444;
+}
+
+.money-text {
+  color: #ef4444;
+  font-weight: 600;
 }
 
 .steps {

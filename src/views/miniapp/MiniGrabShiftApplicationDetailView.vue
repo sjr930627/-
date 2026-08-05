@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
@@ -45,7 +46,7 @@ function goPunch() {
 <template>
   <div class="detail-page">
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">←</button>
+      <MiniNavBack fallback="/miniapp/applications" />
       <div class="mini-nav-title">抢班报名详情</div>
     </div>
 
@@ -89,7 +90,7 @@ function goPunch() {
       <div class="mini-card">
         <div class="mini-card-title">班次信息</div>
         <div class="info-row"><span>班次类型</span><span>{{ display.title }}</span></div>
-        <div class="info-row"><span>薪酬方式</span><span>{{ display.payLabel }}</span></div>
+        <div class="info-row"><span>薪酬方式</span><span class="money-text">{{ display.payLabel }}</span></div>
         <div class="info-row"><span>工作时长</span><span>{{ display.durationHours }} 小时</span></div>
         <div class="info-row"><span>工作日期</span><span>{{ display.date }}</span></div>
         <div class="info-row"><span>工作时段</span><span>{{ display.timeRange }}</span></div>
@@ -147,7 +148,12 @@ function goPunch() {
   margin-top: 6px;
   font-size: 16px;
   font-weight: 700;
-  color: var(--app-primary);
+  color: #ef4444;
+}
+
+.money-text {
+  color: #ef4444;
+  font-weight: 600;
 }
 
 .status-text {

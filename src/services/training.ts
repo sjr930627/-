@@ -1,8 +1,13 @@
 import { getAiExamImageUrl } from '@/constants/examImages'
+import {
+  resolveEnterpriseIdByDepartment,
+  resolveEnterpriseIdByEmployee,
+} from '@/utils/enterpriseScope'
 import type {
   AiQuestionDifficulty,
   AiRiskScenario,
   CourseLearningRecord,
+  Department,
   Employee,
   ExamAttempt,
   ExamQuestion,
@@ -77,12 +82,26 @@ export function getExamQuestions(examId: string, questions: ExamQuestion[]) {
   return questions.filter((q) => q.examId === examId)
 }
 
+export function employeeBelongsToCourseEnterprise(
+  employee: Employee,
+  course: TrainingCourse,
+  departments: Department[],
+) {
+  if (!course.enterpriseId) return true
+  const byEmp = resolveEnterpriseIdByEmployee(employee)
+  if (byEmp === course.enterpriseId) return true
+  return resolveEnterpriseIdByDepartment(employee.departmentId, departments) === course.enterpriseId
+}
+
 export function resolveCourseAssignees(
   course: TrainingCourse,
   employees: Employee[],
-  _departments: { id: string }[],
+  departments: Department[],
 ): Employee[] {
-  const active = employees.filter((e) => e.status === 'active')
+  const active = employees
+    .filter((e) => e.status === 'active')
+    .filter((e) => employeeBelongsToCourseEnterprise(e, course, departments))
+
   if (course.scopeType === 'all') return active
   if (course.scopeType === 'department') {
     const deptIds = new Set(course.scopeDepartmentIds ?? [])
@@ -95,11 +114,80 @@ export function resolveCourseAssignees(
   return active
 }
 
+export function hasEmployeePassedCourseExam(
+  employeeId: string,
+  course: TrainingCourse,
+  records: CourseLearningRecord[],
+) {
+  if (!course.examId) return true
+  const rec = records.find((r) => r.courseId === course.id && r.employeeId === employeeId)
+  return rec?.examPassed === true
+}
+
+export type CourseGateKind = 'schedule' | 'task'
+
+/** 返回阻止排班/接任务的已发布课程（需考核且未通过） */
+export function getBlockingCoursesForEmployee(
+  employeeId: string,
+  courses: TrainingCourse[],
+  records: CourseLearningRecord[],
+  employees: Employee[],
+  departments: Department[],
+  gate: CourseGateKind,
+): TrainingCourse[] {
+  return courses.filter((course) => {
+    if (course.status !== 'published') return false
+    if (!course.examId) return false
+    if (gate === 'schedule' && !course.requireExamPassForSchedule) return false
+    if (gate === 'task' && !course.requireExamPassForTask) return false
+    const assignees = resolveCourseAssignees(course, employees, departments)
+    if (!assignees.some((e) => e.id === employeeId)) return false
+    return !hasEmployeePassedCourseExam(employeeId, course, records)
+  })
+}
+
+export function formatCourseGateBlockMessage(courses: TrainingCourse[], gate: CourseGateKind) {
+  const names = courses.map((c) => `「${c.name}」`).join('、')
+  const action = gate === 'schedule' ? '排班/抢班' : '接任务'
+  return `请先通过考核：${names}，通过后方可${action}`
+}
+
+export type TrainingOwnerScope = 'enterprise' | 'global'
+
+export function isGlobalTrainingOwner(enterpriseId: string | null | undefined) {
+  return enterpriseId == null
+}
+
+/** 按企业培训 / 通用培训过滤（通用 = enterpriseId 为空） */
+export function filterTrainingByOwnerScope<T extends { enterpriseId?: string | null }>(
+  items: T[],
+  scope: TrainingOwnerScope,
+  enterpriseId?: string,
+): T[] {
+  if (scope === 'global') {
+    return items.filter((item) => isGlobalTrainingOwner(item.enterpriseId))
+  }
+  const enterpriseItems = items.filter((item) => !isGlobalTrainingOwner(item.enterpriseId))
+  if (!enterpriseId) return enterpriseItems
+  return enterpriseItems.filter((item) => item.enterpriseId === enterpriseId)
+}
+
+export function filterCoursesByEnterprise(courses: TrainingCourse[], enterpriseId?: string) {
+  return filterTrainingByOwnerScope(courses, 'enterprise', enterpriseId)
+}
+
+export function filterDepartmentsByEnterprise(departments: Department[], enterpriseId?: string) {
+  if (!enterpriseId) return departments
+  return departments.filter(
+    (d) => resolveEnterpriseIdByDepartment(d.id, departments) === enterpriseId,
+  )
+}
+
 export function getCourseCompletionStats(
   course: TrainingCourse,
   records: CourseLearningRecord[],
   employees: Employee[],
-  departments: { id: string; name: string }[],
+  departments: Department[],
 ) {
   const assignees = resolveCourseAssignees(course, employees, departments)
   const courseRecords = records.filter((r) => r.courseId === course.id)
@@ -119,7 +207,7 @@ export function getDepartmentCompletionRates(
   course: TrainingCourse,
   records: CourseLearningRecord[],
   employees: Employee[],
-  departments: { id: string; name: string }[],
+  departments: Department[],
 ) {
   const assignees = resolveCourseAssignees(course, employees, departments)
   const byDept = new Map<string, { name: string; total: number; completed: number }>()
@@ -142,7 +230,7 @@ export function getExamStats(
   courses: TrainingCourse[],
   attempts: ExamAttempt[],
   employees: Employee[],
-  departments: { id: string; name: string }[],
+  departments: Department[],
 ) {
   const linkedCourses = courses.filter((c) => c.examId === exam.id && c.status === 'published')
   const assigneeIds = new Set<string>()

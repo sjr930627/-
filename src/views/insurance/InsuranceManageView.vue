@@ -2,6 +2,9 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { useEnterpriseScope } from '@/composables/useEnterpriseScope'
+import EnterpriseScopeSelect from '@/components/platform/EnterpriseScopeSelect.vue'
+import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 import type { InsurancePolicy, InsurancePolicyStatus } from '@/types'
 import {
   getInsurancePolicyStatusLabel,
@@ -11,6 +14,8 @@ import {
 } from '@/services/insurance'
 
 const store = useAppStore()
+const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
+  useEnterpriseScope('filter')
 const activeTab = ref<'policies' | 'employees' | 'products'>('policies')
 const keyword = ref('')
 const statusFilter = ref<InsurancePolicyStatus | ''>('')
@@ -40,6 +45,8 @@ const stats = computed(() => {
 const policyRows = computed(() =>
   [...store.insurancePolicies]
     .filter((p) => {
+      const emp = employeeMap.value[p.employeeId]
+      if (!matchesEnterprise(resolveEnterpriseIdByEmployee(emp))) return false
       if (statusFilter.value && p.status !== statusFilter.value) return false
       if (dateRange.value) {
         const [start, end] = dateRange.value
@@ -63,6 +70,7 @@ const policyRows = computed(() =>
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((p) => ({
       ...p,
+      enterpriseName: enterpriseName(resolveEnterpriseIdByEmployee(employeeMap.value[p.employeeId])),
       employeeName: employeeMap.value[p.employeeId]?.name ?? '-',
       employeeNo: employeeMap.value[p.employeeId]?.employeeNo ?? '-',
       productName: productMap.value[p.productId]?.name ?? '-',
@@ -73,11 +81,13 @@ const policyRows = computed(() =>
 
 const employeeRows = computed(() =>
   store.activeEmployees
+    .filter((emp) => matchesEnterprise(resolveEnterpriseIdByEmployee(emp)))
     .map((emp) => {
       const summary = summarizeEmployeeInsurance(store.insurancePolicies, emp.id)
       const latestPolicy = summary.latest
       return {
         employeeId: emp.id,
+        enterpriseName: enterpriseName(resolveEnterpriseIdByEmployee(emp)),
         name: emp.name,
         employeeNo: emp.employeeNo,
         position: emp.position,
@@ -155,6 +165,12 @@ function formatDateTime(iso: string) {
     </div>
 
     <div class="page-toolbar">
+      <EnterpriseScopeSelect
+        v-if="showEnterpriseControl"
+        v-model="enterpriseFilter"
+        mode="filter"
+        width="180px"
+      />
       <el-input
         v-model="keyword"
         placeholder="搜索保单号、姓名、工号..."
@@ -189,6 +205,7 @@ function formatDateTime(iso: string) {
     <el-tabs v-model="activeTab">
       <el-tab-pane label="保单记录" name="policies">
         <el-table :data="policyRows" stripe border>
+          <el-table-column prop="enterpriseName" label="企业" min-width="160" show-overflow-tooltip />
           <el-table-column prop="policyNo" label="保单号" min-width="150" />
           <el-table-column prop="employeeName" label="姓名" width="100" />
           <el-table-column prop="employeeNo" label="工号" width="100" />
@@ -225,6 +242,7 @@ function formatDateTime(iso: string) {
 
       <el-tab-pane label="人员投保概况" name="employees">
         <el-table :data="employeeRows" stripe border>
+          <el-table-column prop="enterpriseName" label="企业" min-width="160" show-overflow-tooltip />
           <el-table-column prop="name" label="姓名" width="100" />
           <el-table-column prop="employeeNo" label="工号" width="100" />
           <el-table-column prop="position" label="岗位" min-width="120" />

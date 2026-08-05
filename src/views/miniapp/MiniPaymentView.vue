@@ -1,11 +1,10 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 
-const router = useRouter()
 const store = useAppStore()
 const { employeeId, paymentBinding } = useMiniAppWorker()
 
@@ -40,7 +39,7 @@ function saveBank() {
 <template>
   <div>
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">← 返回</button>
+      <MiniNavBack fallback="/miniapp/profile" />
       <div class="mini-nav-title">收款绑定</div>
     </div>
     <div class="mini-page">

@@ -1,11 +1,10 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { useMiniAppBack } from '@/composables/useMiniAppBack'
 import { useMiniInsuranceStatus } from '@/composables/useMiniInsuranceStatus'
 import { getInsuranceProductTypeLabel } from '@/services/insurance'
 
-const { goBack } = useMiniAppBack('/miniapp/profile')
 const store = useAppStore()
 const { todayPolicy, isInsuredToday } = useMiniInsuranceStatus()
 
@@ -27,7 +26,7 @@ const shiftLabel = computed(() => {
 <template>
   <div>
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/profile" />
       <div class="mini-nav-title">投保详情</div>
     </div>
     <div class="mini-page">
@@ -123,7 +122,7 @@ const shiftLabel = computed(() => {
 }
 
 .value.premium {
-  color: #e60012;
+  color: #ef4444;
   font-weight: 700;
 }
 

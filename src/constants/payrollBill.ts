@@ -1,28 +1,33 @@
-import type { InvoiceStatus, InvoiceType, SettlementBillStatus } from '@/types'
+import type { SettlementBillStatus } from '@/types'
+
+export {
+  invoiceTypeMap,
+  invoiceStatusMap,
+  invoiceDeliveryMethodMap,
+  resolveInvoiceStatusMeta,
+} from '@/constants/invoice'
 
 export const billStatusMap: Record<
   SettlementBillStatus,
   { label: string; type: 'warning' | 'primary' | 'success' | 'info' | 'danger' }
 > = {
+  pending_submit: { label: '待提交', type: 'info' },
   pending_confirm: { label: '待确认', type: 'warning' },
   pending_payment: { label: '待付款', type: 'primary' },
-  pending_verify: { label: '待核实', type: 'warning' },
-  paid: { label: '已支付', type: 'success' },
-  void: { label: '已作废', type: 'info' },
+  paid: { label: '已付款', type: 'success' },
+  void: { label: '已作废', type: 'danger' },
 }
 
-export const invoiceTypeMap: Record<InvoiceType, string> = {
-  special: '增值税专用发票',
-  normal: '增值税普通发票',
+/** 兼容旧 localStorage 中的 pending_verify 状态 */
+const legacyBillStatusMap: Record<string, { label: string; type: 'warning' | 'primary' | 'success' | 'info' | 'danger' }> = {
+  pending_verify: { label: '待付款', type: 'primary' },
 }
 
-export const invoiceStatusMap: Record<
-  InvoiceStatus,
-  { label: string; type: 'warning' | 'success' | 'primary' }
-> = {
-  pending: { label: '待开票', type: 'warning' },
-  issued: { label: '已开票', type: 'success' },
-  mailed: { label: '已邮寄', type: 'primary' },
+export function resolveBillStatusMeta(status: string) {
+  return billStatusMap[status as SettlementBillStatus] ?? legacyBillStatusMap[status] ?? {
+    label: status,
+    type: 'info' as const,
+  }
 }
 
 export function formatMoney(amount: number): string {

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
+  formatTaskQuantity,
   formatTaskTypePrice,
   taskTypeStatusMap,
   workflowStatusMap,
@@ -10,9 +12,8 @@ import {
 import type { TaskType } from '@/types'
 
 const store = useAppStore()
+const router = useRouter()
 const activeTab = ref<'pending' | 'all'>('pending')
-const detailVisible = ref(false)
-const currentRow = ref<TaskType | null>(null)
 
 const tableData = computed(() =>
   store.taskTypes
@@ -24,6 +25,7 @@ const tableData = computed(() =>
         workflowName: wf?.name ?? '-',
         workflowStatus: wf ? workflowStatusMap[wf.status] : '-',
         priceLabel: formatTaskTypePrice(t),
+        quantityLabel: formatTaskQuantity(t.unlimitedQuantity, t.defaultQuantity),
         statusLabel: taskTypeStatusMap[t.status],
         validityLabel: t.longTerm
           ? '长期有效'
@@ -35,8 +37,7 @@ const tableData = computed(() =>
 const pendingCount = computed(() => store.taskTypes.filter((t) => t.status === 'pending').length)
 
 function showDetail(row: TaskType) {
-  currentRow.value = row
-  detailVisible.value = true
+  router.push(`/task-types/${row.id}`)
 }
 
 async function review(id: string, approved: boolean) {
@@ -82,6 +83,8 @@ async function review(id: string, approved: boolean) {
       <el-table-column prop="name" label="任务类型" min-width="140" />
       <el-table-column prop="workflowName" label="关联工作流" min-width="160" />
       <el-table-column prop="priceLabel" label="单价" min-width="160" show-overflow-tooltip />
+      <el-table-column prop="quantityLabel" label="任务数量" width="100" />
+      <el-table-column prop="validityLabel" label="有效期" width="160" />
       <el-table-column prop="applicant" label="申请人" width="100" />
       <el-table-column label="提交时间" width="170">
         <template #default="{ row }">
@@ -118,49 +121,4 @@ async function review(id: string, approved: boolean) {
       </el-table-column>
     </el-table>
   </div>
-
-  <el-drawer v-model="detailVisible" title="任务类型详情" size="480px">
-    <template v-if="currentRow">
-      <el-descriptions :column="1" border>
-        <el-descriptions-item label="企业">{{ currentRow.enterpriseName }}</el-descriptions-item>
-        <el-descriptions-item label="任务类型">{{ currentRow.name }}</el-descriptions-item>
-        <el-descriptions-item label="关联工作流">
-          {{ store.taskWorkflows.find((w) => w.id === currentRow!.workflowId)?.name ?? '-' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="单价模式">
-          {{ currentRow.pricingMode === 'fixed' ? '固定单价' : '阶梯单价' }}
-        </el-descriptions-item>
-        <el-descriptions-item label="单价">
-          {{ formatTaskTypePrice(currentRow) }}
-        </el-descriptions-item>
-        <el-descriptions-item v-if="currentRow.incentive" label="激励规则">
-          {{ currentRow.incentive }}
-        </el-descriptions-item>
-        <el-descriptions-item label="有效期">
-          {{
-            currentRow.longTerm
-              ? '长期有效'
-              : `${currentRow.validFrom} ~ ${currentRow.validTo}`
-          }}
-        </el-descriptions-item>
-        <el-descriptions-item v-if="currentRow.trainingCourseId" label="培训要求">
-          须完成培训课程 {{ currentRow.trainingCourseId }}
-        </el-descriptions-item>
-        <el-descriptions-item label="任务描述">
-          <div class="desc-block">{{ currentRow.description }}</div>
-        </el-descriptions-item>
-        <el-descriptions-item v-if="currentRow.reviewNote" label="审批意见">
-          {{ currentRow.reviewNote }}
-        </el-descriptions-item>
-      </el-descriptions>
-    </template>
-  </el-drawer>
 </template>
-
-<style scoped>
-.desc-block {
-  white-space: pre-wrap;
-  line-height: 1.6;
-  color: #606266;
-}
-</style>

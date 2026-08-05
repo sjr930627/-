@@ -2,7 +2,10 @@
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import TaskQuantityField from '@/components/task/TaskQuantityField.vue'
+import TaskFormSection from '@/components/task/TaskFormSection.vue'
 import {
+  formatTaskQuantity,
   formatTaskTypePrice,
   taskTypeStatusMap,
   workflowStatusMap,
@@ -25,6 +28,8 @@ const form = ref({
   description: '',
   trainingCourseId: '',
   longTerm: true,
+  unlimitedQuantity: false,
+  defaultQuantity: 100,
   validFrom: '',
   validTo: '',
 })
@@ -41,6 +46,7 @@ const tableData = computed(() =>
         workflowName: wf?.name ?? '-',
         workflowEnabled: wf?.status === 'enabled',
         priceLabel: formatTaskTypePrice(t),
+        quantityLabel: formatTaskQuantity(t.unlimitedQuantity, t.defaultQuantity),
         statusLabel: taskTypeStatusMap[t.status],
         validityLabel: t.longTerm
           ? '长期有效'
@@ -67,6 +73,8 @@ function resetForm() {
     description: '',
     trainingCourseId: '',
     longTerm: true,
+    unlimitedQuantity: false,
+    defaultQuantity: 100,
     validFrom: '',
     validTo: '',
   }
@@ -90,6 +98,8 @@ function openEdit(row: TaskType) {
     description: row.description,
     trainingCourseId: row.trainingCourseId ?? '',
     longTerm: row.longTerm,
+    unlimitedQuantity: row.unlimitedQuantity ?? false,
+    defaultQuantity: row.defaultQuantity ?? 100,
     validFrom: row.validFrom ?? '',
     validTo: row.validTo ?? '',
   }
@@ -121,6 +131,8 @@ function buildPayload() {
     description: form.value.description.trim(),
     trainingCourseId: form.value.trainingCourseId.trim() || undefined,
     longTerm: form.value.longTerm,
+    unlimitedQuantity: form.value.unlimitedQuantity,
+    defaultQuantity: form.value.unlimitedQuantity ? undefined : form.value.defaultQuantity,
     validFrom: form.value.longTerm ? undefined : form.value.validFrom,
     validTo: form.value.longTerm ? undefined : form.value.validTo,
   }
@@ -141,6 +153,10 @@ function validate() {
   }
   if (!form.value.longTerm && (!form.value.validFrom || !form.value.validTo)) {
     ElMessage.warning('请设置有效期限')
+    return false
+  }
+  if (!form.value.unlimitedQuantity && (!form.value.defaultQuantity || form.value.defaultQuantity < 1)) {
+    ElMessage.warning('请填写任务数量或选择无上限')
     return false
   }
   return true
@@ -224,6 +240,7 @@ async function disableRow(row: TaskType) {
         </template>
       </el-table-column>
       <el-table-column prop="priceLabel" label="单价" min-width="160" show-overflow-tooltip />
+      <el-table-column prop="quantityLabel" label="任务数量" width="110" />
       <el-table-column prop="validityLabel" label="有效期" width="160" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
@@ -263,80 +280,95 @@ async function disableRow(row: TaskType) {
   <el-dialog
     v-model="dialogVisible"
     :title="editingId ? '编辑任务类型' : '新建任务类型'"
-    width="720px"
+    width="760px"
     destroy-on-close
+    class="task-form-dialog"
   >
-    <el-form label-width="110px">
-      <el-form-item label="类型名称" required>
-        <el-input v-model="form.name" placeholder="如：5G套餐推广" />
-      </el-form-item>
-      <el-form-item label="关联工作流" required>
-        <el-select v-model="form.workflowId" placeholder="选择已启用工作流" style="width: 100%">
-          <el-option
-            v-for="opt in workflowOptions"
-            :key="opt.value"
-            :label="opt.label"
-            :value="opt.value"
-          />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="单价模式">
-        <el-radio-group v-model="form.pricingMode">
-          <el-radio value="fixed">固定单价</el-radio>
-          <el-radio value="tiered">阶梯单价</el-radio>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item v-if="form.pricingMode === 'fixed'" label="固定单价">
-        <el-input-number v-model="form.fixedPrice" :min="1" :max="9999" /> 元/单
-      </el-form-item>
-      <template v-else>
-        <el-form-item label="阶梯单价">
-          <div class="tier-list">
-            <div v-for="(tier, index) in form.tieredPrices" :key="index" class="tier-row">
-              <el-input-number v-model="tier.minCount" :min="1" controls-position="right" />
-              <span>~</span>
-              <el-input-number v-model="tier.maxCount" :min="tier.minCount" controls-position="right" />
-              <span>单</span>
-              <el-input-number v-model="tier.unitPrice" :min="1" controls-position="right" />
-              <span>元/单</span>
-              <el-button text type="danger" :disabled="form.tieredPrices.length <= 1" @click="removeTier(index)">
-                删除
-              </el-button>
-            </div>
-            <el-button size="small" @click="addTier">添加阶梯</el-button>
-          </div>
+    <el-form label-width="100px">
+      <TaskFormSection title="基本信息" subtitle="类型名称、工作流与描述" icon="基" icon-variant="blue">
+        <el-form-item label="类型名称" required>
+          <el-input v-model="form.name" placeholder="如：5G套餐推广" />
         </el-form-item>
-      </template>
-      <el-form-item label="任务激励">
-        <el-input v-model="form.incentive" placeholder="可选，如排名奖励" />
-      </el-form-item>
-      <el-form-item label="培训要求">
-        <el-input v-model="form.trainingCourseId" placeholder="可选，关联培训课程 ID" />
-      </el-form-item>
-      <el-form-item label="有效期">
-        <el-radio-group v-model="form.longTerm">
-          <el-radio :value="true">长期有效</el-radio>
-          <el-radio :value="false">指定时间段</el-radio>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item v-if="!form.longTerm" label="时间范围">
-        <el-date-picker
-          v-model="form.validFrom"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="开始"
-        />
-        <span style="margin: 0 8px">至</span>
-        <el-date-picker
-          v-model="form.validTo"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="结束"
-        />
-      </el-form-item>
-      <el-form-item label="任务描述" required>
-        <el-input v-model="form.description" type="textarea" :rows="4" placeholder="对灵工展示的任务说明" />
-      </el-form-item>
+        <el-form-item label="关联工作流" required>
+          <el-select v-model="form.workflowId" placeholder="选择已启用工作流" style="width: 100%">
+            <el-option
+              v-for="opt in workflowOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="任务描述" required>
+          <el-input v-model="form.description" type="textarea" :rows="3" placeholder="对灵工展示的任务说明" />
+        </el-form-item>
+      </TaskFormSection>
+
+      <TaskFormSection title="定价配置" subtitle="固定单价或阶梯单价" icon="价" icon-variant="green">
+        <el-form-item label="单价模式">
+          <el-radio-group v-model="form.pricingMode">
+            <el-radio value="fixed">固定单价</el-radio>
+            <el-radio value="tiered">阶梯单价</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.pricingMode === 'fixed'" label="固定单价">
+          <el-input-number v-model="form.fixedPrice" :min="1" :max="9999" /> 元/单
+        </el-form-item>
+        <template v-else>
+          <el-form-item label="阶梯单价">
+            <div class="tier-list">
+              <div v-for="(tier, index) in form.tieredPrices" :key="index" class="tier-row">
+                <el-input-number v-model="tier.minCount" :min="1" controls-position="right" />
+                <span>~</span>
+                <el-input-number v-model="tier.maxCount" :min="tier.minCount" controls-position="right" />
+                <span>单</span>
+                <el-input-number v-model="tier.unitPrice" :min="1" controls-position="right" />
+                <span>元/单</span>
+                <el-button text type="danger" :disabled="form.tieredPrices.length <= 1" @click="removeTier(index)">
+                  删除
+                </el-button>
+              </div>
+              <el-button size="small" @click="addTier">添加阶梯</el-button>
+            </div>
+          </el-form-item>
+        </template>
+        <el-form-item label="任务激励">
+          <el-input v-model="form.incentive" placeholder="可选，如排名奖励" />
+        </el-form-item>
+        <el-form-item label="培训要求">
+          <el-input v-model="form.trainingCourseId" placeholder="可选，关联培训课程 ID" />
+        </el-form-item>
+      </TaskFormSection>
+
+      <TaskFormSection title="数量与期限" subtitle="任务数量必填，可选无上限" icon="量" icon-variant="orange">
+        <el-form-item label="任务数量" required>
+          <TaskQuantityField
+            v-model="form.defaultQuantity"
+            v-model:unlimited="form.unlimitedQuantity"
+          />
+        </el-form-item>
+        <el-form-item label="有效期">
+          <el-radio-group v-model="form.longTerm">
+            <el-radio :value="true">长期有效</el-radio>
+            <el-radio :value="false">指定时间段</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="!form.longTerm" label="时间范围">
+          <el-date-picker
+            v-model="form.validFrom"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="开始"
+          />
+          <span style="margin: 0 8px">至</span>
+          <el-date-picker
+            v-model="form.validTo"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="结束"
+          />
+        </el-form-item>
+      </TaskFormSection>
     </el-form>
     <template #footer>
       <el-button @click="dialogVisible = false">取消</el-button>

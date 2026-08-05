@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { useTrainingScope } from '@/composables/useTrainingScope'
+import { trainingTypeFilterOptions } from '@/constants/trainingOwner'
 import VChart from '@/components/statistics/VChart.vue'
 import {
   learningStatusMap,
@@ -20,10 +22,13 @@ import type { EChartsOption } from 'echarts'
 
 const store = useAppStore()
 const route = useRoute()
+const { isPlatform, typeFilter, enterpriseFilter, filterByTrainingType } = useTrainingScope()
 const selectedCourseId = ref<string>('')
 
 const publishedCourses = computed(() =>
-  store.trainingCourses.filter((c) => c.status === 'published' || c.status === 'closed'),
+  filterByTrainingType(
+    store.trainingCourses.filter((c) => c.status === 'published' || c.status === 'closed'),
+  ),
 )
 
 watch(
@@ -36,6 +41,16 @@ watch(
   },
   { immediate: true },
 )
+
+watch(publishedCourses, (list) => {
+  if (list.length === 0) {
+    selectedCourseId.value = ''
+    return
+  }
+  if (!list.some((c) => c.id === selectedCourseId.value)) {
+    selectedCourseId.value = list[0].id
+  }
+})
 
 const selectedCourse = computed(() =>
   store.trainingCourses.find((c) => c.id === selectedCourseId.value),
@@ -127,7 +142,7 @@ function exportDetail() {
     <div class="page-header">
       <div>
         <h2 class="page-title">学习进度监控</h2>
-        <p class="text-muted">查看每个课程的学习完成情况和灵工学习详情</p>
+        <p class="text-muted">查看企业课程与通用课程的学习完成情况和灵工学习详情</p>
       </div>
       <div class="header-actions">
         <el-button @click="exportDetail">导出明细</el-button>
@@ -136,11 +151,28 @@ function exportDetail() {
     </div>
 
     <div class="page-toolbar">
+      <el-select v-if="isPlatform" v-model="typeFilter" placeholder="类型" style="width: 120px">
+        <el-option
+          v-for="o in trainingTypeFilterOptions"
+          :key="o.value"
+          :label="o.label"
+          :value="o.value"
+        />
+      </el-select>
+      <el-select
+        v-if="isPlatform && typeFilter !== 'global'"
+        v-model="enterpriseFilter"
+        placeholder="所属企业"
+        clearable
+        style="width: 200px"
+      >
+        <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
+      </el-select>
       <el-select v-model="selectedCourseId" placeholder="选择课程" style="width: 280px">
         <el-option
           v-for="c in publishedCourses"
           :key="c.id"
-          :label="c.name"
+          :label="`${c.enterpriseId == null ? '[通用]' : '[企业]'} ${c.name}`"
           :value="c.id"
         />
       </el-select>

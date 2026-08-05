@@ -1,6 +1,7 @@
 import type {
   AttendanceDaily,
   AttendanceException,
+  AttendanceManualAdjustment,
   AttendanceMonthlySummary,
   AttendancePunch,
   AttendanceRule,
@@ -49,6 +50,34 @@ export function getStatusTagType(
   return 'danger'
 }
 
+export function isDailyAttendanceVisible(day: AttendanceDaily): boolean {
+  return day.scheduledHours > 0
+}
+
+export function canCorrectWorkHours(status: AttendanceStatus): boolean {
+  return status === 'late' || status === 'missing_punch'
+}
+
+function applyManualAdjustment(
+  day: AttendanceDaily,
+  manualOverride?: AttendanceManualAdjustment,
+): AttendanceDaily {
+  if (!manualOverride) return day
+  const next = { ...day }
+  if (manualOverride.status) {
+    next.status = manualOverride.status
+    next.manualStatus = manualOverride.status
+  }
+  if (manualOverride.workHours !== undefined) {
+    next.workHours = manualOverride.workHours
+    next.workHoursCorrected = true
+  }
+  if (manualOverride.note) {
+    next.manualNote = manualOverride.note
+  }
+  return next
+}
+
 function parseMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number)
   return h * 60 + m
@@ -85,38 +114,44 @@ export function computeDailyAttendance(
   punches: AttendancePunch[],
   leaveRequests: LeaveRequest[],
   rule: AttendanceRule,
-  manualOverride?: { status?: AttendanceStatus; note?: string },
+  manualOverride?: AttendanceManualAdjustment,
 ): AttendanceDaily {
+  const assignment = assignments.find((a) => a.employeeId === employeeId && a.date === date)
+  const shift = assignment ? shifts.find((s) => s.id === assignment.shiftId) : undefined
+  const scheduledHours = shift && shift.code !== 'REST' ? calcShiftHours(shift) : 0
+
   if (manualOverride?.status) {
-    const assignment = assignments.find((a) => a.employeeId === employeeId && a.date === date)
-    const shift = assignment ? shifts.find((s) => s.id === assignment.shiftId) : undefined
     const dayPunches = getPunchesForDay(punches, employeeId, date)
-    return {
-      employeeId,
-      date,
-      shiftId: shift?.id,
-      status: manualOverride.status,
-      clockIn: dayPunches.find((p) => p.type === 'clock_in')?.time,
-      clockOut: dayPunches.find((p) => p.type === 'clock_out')?.time,
-      workHours: calcWorkHours(dayPunches, shift),
-      scheduledHours: shift && shift.code !== 'REST' ? calcShiftHours(shift) : 0,
-      manualStatus: manualOverride.status,
-      manualNote: manualOverride.note,
-    }
+    return applyManualAdjustment(
+      {
+        employeeId,
+        date,
+        shiftId: shift?.id,
+        status: manualOverride.status,
+        clockIn: dayPunches.find((p) => p.type === 'clock_in')?.time,
+        clockOut: dayPunches.find((p) => p.type === 'clock_out')?.time,
+        workHours: calcWorkHours(dayPunches, shift),
+        scheduledHours,
+        manualStatus: manualOverride.status,
+        manualNote: manualOverride.note,
+      },
+      manualOverride,
+    )
   }
 
   if (isOnLeave(leaveRequests, employeeId, date)) {
-    return {
-      employeeId,
-      date,
-      status: 'leave',
-      workHours: 0,
-      scheduledHours: 0,
-    }
+    return applyManualAdjustment(
+      {
+        employeeId,
+        date,
+        shiftId: shift?.id,
+        status: 'leave',
+        workHours: 0,
+        scheduledHours,
+      },
+      manualOverride,
+    )
   }
-
-  const assignment = assignments.find((a) => a.employeeId === employeeId && a.date === date)
-  const shift = assignment ? shifts.find((s) => s.id === assignment.shiftId) : undefined
 
   if (!shift || shift.code === 'REST') {
     return {
@@ -132,30 +167,35 @@ export function computeDailyAttendance(
   const dayPunches = getPunchesForDay(punches, employeeId, date)
   const clockIn = dayPunches.find((p) => p.type === 'clock_in')
   const clockOut = dayPunches.find((p) => p.type === 'clock_out')
-  const scheduledHours = calcShiftHours(shift)
 
   if (!clockIn && !clockOut) {
-    return {
-      employeeId,
-      date,
-      shiftId: shift.id,
-      status: 'absent',
-      workHours: 0,
-      scheduledHours,
-    }
+    return applyManualAdjustment(
+      {
+        employeeId,
+        date,
+        shiftId: shift.id,
+        status: 'absent',
+        workHours: 0,
+        scheduledHours,
+      },
+      manualOverride,
+    )
   }
 
   if (!clockIn || !clockOut) {
-    return {
-      employeeId,
-      date,
-      shiftId: shift.id,
-      status: 'missing_punch',
-      clockIn: clockIn?.time,
-      clockOut: clockOut?.time,
-      workHours: calcWorkHours(dayPunches, shift),
-      scheduledHours,
-    }
+    return applyManualAdjustment(
+      {
+        employeeId,
+        date,
+        shiftId: shift.id,
+        status: 'missing_punch',
+        clockIn: clockIn?.time,
+        clockOut: clockOut?.time,
+        workHours: calcWorkHours(dayPunches, shift),
+        scheduledHours,
+      },
+      manualOverride,
+    )
   }
 
   const startMin = parseMinutes(shift.startTime)
@@ -172,16 +212,19 @@ export function computeDailyAttendance(
   if (outMin < earlyThreshold && status === 'normal') status = 'early_leave'
   if (inMin > lateThreshold && outMin < earlyThreshold) status = 'late'
 
-  return {
-    employeeId,
-    date,
-    shiftId: shift.id,
-    status,
-    clockIn: clockIn.time,
-    clockOut: clockOut.time,
-    workHours: calcWorkHours(dayPunches, shift),
-    scheduledHours,
-  }
+  return applyManualAdjustment(
+    {
+      employeeId,
+      date,
+      shiftId: shift.id,
+      status,
+      clockIn: clockIn.time,
+      clockOut: clockOut.time,
+      workHours: calcWorkHours(dayPunches, shift),
+      scheduledHours,
+    },
+    manualOverride,
+  )
 }
 
 function calcWorkHours(punches: AttendancePunch[], shift?: Shift): number {
@@ -208,15 +251,13 @@ export function buildDailyAttendanceList(
   punches: AttendancePunch[],
   leaveRequests: LeaveRequest[],
   rule: AttendanceRule,
-  manualOverrides: Record<string, AttendanceStatus> = {},
+  manualOverrides: Record<string, AttendanceManualAdjustment> = {},
 ): AttendanceDaily[] {
   const result: AttendanceDaily[] = []
   employeeIds.forEach((employeeId) => {
     dates.forEach((date) => {
       const key = `${employeeId}_${date}`
       const override = manualOverrides[key]
-        ? { status: manualOverrides[key] }
-        : undefined
       result.push(
         computeDailyAttendance(
           employeeId,

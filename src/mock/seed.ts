@@ -16,6 +16,7 @@ import type {
   SchedulePublishRecord,
   ScheduleRule,
   Shift,
+  CancelShiftRequest,
   SwapRequest,
   Team,
 } from '@/types'
@@ -31,10 +32,27 @@ export const defaultScheduleRule: ScheduleRule = {
 }
 
 export const seedDepartments: Department[] = [
-  { id: 'dept_root', name: '总公司', parentId: null, sort: 0 },
-  { id: 'dept_hr', name: '人事行政部', parentId: 'dept_root', sort: 1 },
-  { id: 'dept_prod', name: '生产部', parentId: 'dept_root', sort: 2 },
-  { id: 'dept_prod_a', name: '中石化朝阳加油站', parentId: 'dept_prod', sort: 1 },
+  { id: 'dept_root', name: '星辰通信集团', parentId: null, sort: 0, orgType: 'enterprise', nodeType: 'branch' },
+  {
+    id: 'dept_unassigned',
+    name: '待分配人员',
+    parentId: null,
+    sort: 1,
+    nodeType: 'leaf',
+    description: '用于管理待入职及尚未分配部门和岗位的人员',
+  },
+  { id: 'dept_hr', name: '人事行政部', parentId: 'dept_root', sort: 1, nodeType: 'branch' },
+  { id: 'dept_prod', name: '生产部', parentId: 'dept_root', sort: 2, nodeType: 'branch' },
+  {
+    id: 'dept_prod_a',
+    name: '中石化朝阳加油站',
+    parentId: 'dept_prod',
+    sort: 1,
+    nodeType: 'branch',
+    managerEmployeeId: 'emp_001',
+    attendanceGroupId: 'ag_factory',
+    description: '负责朝阳区域加油站运营与便利店服务',
+  },
   { id: 'dept_prod_b', name: '生产二车间', parentId: 'dept_prod', sort: 2 },
   { id: 'dept_logistics', name: '物流部', parentId: 'dept_root', sort: 3 },
 ]
@@ -54,7 +72,7 @@ export const seedTeams: Team[] = [
     name: '中石化朝阳站晚班组',
     departmentId: 'dept_prod_a',
     attendanceGroupId: 'ag_factory',
-    memberIds: ['emp_005', 'emp_006', 'emp_007'],
+    memberIds: ['emp_005', 'emp_007'],
     hourlyRate: 45,
     description: '负责中石化朝阳站晚班加油及便利店服务',
   },
@@ -77,10 +95,32 @@ export const seedEmployees: Employee[] = [
     position: '加油站营业员',
     hireDate: '2022-03-15',
     skills: ['叉车证'],
+    skillCertificates: [
+      {
+        id: 'cert_health_001',
+        name: '健康证',
+        certificateNo: 'JK20240315001',
+        issueDate: '2024-03-15',
+        expiryDate: '2025-03-14',
+      },
+      {
+        id: 'cert_demo_001',
+        name: '叉车证',
+        certificateNo: 'FC-2022-001',
+        issueDate: '2022-01-10',
+        expiryDate: '2027-01-09',
+        photoName: 'forklift-cert.jpg',
+      },
+    ],
     preferredShiftIds: ['shift_morning'],
     unavailableDates: [],
     status: 'active',
     phone: '13800001001',
+    gender: 'male',
+    age: 32,
+    email: 'zhangwei@example.com',
+    address: '浙江省杭州市西湖区文三路',
+    realNameVerified: true,
   },
   {
     id: 'emp_002',
@@ -191,6 +231,34 @@ export const seedEmployees: Employee[] = [
     unavailableDates: [],
     status: 'active',
   },
+  {
+    id: 'emp_pending_001',
+    name: '陈待入职',
+    employeeNo: 'E9001',
+    departmentId: 'dept_unassigned',
+    position: '待分配',
+    hireDate: '2026-07-28',
+    skills: [],
+    preferredShiftIds: [],
+    unavailableDates: [],
+    status: 'pending',
+    phone: '13800009001',
+    realNameVerified: false,
+  },
+  {
+    id: 'emp_pending_002',
+    name: '林新入职',
+    employeeNo: 'E9002',
+    departmentId: 'dept_unassigned',
+    position: '待分配',
+    hireDate: '2026-07-29',
+    skills: [],
+    preferredShiftIds: [],
+    unavailableDates: [],
+    status: 'pending',
+    phone: '13800009002',
+    realNameVerified: false,
+  },
 ]
 
 export const seedShifts: Shift[] = [
@@ -239,6 +307,17 @@ export const seedShifts: Shift[] = [
     description: '临时加班',
   },
   {
+    id: 'shift_flex',
+    name: '时段',
+    code: 'FLEX',
+    startTime: '00:00',
+    endTime: '00:00',
+    breakMinutes: 0,
+    color: '#6366f1',
+    isSpecial: true,
+    description: '划线/自定义排班时段',
+  },
+  {
     id: 'shift_rest',
     name: '休息',
     code: 'REST',
@@ -248,6 +327,17 @@ export const seedShifts: Shift[] = [
     color: '#F2F6FC',
     isSpecial: true,
     description: '休息日',
+  },
+  {
+    id: 'shift_custom',
+    name: '自定义',
+    code: 'CUSTOM',
+    startTime: '08:00',
+    endTime: '16:00',
+    breakMinutes: 0,
+    color: '#909399',
+    isSpecial: true,
+    description: '抢班自定义时段',
   },
 ]
 
@@ -276,7 +366,7 @@ export const defaultAttendanceRule: AttendanceRule = {
 function buildJulyAssignments(): ScheduleAssignment[] {
   const pattern = ['shift_morning', 'shift_morning', 'shift_morning', 'shift_morning', 'shift_morning', 'shift_rest', 'shift_rest']
   const members = ['emp_001', 'emp_002', 'emp_003', 'emp_004']
-  const confirmCycle: ScheduleAssignment['confirmStatus'][] = ['confirmed', 'pending', 'confirming', 'rejected']
+  const confirmCycle: ScheduleAssignment['confirmStatus'][] = ['confirmed', 'pending', 'rejected', 'pending']
   const items: ScheduleAssignment[] = []
   for (let day = 1; day <= 31; day += 1) {
     const date = `2026-07-${String(day).padStart(2, '0')}`
@@ -305,6 +395,12 @@ export const seedAssignmentsWithDemo: ScheduleAssignment[] = (() => {
     demoAsn.shiftId = 'shift_morning'
     demoAsn.confirmStatus = 'confirmed'
     demoAsn.published = true
+  }
+  const grabAsn = items.find((a) => a.employeeId === 'emp_001' && a.date === '2026-07-28')
+  if (grabAsn) {
+    grabAsn.fromGrabSlotId = 'gs_001'
+    grabAsn.published = true
+    grabAsn.confirmStatus = 'confirmed'
   }
   return items
 })()
@@ -360,6 +456,31 @@ export const seedSwapRequests: SwapRequest[] = [
   },
 ]
 
+export const seedCancelShiftRequests: CancelShiftRequest[] = [
+  {
+    id: 'cancel_001',
+    employeeId: 'emp_003',
+    date: '2026-08-05',
+    shiftId: 'shift_morning',
+    teamId: 'team_a',
+    reason: '临时有事无法出勤，申请取消该日排班',
+    status: 'pending',
+    initiatedBy: 'employee',
+    createdAt: '2026-07-29T10:00:00.000Z',
+  },
+  {
+    id: 'cancel_002',
+    employeeId: 'emp_001',
+    date: '2026-07-29',
+    shiftId: 'shift_morning',
+    teamId: 'team_a',
+    reason: '家中有事需请假，申请取消该日早班',
+    status: 'pending',
+    initiatedBy: 'employee',
+    createdAt: '2026-07-27T11:00:00.000Z',
+  },
+]
+
 export const seedMakeupRequests: MakeupPunchRequest[] = [
   {
     id: 'makeup_001',
@@ -371,9 +492,60 @@ export const seedMakeupRequests: MakeupPunchRequest[] = [
     status: 'pending',
     createdAt: '2026-07-24T09:00:00.000Z',
   },
+  {
+    id: 'makeup_002',
+    employeeId: 'emp_001',
+    date: '2026-07-26',
+    punchType: 'clock_in',
+    time: '08:05',
+    reason: '当日手机故障未能正常签到，已在现场完成出勤',
+    status: 'pending',
+    createdAt: '2026-07-26T18:30:00.000Z',
+  },
 ]
 
-export const seedExceptions: AttendanceException[] = []
+export const seedExceptions: AttendanceException[] = [
+  {
+    id: 'exc_001',
+    employeeId: 'emp_001',
+    date: '2026-07-28',
+    type: 'missing_punch',
+    status: 'open',
+    message: '张伟 · 早班上班未打卡',
+  },
+  {
+    id: 'exc_002',
+    employeeId: 'emp_003',
+    date: '2026-07-28',
+    type: 'location',
+    status: 'open',
+    message: '王强 · 中石化朝阳站打卡地点偏离',
+  },
+  {
+    id: 'exc_003',
+    employeeId: 'emp_005',
+    date: '2026-07-27',
+    type: 'late',
+    status: 'open',
+    message: '陈芳 · 中班签到晚于开始时间',
+  },
+  {
+    id: 'exc_004',
+    employeeId: 'emp_006',
+    date: '2026-07-26',
+    type: 'schedule_conflict',
+    status: 'open',
+    message: '刘洋 · 异常工时需主管修正',
+  },
+  {
+    id: 'exc_005',
+    employeeId: 'emp_008',
+    date: '2026-07-28',
+    type: 'absent',
+    status: 'open',
+    message: '周杰 · 连续3天未打卡',
+  },
+]
 
 export const seedManualOverrides: Record<string, AttendanceStatus> = {}
 
@@ -386,6 +558,11 @@ export const seedPublishRecordsWithDemo: SchedulePublishRecord[] = [
     publishedBy: '排班员',
     employeeCount: 4,
     assignmentCount: 100,
+    version: 1,
+    periodStart: '2026-07-01',
+    periodEnd: '2026-07-07',
+    changeNote: '首次发布',
+    snapshot: [],
   },
 ]
 

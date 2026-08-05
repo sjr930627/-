@@ -1,5 +1,5 @@
 const STORAGE_PREFIX = 'shift-attendance:'
-const DEMO_BRANDING_VERSION = 'sinopec-v6'
+const DEMO_BRANDING_VERSION = 'sinopec-v12'
 
 const DEMO_BRANDING_KEYS = [
   'departments',
@@ -41,6 +41,57 @@ export function ensureDemoBrandingVersion() {
   localStorage.removeItem(`${STORAGE_PREFIX}courseLearningRecordsVersion`)
   localStorage.removeItem(`${STORAGE_PREFIX}examQuestionsVersion`)
   localStorage.setItem(versionKey, DEMO_BRANDING_VERSION)
+}
+
+export function ensureWorkerIncomeSeed(
+  records: import('@/types').WorkerIncomeRecord[],
+  seed: import('@/types').WorkerIncomeRecord[],
+): import('@/types').WorkerIncomeRecord[] {
+  const result = [...records]
+  const demoEmployees = [
+    ...new Set(seed.filter((s) => s.status === 'claimable').map((s) => s.employeeId)),
+  ]
+
+  for (const employeeId of demoEmployees) {
+    const hasClaimable = result.some(
+      (r) => r.employeeId === employeeId && r.status === 'claimable',
+    )
+    if (hasClaimable) continue
+
+    for (const s of seed) {
+      if (s.status !== 'claimable' || s.employeeId !== employeeId) continue
+      const idx = result.findIndex((r) => r.id === s.id)
+      const fresh = { ...s, items: s.items ? [...s.items] : undefined }
+      if (idx >= 0) result[idx] = fresh
+      else result.unshift(fresh)
+    }
+  }
+
+  for (const s of seed) {
+    const idx = result.findIndex((r) => r.id === s.id)
+    if (idx >= 0) {
+      const current = result[idx]
+      const patch: Partial<typeof current> = {}
+      const seedHasItems = !!s.items?.length
+      const localMissingCalcType = current.items?.some(
+        (i) => !('calcType' in i) || !(i as { calcType?: string }).calcType,
+      )
+      if (seedHasItems && (!current.items?.length || localMissingCalcType)) {
+        patch.items = [...s.items!]
+      }
+      if (current.status === 'pending_settlement' && s.status === 'pending_settlement') {
+        patch.amount = s.amount
+      }
+      if (current.status === 'claimed' && s.status === 'claimed' && !current.claimBatchId && s.claimBatchId) {
+        patch.claimBatchId = s.claimBatchId
+      }
+      if (Object.keys(patch).length > 0) result[idx] = { ...current, ...patch }
+    } else if (s.status === 'pending_settlement') {
+      result.unshift({ ...s, items: s.items ? [...s.items] : undefined })
+    }
+  }
+
+  return result
 }
 
 export function loadFromStorage<T>(key: string, fallback: T): T {
@@ -89,6 +140,20 @@ export function getWeekStart(dateStr?: string): string {
   const diff = day === 0 ? -6 : 1 - day
   d.setDate(d.getDate() + diff)
   return formatDate(d)
+}
+
+/** ISO 周序号（1-53） */
+export function getWeekNumber(dateStr: string): number {
+  const d = new Date(dateStr)
+  d.setHours(0, 0, 0, 0)
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7))
+  const week1 = new Date(d.getFullYear(), 0, 4)
+  return (
+    1 +
+    Math.round(
+      ((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7,
+    )
+  )
 }
 
 export function getWeekDates(weekStart: string): string[] {

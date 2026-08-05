@@ -141,7 +141,7 @@ const teamOverview = computed(() =>
   <div class="line-schedule-page">
     <header class="page-card sub-header">
       <el-button :icon="ArrowLeft" link @click="router.push({ path: '/schedule-manage', query: { group: selectedGroupId } })">
-        返回排班操作
+        返回排班管理
       </el-button>
       <h2 class="page-title">划线排班</h2>
       <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" style="width: 150px" />

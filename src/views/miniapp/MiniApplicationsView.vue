@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
@@ -42,7 +43,7 @@ function formatTime(iso: string) {
 <template>
   <div class="apps-page">
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">←</button>
+      <MiniNavBack fallback="/miniapp/profile" />
       <div class="mini-nav-title">我的报名</div>
     </div>
 

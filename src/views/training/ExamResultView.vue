@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { useTrainingScope } from '@/composables/useTrainingScope'
+import { trainingTypeFilterOptions } from '@/constants/trainingOwner'
 import VChart from '@/components/statistics/VChart.vue'
 import { examQuestionTypeMap } from '@/constants/training'
 import {
@@ -21,12 +23,13 @@ import type { EChartsOption } from 'echarts'
 
 const store = useAppStore()
 const route = useRoute()
+const { isPlatform, typeFilter, enterpriseFilter, filterByTrainingType } = useTrainingScope()
 const selectedExamId = ref<string>('')
 const detailVisible = ref(false)
 const selectedAttempt = ref<ExamAttempt | null>(null)
 
 const publishedExams = computed(() =>
-  store.trainingExams.filter((e) => e.status === 'published'),
+  filterByTrainingType(store.trainingExams.filter((e) => e.status === 'published')),
 )
 
 watch(
@@ -39,6 +42,16 @@ watch(
   },
   { immediate: true },
 )
+
+watch(publishedExams, (list) => {
+  if (list.length === 0) {
+    selectedExamId.value = ''
+    return
+  }
+  if (!list.some((e) => e.id === selectedExamId.value)) {
+    selectedExamId.value = list[0].id
+  }
+})
 
 const selectedExam = computed(() =>
   store.trainingExams.find((e) => e.id === selectedExamId.value),
@@ -153,14 +166,36 @@ const detailQuestions = computed(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">考核结果查看</h2>
-        <p class="text-muted">查看考核通过率、分数分布及个人答题详情</p>
+        <p class="text-muted">查看企业考核与通用考核的通过率、分数分布及个人答题详情</p>
       </div>
       <el-button @click="exportScores">导出成绩单</el-button>
     </div>
 
     <div class="page-toolbar">
+      <el-select v-if="isPlatform" v-model="typeFilter" placeholder="类型" style="width: 120px">
+        <el-option
+          v-for="o in trainingTypeFilterOptions"
+          :key="o.value"
+          :label="o.label"
+          :value="o.value"
+        />
+      </el-select>
+      <el-select
+        v-if="isPlatform && typeFilter !== 'global'"
+        v-model="enterpriseFilter"
+        placeholder="所属企业"
+        clearable
+        style="width: 200px"
+      >
+        <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
+      </el-select>
       <el-select v-model="selectedExamId" placeholder="选择考核" style="width: 280px">
-        <el-option v-for="e in publishedExams" :key="e.id" :label="e.name" :value="e.id" />
+        <el-option
+          v-for="e in publishedExams"
+          :key="e.id"
+          :label="`${e.enterpriseId == null ? '[通用]' : '[企业]'} ${e.name}`"
+          :value="e.id"
+        />
       </el-select>
     </div>
 

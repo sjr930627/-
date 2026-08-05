@@ -3,16 +3,25 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { useEnterpriseScope } from '@/composables/useEnterpriseScope'
+import EnterpriseScopeSelect from '@/components/platform/EnterpriseScopeSelect.vue'
+import { resolveEnterpriseIdByAttendanceGroup } from '@/utils/enterpriseScope'
 import {
   attendanceGroupStatusMap,
   attendanceGroupTypeMap,
   formatDeptBindings,
   formatMinMonthlyHours,
   formatShiftPeriod,
+  formatVersionLabel,
+  formatVersionTime,
+  summarizeVersionSnapshot,
 } from '@/constants/attendanceGroup'
+import type { AttendanceGroup, AttendanceGroupVersion } from '@/types'
 
 const store = useAppStore()
 const router = useRouter()
+const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
+  useEnterpriseScope('filter')
 
 const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
 const typeFilter = ref<'all' | 'shift' | 'free' | 'none'>('all')
@@ -20,9 +29,16 @@ const deptFilter = ref('')
 const page = ref(1)
 const pageSize = 5
 
+const historyVisible = ref(false)
+const historyGroup = ref<AttendanceGroup | null>(null)
+const versionDetailVisible = ref(false)
+const selectedVersion = ref<AttendanceGroupVersion | null>(null)
+
 const tableData = computed(() =>
   store.attendanceGroups
     .filter((g) => {
+      const enterpriseId = resolveEnterpriseIdByAttendanceGroup(g, store.departments)
+      if (!matchesEnterprise(enterpriseId)) return false
       if (statusFilter.value !== 'all' && g.status !== statusFilter.value) return false
       if (typeFilter.value !== 'all' && g.attendanceType !== typeFilter.value) return false
       if (deptFilter.value && !g.departmentBindings.some((b) => b.departmentId === deptFilter.value)) {
@@ -32,13 +48,17 @@ const tableData = computed(() =>
     })
     .map((g) => {
       const depts = formatDeptBindings(g.departmentBindings)
+      const enterpriseId = resolveEnterpriseIdByAttendanceGroup(g, store.departments)
       return {
         ...g,
+        enterpriseId,
+        enterpriseName: enterpriseName(enterpriseId),
         typeLabel: attendanceGroupTypeMap[g.attendanceType],
         statusLabel: attendanceGroupStatusMap[g.status],
         shiftPeriod: formatShiftPeriod(g),
         minMonthlyLabel: formatMinMonthlyHours(g.minMonthlyOnlineHours),
         areaLabel: g.attendanceArea ?? (g.punchLocations[0]?.name ?? '不限区域'),
+        versionLabel: formatVersionLabel(g.currentVersion || 0),
         deptTags: depts.visible,
         deptExtra: depts.extra,
       }
@@ -52,12 +72,31 @@ const pagedData = computed(() => {
 
 const total = computed(() => tableData.value.length)
 
+const versionHistory = computed(() => {
+  if (!historyGroup.value) return []
+  return [...historyGroup.value.versions].sort((a, b) => b.version - a.version)
+})
+
+const versionDetailLines = computed(() =>
+  selectedVersion.value ? summarizeVersionSnapshot(selectedVersion.value.snapshot) : [],
+)
+
 function openCreate() {
   router.push('/attendance-groups/create')
 }
 
 function openEdit(id: string) {
   router.push(`/attendance-groups/${id}/edit`)
+}
+
+function openVersionHistory(row: AttendanceGroup) {
+  historyGroup.value = store.attendanceGroups.find((g) => g.id === row.id) ?? row
+  historyVisible.value = true
+}
+
+function viewVersionDetail(version: AttendanceGroupVersion) {
+  selectedVersion.value = version
+  versionDetailVisible.value = true
 }
 
 async function toggleStatus(row: { id: string; status: string; name: string }) {
@@ -84,12 +123,18 @@ function resetFilters() {
     <div class="page-header">
       <div>
         <h2 class="page-title">考勤组管理</h2>
-        <p class="text-muted">V2.0 · 支持多班次排班，每个考勤组可配置独立考勤规则</p>
+        <p class="text-muted">V2.0 · 支持多班次排班，每个考勤组可配置独立考勤规则与版本管理</p>
       </div>
       <el-button type="primary" @click="openCreate">+ 新建考勤组</el-button>
     </div>
 
     <div class="page-toolbar">
+      <EnterpriseScopeSelect
+        v-if="showEnterpriseControl"
+        v-model="enterpriseFilter"
+        mode="filter"
+        width="180px"
+      />
       <el-select v-model="statusFilter" placeholder="全部状态" style="width: 130px">
         <el-option label="全部状态" value="all" />
         <el-option label="启用" value="enabled" />
@@ -107,7 +152,7 @@ function resetFilters() {
         <el-option label="全部类型" value="all" />
         <el-option label="排班制" value="shift" />
         <el-option label="自由打卡" value="free" />
-        <el-option label="不计考勤" value="none" />
+        <el-option label="无需打卡" value="none" />
       </el-select>
       <el-button @click="resetFilters">
         <el-icon><Refresh /></el-icon>
@@ -128,6 +173,7 @@ function resetFilters() {
           </div>
         </template>
       </el-table-column>
+      <el-table-column prop="enterpriseName" label="企业" min-width="160" show-overflow-tooltip />
       <el-table-column label="关联部门" min-width="160">
         <template #default="{ row }">
           <el-tag v-for="d in row.deptTags" :key="d" size="small" class="dept-tag">{{ d }}</el-tag>
@@ -136,23 +182,31 @@ function resetFilters() {
         </template>
       </el-table-column>
       <el-table-column prop="typeLabel" label="考勤类型" width="100" />
-      <el-table-column prop="shiftPeriod" label="考勤时段" min-width="150" />
-      <el-table-column prop="minMonthlyLabel" label="月最低在线" width="110" align="center" />
-      <el-table-column label="考勤区域" min-width="120">
+      <el-table-column label="生效版本" width="100" align="center">
         <template #default="{ row }">
-          <el-icon v-if="row.areaLabel !== '不限区域'" class="area-icon"><Location /></el-icon>
-          {{ row.areaLabel }}
+          <el-tag
+            v-if="row.currentVersion > 0"
+            size="small"
+            type="success"
+            class="version-tag"
+          >
+            {{ row.versionLabel }}
+          </el-tag>
+          <span v-else class="text-muted">未发布</span>
         </template>
       </el-table-column>
+      <el-table-column prop="shiftPeriod" label="考勤时段" min-width="150" />
+      <el-table-column prop="minMonthlyLabel" label="月最低在线" width="110" align="center" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <span class="status-dot" :class="row.status" />
           {{ row.statusLabel }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row.id)">编辑</el-button>
+          <el-button link type="primary" @click="openVersionHistory(row)">版本历史</el-button>
           <el-button link @click="toggleStatus(row)">
             {{ row.status === 'enabled' ? '停用' : '启用' }}
           </el-button>
@@ -184,6 +238,54 @@ function resetFilters() {
       />
     </div>
   </div>
+
+  <el-dialog
+    v-model="historyVisible"
+    :title="historyGroup ? `${historyGroup.name} · 版本历史` : '版本历史'"
+    width="720px"
+  >
+    <el-table :data="versionHistory" border stripe size="small">
+      <el-table-column label="版本" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag :type="row.isActive ? 'success' : 'info'" size="small">
+            V{{ row.version }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="90" align="center">
+        <template #default="{ row }">
+          <span v-if="row.isActive" class="active-label">生效中</span>
+          <span v-else class="text-muted">历史</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="发布时间" width="160">
+        <template #default="{ row }">{{ formatVersionTime(row.publishedAt) }}</template>
+      </el-table-column>
+      <el-table-column prop="changeNote" label="变更说明" min-width="160" show-overflow-tooltip />
+      <el-table-column label="操作" width="100" align="center">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="viewVersionDetail(row)">查看配置</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-dialog>
+
+  <el-dialog
+    v-model="versionDetailVisible"
+    :title="selectedVersion ? `V${selectedVersion.version} 配置详情` : '配置详情'"
+    width="560px"
+  >
+    <div v-if="selectedVersion" class="version-detail">
+      <div class="version-meta">
+        <span>发布时间：{{ formatVersionTime(selectedVersion.publishedAt) }}</span>
+        <el-tag v-if="selectedVersion.isActive" size="small" type="success">当前生效</el-tag>
+      </div>
+      <p v-if="selectedVersion.changeNote" class="version-note">{{ selectedVersion.changeNote }}</p>
+      <ul class="version-lines">
+        <li v-for="(line, index) in versionDetailLines" :key="index">{{ line }}</li>
+      </ul>
+    </div>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -219,10 +321,13 @@ function resetFilters() {
   margin-right: 4px;
 }
 
-.area-icon {
-  vertical-align: middle;
-  margin-right: 2px;
-  color: var(--app-primary);
+.version-tag {
+  font-weight: 600;
+}
+
+.active-label {
+  color: #67c23a;
+  font-size: 13px;
 }
 
 .status-dot {
@@ -247,5 +352,36 @@ function resetFilters() {
   align-items: center;
   justify-content: space-between;
   margin-top: 16px;
+}
+
+.version-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.version-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.version-note {
+  margin: 0;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #475569;
+}
+
+.version-lines {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.8;
+  font-size: 13px;
+  color: #334155;
 }
 </style>

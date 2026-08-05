@@ -1,10 +1,14 @@
 import type {
   DispatchMode,
+  Enterprise,
   IndustryTag,
   TaskPublishStatus,
   TaskTypeStatus,
+  TaskWorkflow,
   WorkflowAction,
+  WorkflowFieldType,
   WorkflowNodeType,
+  WorkflowPrerequisite,
   WorkflowRole,
   WorkflowStatus,
 } from '@/types'
@@ -18,23 +22,54 @@ export const industryTagMap: Record<IndustryTag, string> = {
 
 export const workflowRoleMap: Record<WorkflowRole, string> = {
   worker: '灵工',
-  enterprise: '企业管理员',
-  operator: '运营后台',
-  system: '系统自动',
+  enterprise: '企业',
+  operator: '后台',
+  system: '系统',
 }
 
 export const workflowActionMap: Record<WorkflowAction, string> = {
-  submit: '提报',
-  approve: '审核通过',
-  reject: '驳回',
+  submit: '提交',
+  confirm: '确认',
+  approve: '确认',
+  reject: '拒绝',
+  accept: '接受/抢单',
   cancel: '取消',
+  punch: '打卡',
   transfer: '转派',
 }
 
+/** 节点配置面板展示的可选动作（不含转派） */
+export const workflowNodeActionOptions: WorkflowAction[] = [
+  'submit',
+  'confirm',
+  'reject',
+  'accept',
+  'cancel',
+  'punch',
+]
+
+export const workflowPrerequisiteMap: Record<WorkflowPrerequisite, string> = {
+  upload_file: '上传文件',
+  customer_signature: '客户签名',
+  related_training: '关联培训',
+  time_condition: '时间条件',
+  punch: '打卡',
+}
+
+export const workflowFieldTypeMap: Record<WorkflowFieldType, string> = {
+  text: '文本',
+  select: '下拉',
+  date: '日期',
+  amount: '金额',
+  attachment: '附件',
+  textarea: '多行文本',
+  switch: '开关',
+}
+
 export const workflowNodeTypeMap: Record<WorkflowNodeType, string> = {
-  start: '起始',
-  middle: '中间',
-  end: '结束',
+  start: '起始节点',
+  middle: '中间节点',
+  end: '结束节点',
 }
 
 export const workflowStatusMap: Record<WorkflowStatus, string> = {
@@ -67,6 +102,18 @@ export const industryOptions = Object.entries(industryTagMap).map(([value, label
   label,
 }))
 
+export function formatWorkflowEnterpriseLabel(
+  workflow: Pick<TaskWorkflow, 'enterpriseScope' | 'enterpriseIds'>,
+  enterprises: Enterprise[],
+): string {
+  if (workflow.enterpriseScope === 'all') return '全部企业'
+  const ids = workflow.enterpriseIds ?? []
+  if (!ids.length) return '未指定企业'
+  return ids
+    .map((id) => enterprises.find((e) => e.id === id)?.name ?? id)
+    .join('、')
+}
+
 export function formatTaskTypePrice(row: {
   pricingMode: 'fixed' | 'tiered'
   fixedPrice?: number
@@ -79,4 +126,12 @@ export function formatTaskTypePrice(row: {
   return row.tieredPrices
     .map((t) => `${t.minCount}-${t.maxCount === 999 ? '∞' : t.maxCount}单 ¥${t.unitPrice}`)
     .join('；')
+}
+
+export function formatTaskQuantity(
+  unlimited: boolean | undefined,
+  quantity: number | undefined,
+): string {
+  if (unlimited || quantity == null) return '无上限'
+  return `${quantity} 单`
 }

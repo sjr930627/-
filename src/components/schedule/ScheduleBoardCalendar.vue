@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { confirmStatusMap, cellKey, shiftShortName } from '@/constants/schedule'
+import { confirmStatusMap, cellKey, getAssignmentCalendarLabel, getAssignmentDisplayColor, isFlexibleScheduleNote, normalizeConfirmStatus, isAssignmentConfirmedLocked } from '@/constants/schedule'
 import { getWeekday, isWeekend } from '@/utils'
 import type { Employee, ScheduleAssignment, Shift } from '@/types'
 
@@ -11,6 +11,8 @@ const props = defineProps<{
   selectedCells: Set<string>
   conflictMap: Map<string, string[]>
   getAssignment: (employeeId: string, date: string) => ScheduleAssignment | undefined
+  getPublishedAssignment?: (employeeId: string, date: string) => ScheduleAssignment | undefined
+  isCellLocked?: (employeeId: string, date: string) => boolean
   dailyStats: { date: string; shiftSummary: string; confirmed: number; total: number }[]
   compact?: boolean
 }>()
@@ -36,7 +38,19 @@ function cellClasses(employeeId: string, date: string, asn: ScheduleAssignment |
   if (asn?.manualEdited && !asn.published) classes.push('manual')
   if (isWeekend(date)) classes.push('weekend')
   if (!asn) classes.push('empty')
+  if (asn?.published && normalizeConfirmStatus(asn.confirmStatus) === 'rejected') {
+    classes.push('rejected')
+  }
+  if (isAssignmentConfirmedLocked(props.getPublishedAssignment?.(employeeId, date) ?? asn) || props.isCellLocked?.(employeeId, date)) {
+    classes.push('locked')
+  }
   return classes
+}
+
+function displayConfirmStatus(employeeId: string, date: string) {
+  const asn = props.getPublishedAssignment?.(employeeId, date) ?? props.getAssignment(employeeId, date)
+  if (!asn?.published) return undefined
+  return normalizeConfirmStatus(asn.confirmStatus)
 }
 </script>
 
@@ -77,19 +91,20 @@ function cellClasses(employeeId: string, date: string, asn: ScheduleAssignment |
             <template v-if="getAssignment(emp.id, date)">
               <div
                 class="shift-block"
-                :style="{ background: shiftOf(getAssignment(emp.id, date))?.color ?? '#909399' }"
+                :class="{ 'shift-block--time': isFlexibleScheduleNote(getAssignment(emp.id, date)?.note) }"
+                :style="{ background: getAssignmentDisplayColor(getAssignment(emp.id, date), shiftOf(getAssignment(emp.id, date))) }"
               >
-                {{ shiftShortName(shiftOf(getAssignment(emp.id, date))?.name ?? '') }}
+                {{ getAssignmentCalendarLabel(getAssignment(emp.id, date), shiftOf(getAssignment(emp.id, date))) }}
               </div>
               <span
-                v-if="getAssignment(emp.id, date)?.confirmStatus"
+                v-if="displayConfirmStatus(emp.id, date)"
                 class="confirm-badge"
                 :style="{
-                  color: confirmStatusMap[getAssignment(emp.id, date)!.confirmStatus!].color,
-                  background: confirmStatusMap[getAssignment(emp.id, date)!.confirmStatus!].bg,
+                  color: confirmStatusMap[displayConfirmStatus(emp.id, date)!].color,
+                  background: confirmStatusMap[displayConfirmStatus(emp.id, date)!].bg,
                 }"
               >
-                {{ confirmStatusMap[getAssignment(emp.id, date)!.confirmStatus!].short }}
+                {{ confirmStatusMap[displayConfirmStatus(emp.id, date)!].label }}
               </span>
               <span v-if="getAssignment(emp.id, date)?.manualEdited" class="edit-dot" />
             </template>
@@ -199,8 +214,23 @@ function cellClasses(employeeId: string, date: string, asn: ScheduleAssignment |
   background: #ecf5ff;
 }
 
-.board-cell.empty {
-  background: #fff;
+.board-cell.rejected {
+  background: #fef0f0 !important;
+  box-shadow: inset 0 0 0 2px #f56c6c;
+}
+
+.board-cell.rejected:hover {
+  background: #fde2e2 !important;
+}
+
+.board-cell.locked {
+  background: #f0fdf4 !important;
+  box-shadow: inset 0 0 0 2px #67c23a;
+  cursor: default;
+}
+
+.board-cell.locked:hover {
+  background: #f0fdf4 !important;
 }
 
 .shift-block {
@@ -213,15 +243,26 @@ function cellClasses(employeeId: string, date: string, asn: ScheduleAssignment |
   max-width: 48px;
 }
 
+.shift-block--time {
+  font-size: 9px;
+  max-width: 64px;
+  line-height: 1.2;
+  padding: 2px 3px;
+}
+
 .confirm-badge {
   position: absolute;
   top: 2px;
   right: 2px;
   font-size: 9px;
-  line-height: 1;
-  padding: 1px 3px;
+  line-height: 1.2;
+  padding: 1px 4px;
   border-radius: 3px;
-  font-weight: 700;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .edit-dot {

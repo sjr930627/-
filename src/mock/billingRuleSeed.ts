@@ -1,13 +1,19 @@
 import type { BillingRule } from '@/types'
+import { billingFormulaExamples } from '@/constants/billingRule'
+
+const hourlyExample = billingFormulaExamples.find((e) => e.key === 'hourly')!
+const taskExample = billingFormulaExamples.find((e) => e.key === 'task')!
+const mixedExample = billingFormulaExamples.find((e) => e.key === 'mixed')!
 
 export const seedBillingRules: BillingRule[] = [
   {
     id: 'br_001',
-    name: '标准时薪计薪',
-    code: 'HOURLY_STANDARD',
-    description: '按实际出勤工时 × 时薪单价结算，适用于大多数排班岗位',
+    name: '标准工时计薪',
+    code: 'PAYROLL_HOURLY',
+    description: hourlyExample.description,
     scope: 'global',
-    payrollFormula: 'work_hours * hourly_rate - deductions',
+    enterpriseScope: 'all',
+    payrollFormula: hourlyExample.formula,
     serviceFeeFormula: 'payroll_total * service_fee_rate',
     enabled: true,
     isDefault: true,
@@ -16,11 +22,13 @@ export const seedBillingRules: BillingRule[] = [
   },
   {
     id: 'br_002',
-    name: '考勤天数时薪',
-    code: 'HOURLY_BY_DAYS',
-    description: '按考勤天数 × 日标准工时（8h）× 时薪单价结算',
-    scope: 'enterprise',
-    payrollFormula: 'attendance_days * hourly_rate * 8 - deductions',
+    name: '标准任务计薪',
+    code: 'PAYROLL_TASK',
+    description: taskExample.description,
+    scope: 'global',
+    enterpriseScope: 'specific',
+    enterpriseIds: ['ent_china_mobile_agent', 'ent_pingan_partner'],
+    payrollFormula: taskExample.formula,
     serviceFeeFormula: 'payroll_total * service_fee_rate',
     enabled: true,
     createdAt: '2024-07-15T08:00:00.000Z',
@@ -28,11 +36,12 @@ export const seedBillingRules: BillingRule[] = [
   },
   {
     id: 'br_003',
-    name: '含加班时薪',
-    code: 'HOURLY_WITH_OT',
-    description: '正常工时按时薪结算，加班工时按加班单价（时薪倍数）另行计算',
-    scope: 'department',
-    payrollFormula: 'work_hours * hourly_rate + overtime_hours * overtime_rate - deductions',
+    name: '工时+任务混合计薪',
+    code: 'PAYROLL_MIXED',
+    description: mixedExample.description,
+    scope: 'global',
+    enterpriseScope: 'all',
+    payrollFormula: mixedExample.formula,
     serviceFeeFormula: 'payroll_total * service_fee_rate',
     enabled: true,
     createdAt: '2024-08-01T08:00:00.000Z',

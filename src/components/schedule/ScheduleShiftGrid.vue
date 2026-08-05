@@ -6,7 +6,9 @@ export interface ShiftRow {
   shiftId: string
   shiftName: string
   color: string
-  needed: number
+  weekdayNeeded: number
+  weekendNeeded: number
+  holidayNeeded: number
   startTime: string
   endTime: string
 }
@@ -16,6 +18,7 @@ defineProps<{
   shiftRows: ShiftRow[]
   compact?: boolean
   getCellEmployees: (shiftId: string, date: string) => Employee[]
+  getCellNeeded: (shiftId: string, date: string) => number
   getCellGap: (shiftId: string, date: string) => number
   getCellClass: (shiftId: string, date: string) => string[]
 }>()
@@ -49,7 +52,9 @@ const emit = defineEmits<{
               {{ row.shiftName }}
             </div>
             <div class="text-muted">{{ row.startTime.slice(0, 5) }}-{{ row.endTime.slice(0, 5) }}</div>
-            <div class="need-tag">需 {{ row.needed }} 人/日</div>
+            <div class="need-tag">
+              平{{ row.weekdayNeeded }} · 末{{ row.weekendNeeded }} · 节{{ row.holidayNeeded }}
+            </div>
           </td>
           <td
             v-for="date in dates"
@@ -59,7 +64,7 @@ const emit = defineEmits<{
             @click="emit('cellClick', row.shiftId, date)"
           >
             <div class="cell-count">
-              {{ getCellEmployees(row.shiftId, date).length }}/{{ row.needed }}
+              {{ getCellEmployees(row.shiftId, date).length }}/{{ getCellNeeded(row.shiftId, date) }}
             </div>
             <div class="cell-names">
               <span
@@ -166,7 +171,8 @@ const emit = defineEmits<{
   background: #f5f3ff;
 }
 
-.shift-cell.gap {
+.shift-cell.gap,
+.shift-cell.shortage {
   background: #fff7e6;
 }
 

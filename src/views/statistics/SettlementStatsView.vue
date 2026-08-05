@@ -5,7 +5,7 @@ import StatKpiCard from '@/components/statistics/StatKpiCard.vue'
 import StatPanel from '@/components/statistics/StatPanel.vue'
 import VChart from '@/components/statistics/VChart.vue'
 import RankList from '@/components/statistics/RankList.vue'
-import { billStatusMap, formatMoney, formatPeriod } from '@/constants/payrollBill'
+import { billStatusMap, resolveBillStatusMeta, formatMoney, formatPeriod } from '@/constants/payrollBill'
 import { barChartOption, donutChartOption } from '@/services/statisticsCharts'
 import { chartColors } from '@/plugins/echarts'
 
@@ -49,14 +49,18 @@ const monthlyBarOption = computed(() => {
 
 const statusDonutOption = computed(() => {
   const colors: Record<string, string> = {
+    pending_submit: chartColors.cyan,
     pending_confirm: chartColors.orange,
     pending_payment: chartColors.blue,
-    pending_verify: chartColors.cyan,
     paid: chartColors.green,
     void: chartColors.red,
   }
-  const counts = { pending_confirm: 0, pending_payment: 0, pending_verify: 0, paid: 0, void: 0 }
-  for (const b of billsInYear.value) counts[b.status] += 1
+  const counts = { pending_submit: 0, pending_confirm: 0, pending_payment: 0, paid: 0, void: 0 }
+  for (const b of billsInYear.value) {
+    const status =
+      (b.status as string) === 'pending_verify' ? 'pending_payment' : b.status
+    if (status in counts) counts[status as keyof typeof counts] += 1
+  }
   return donutChartOption(
     (Object.keys(billStatusMap) as (keyof typeof billStatusMap)[]).map((s) => ({
       name: billStatusMap[s].label,
@@ -93,7 +97,7 @@ const billRows = computed(() =>
       payrollLabel: formatMoney(b.payrollTotal),
       serviceFeeLabel: formatMoney(b.serviceFee),
       totalLabel: formatMoney(b.totalPayable),
-      statusLabel: billStatusMap[b.status].label,
+      statusLabel: resolveBillStatusMeta(b.status).label,
       workerCount: b.summary?.workerCount ?? b.lines.length,
     }))
     .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd)),

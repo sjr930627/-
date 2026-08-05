@@ -11,11 +11,14 @@ import { loadFromStorage, saveToStorage } from '@/utils'
 
 const now = '2026-07-20T10:00:00'
 const weekAgo = '2026-07-13T09:00:00'
+const ENT_CM = 'ent_china_mobile_agent'
+const ENT_PINGAN = 'ent_pingan_partner'
 
 export const seedTrainingMaterials: TrainingMaterial[] = [
   {
     id: 'tm_001',
     name: '信息安全操作规范',
+    enterpriseId: ENT_CM,
     type: 'video',
     category: 'info_security',
     fileUrl: '/mock/training/info-security.mp4',
@@ -30,6 +33,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
   {
     id: 'tm_002',
     name: '安全生产手册',
+    enterpriseId: ENT_CM,
     type: 'pdf',
     category: 'safety',
     fileUrl: '/mock/training/safety-manual.pdf',
@@ -48,6 +52,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
   {
     id: 'tm_003',
     name: '反诈骗警示案例',
+    enterpriseId: ENT_CM,
     type: 'article',
     category: 'anti_fraud',
     fileUrl: '/mock/training/anti-fraud',
@@ -61,6 +66,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
   {
     id: 'tm_004',
     name: '客户服务礼仪规范',
+    enterpriseId: ENT_CM,
     type: 'video',
     category: 'service',
     fileUrl: '/mock/training/service-etiquette.mp4',
@@ -74,6 +80,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
   {
     id: 'tm_005',
     name: '应急处理流程图解',
+    enterpriseId: ENT_CM,
     type: 'article',
     category: 'emergency',
     fileUrl: '/mock/training/emergency',
@@ -84,12 +91,58 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     createdAt: now,
     updatedAt: now,
   },
+  {
+    id: 'tm_006',
+    name: '便利店陈列标准图文',
+    enterpriseId: ENT_PINGAN,
+    type: 'article',
+    category: 'service',
+    fileUrl: '/mock/training/store-display',
+    fileName: 'store-display',
+    fileSize: 2.1 * 1024 * 1024,
+    tags: ['陈列', '便利店'],
+    description: '<p>浙江分公司便利店货架陈列与价签规范。</p>',
+    status: 'approved',
+    createdAt: '2026-07-18T09:00:00',
+    updatedAt: '2026-07-18T09:00:00',
+  },
+  {
+    id: 'tm_g_001',
+    name: '平台灵工通用合规须知',
+    enterpriseId: null,
+    type: 'video',
+    category: 'info_security',
+    fileUrl: '/mock/training/platform-compliance.mp4',
+    fileName: 'platform-compliance.mp4',
+    fileSize: 60 * 1024 * 1024,
+    tags: ['通用', '必修'],
+    description: '<p>面向全体灵工的平台级合规与行为规范基础培训。</p>',
+    status: 'approved',
+    createdAt: weekAgo,
+    updatedAt: weekAgo,
+  },
+  {
+    id: 'tm_g_002',
+    name: '灵工接单与考勤须知',
+    enterpriseId: null,
+    type: 'article',
+    category: 'other',
+    fileUrl: '/mock/training/worker-guide',
+    fileName: 'worker-guide',
+    fileSize: 900 * 1024,
+    tags: ['通用', '入门'],
+    description: '<p>说明排班确认、打卡、任务领取等平台通用操作要求。</p>',
+    status: 'approved',
+    createdAt: '2026-07-14T10:00:00',
+    updatedAt: '2026-07-14T10:00:00',
+  },
 ]
 
 export const seedTrainingExams: TrainingExam[] = [
   {
     id: 'te_001',
     name: '中石化安全生产规范考核',
+    enterpriseId: ENT_CM,
     description: '考核中石化加油站安全生产相关规范知识，80分及格，限时30分钟。',
     courseId: 'tc_001',
     durationMinutes: 30,
@@ -104,6 +157,7 @@ export const seedTrainingExams: TrainingExam[] = [
   {
     id: 'te_002',
     name: '中石化信息安全合规测试',
+    enterpriseId: ENT_CM,
     description: '检验中石化加油站信息安全意识与操作规范掌握情况。',
     courseId: 'tc_002',
     durationMinutes: 20,
@@ -118,6 +172,7 @@ export const seedTrainingExams: TrainingExam[] = [
   {
     id: 'te_003',
     name: '服务规范综合考核',
+    enterpriseId: ENT_CM,
     description: '草稿状态，待完善题目后发布。',
     courseId: 'tc_003',
     durationMinutes: 25,
@@ -126,6 +181,21 @@ export const seedTrainingExams: TrainingExam[] = [
     status: 'draft',
     createdAt: now,
     updatedAt: now,
+  },
+  {
+    id: 'te_g_001',
+    name: '平台灵工通用合规考核',
+    enterpriseId: null,
+    description: '平台级通用合规考核，面向全体灵工。',
+    courseId: 'tc_g_001',
+    durationMinutes: 20,
+    passScore: 70,
+    maxRetakes: 2,
+    retakeIntervalHours: 24,
+    status: 'published',
+    createdAt: weekAgo,
+    updatedAt: weekAgo,
+    publishedAt: weekAgo,
   },
 ]
 
@@ -254,12 +324,43 @@ export const seedExamQuestions: ExamQuestion[] = [
     source: 'manual',
     createdAt: '2026-07-16T10:00:00',
   },
+  {
+    id: 'eq_g_001',
+    examId: 'te_g_001',
+    type: 'single',
+    content: '灵工接到排班或任务通知后，正确做法是？',
+    options: [
+      { key: 'A', text: '无视通知，到场再说' },
+      { key: 'B', text: '及时确认，并按要求完成打卡与执行' },
+      { key: 'C', text: '把账号交给他人代操作' },
+      { key: 'D', text: '仅口头答应，无需在系统确认' },
+    ],
+    correctAnswers: ['B'],
+    score: 50,
+    source: 'manual',
+    createdAt: weekAgo,
+  },
+  {
+    id: 'eq_g_002',
+    examId: 'te_g_001',
+    type: 'judge',
+    content: '平台通用合规要求适用于全体灵工，与所属企业无关。',
+    options: [
+      { key: 'A', text: '正确' },
+      { key: 'B', text: '错误' },
+    ],
+    correctAnswers: ['A'],
+    score: 50,
+    source: 'manual',
+    createdAt: weekAgo,
+  },
 ]
 
 export const seedTrainingCourses: TrainingCourse[] = [
   {
     id: 'tc_001',
     name: '中石化新入职安全合规必修课',
+    enterpriseId: ENT_CM,
     coverUrl: 'https://picsum.photos/seed/course-cover/320/180',
     description: '面向中石化新入职灵工的安全与合规基础培训，含加油站安全生产与信息安全内容。',
     materialIds: ['tm_001', 'tm_002'],
@@ -268,6 +369,8 @@ export const seedTrainingCourses: TrainingCourse[] = [
     minStudyMinutes: 3,
     examId: 'te_001',
     scopeType: 'all',
+    requireExamPassForSchedule: true,
+    requireExamPassForTask: true,
     status: 'published',
     createdAt: weekAgo,
     updatedAt: weekAgo,
@@ -276,13 +379,16 @@ export const seedTrainingCourses: TrainingCourse[] = [
   {
     id: 'tc_002',
     name: '中石化信息安全专项培训',
+    enterpriseId: ENT_CM,
     description: '强化中石化加油站信息安全意识，完成后需通过合规测试。',
     materialIds: ['tm_001'],
     studyMode: 'free',
     videoNoSeek: false,
     examId: 'te_002',
     scopeType: 'department',
-    scopeDepartmentIds: ['dept_001', 'dept_002'],
+    scopeDepartmentIds: ['dept_prod_a', 'dept_cm_field'],
+    requireExamPassForSchedule: false,
+    requireExamPassForTask: true,
     validFrom: '2026-07-01',
     validTo: '2026-12-31',
     status: 'published',
@@ -293,6 +399,7 @@ export const seedTrainingCourses: TrainingCourse[] = [
   {
     id: 'tc_003',
     name: '中石化服务规范联合课',
+    enterpriseId: ENT_CM,
     materialIds: ['tm_003', 'tm_004'],
     studyMode: 'sequential',
     videoNoSeek: true,
@@ -302,6 +409,41 @@ export const seedTrainingCourses: TrainingCourse[] = [
     status: 'draft',
     createdAt: now,
     updatedAt: now,
+  },
+  {
+    id: 'tc_004',
+    name: '浙江便利店陈列规范课',
+    enterpriseId: ENT_PINGAN,
+    description: '面向浙江分公司便利店灵工的陈列与服务规范培训。',
+    materialIds: ['tm_006'],
+    studyMode: 'sequential',
+    videoNoSeek: true,
+    scopeType: 'department',
+    scopeDepartmentIds: ['dept_pj_store', 'dept_pj_field'],
+    requireExamPassForSchedule: false,
+    requireExamPassForTask: false,
+    status: 'published',
+    createdAt: '2026-07-18T09:00:00',
+    updatedAt: '2026-07-18T09:00:00',
+    publishedAt: '2026-07-18T09:00:00',
+  },
+  {
+    id: 'tc_g_001',
+    name: '平台灵工通用入职课',
+    enterpriseId: null,
+    description: '不挂企业的平台通用培训，全体灵工可学习与考核。',
+    materialIds: ['tm_g_001', 'tm_g_002'],
+    studyMode: 'sequential',
+    videoNoSeek: true,
+    minStudyMinutes: 5,
+    examId: 'te_g_001',
+    scopeType: 'all',
+    requireExamPassForSchedule: false,
+    requireExamPassForTask: false,
+    status: 'published',
+    createdAt: weekAgo,
+    updatedAt: weekAgo,
+    publishedAt: weekAgo,
   },
 ]
 
@@ -313,6 +455,8 @@ export const seedCourseLearningRecords: CourseLearningRecord[] = [
     status: 'completed',
     completedMaterialIds: ['tm_001', 'tm_002'],
     studyMinutes: 45,
+    examPassed: true,
+    examScore: 88,
     completedAt: '2026-07-27T10:00:00',
     updatedAt: '2026-07-27T10:00:00',
   },
@@ -429,10 +573,11 @@ export const seedExamAttempts: ExamAttempt[] = [
   },
 ]
 
-const COURSE_LEARNING_STORAGE_VERSION = 3
-const TRAINING_COURSES_STORAGE_VERSION = 2
-const TRAINING_EXAMS_STORAGE_VERSION = 2
-const EXAM_QUESTIONS_STORAGE_VERSION = 1
+const COURSE_LEARNING_STORAGE_VERSION = 4
+const TRAINING_MATERIALS_STORAGE_VERSION = 1
+const TRAINING_COURSES_STORAGE_VERSION = 4
+const TRAINING_EXAMS_STORAGE_VERSION = 3
+const EXAM_QUESTIONS_STORAGE_VERSION = 2
 
 /** 修复考核 ↔ 课程双向关联（兼容 localStorage 旧数据） */
 export function repairTrainingExamCourseLinks(
@@ -486,6 +631,29 @@ export function repairTrainingExamCourseLinks(
   }
 
   return { courses: nextCourses, exams: nextExams, changed }
+}
+
+export function loadTrainingMaterials(): TrainingMaterial[] {
+  const STORAGE_PREFIX = 'shift-attendance:'
+  const versionKey = 'trainingMaterialsVersion'
+  let materials = loadFromStorage<TrainingMaterial[]>('trainingMaterials', seedTrainingMaterials)
+  const storedVersion = Number(localStorage.getItem(STORAGE_PREFIX + versionKey) ?? 0)
+  if (storedVersion < TRAINING_MATERIALS_STORAGE_VERSION) {
+    const custom = materials.filter((m) => !seedTrainingMaterials.some((s) => s.id === m.id))
+    materials = seedTrainingMaterials.map((seed) => {
+      const existing = materials.find((m) => m.id === seed.id)
+      return existing ? { ...existing, ...seed, id: existing.id } : seed
+    })
+    materials.push(
+      ...custom.map((m) => ({
+        ...m,
+        enterpriseId: m.enterpriseId === undefined ? ENT_CM : m.enterpriseId,
+      })),
+    )
+    saveToStorage('trainingMaterials', materials)
+    localStorage.setItem(STORAGE_PREFIX + versionKey, String(TRAINING_MATERIALS_STORAGE_VERSION))
+  }
+  return materials
 }
 
 /** 加载考试题目，并在版本升级时同步中石化场景图 */

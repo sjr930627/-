@@ -13,7 +13,7 @@ export function complianceToScheduleRule(
     maxMonthlyHours: compliance.maxMonthlyHours,
     minRestHours: compliance.minShiftIntervalHours,
     forbidNightShiftForFemale: false,
-    weekendWork: false,
+    weekendWork: true,
     ...overrides,
   }
 }

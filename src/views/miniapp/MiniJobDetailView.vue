@@ -1,26 +1,38 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { getJobDetailExtra } from '@/mock/miniappDetailSeed'
+import {
+  getJobDetailExtra,
+  shouldShowJobAttendance,
+  shouldShowJobBenefits,
+} from '@/mock/miniappDetailSeed'
 
 const route = useRoute()
-const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const subscribed = ref(false)
+const reqExpanded = ref(true)
 
 const job = computed(() => store.jobRequirements.find((j) => j.id === route.params.id))
 
 const extra = computed(() => {
   if (!job.value) return null
-  return getJobDetailExtra(job.value.id, {
-    storeName: job.value.enterpriseName,
-    location: job.value.location,
-  })
+  return getJobDetailExtra(
+    job.value.id,
+    {
+      storeName: job.value.enterpriseName,
+      location: job.value.location,
+    },
+    job.value,
+  )
 })
+
+const showAttendance = computed(() => (extra.value ? shouldShowJobAttendance(extra.value) : false))
+const showBenefits = computed(() => (extra.value ? shouldShowJobBenefits(extra.value) : false))
 
 const applied = computed(() =>
   store.miniJobApplications.some(
@@ -60,7 +72,7 @@ function apply() {
 <template>
   <div class="detail-shell">
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">←</button>
+      <MiniNavBack fallback="/miniapp/recommend" />
       <div class="mini-nav-title">岗位详情</div>
     </div>
 
@@ -93,30 +105,60 @@ function apply() {
       </div>
 
       <section class="detail-section">
-        <div class="detail-section-head">
-          <span class="detail-section-title">灵工到岗体验</span>
-          <span class="detail-section-count">{{ extra.reviewCount }}</span>
-          <button type="button" class="detail-section-more">全部 ›</button>
-        </div>
-        <div class="detail-review-tags">
-          <span v-for="t in extra.reviewTags" :key="t.label" class="detail-review-tag">
-            {{ t.label }} {{ t.count }}
-          </span>
-        </div>
-        <div v-for="rv in extra.reviews" :key="rv.id" class="detail-review-card">
-          <p class="detail-review-text">“{{ rv.text }}”</p>
-          <div class="detail-review-foot">
-            <div class="detail-review-user">
-              <span class="detail-avatar">{{ rv.userName.slice(0, 1) }}</span>
-              <span>{{ rv.userName }}</span>
-              <span class="detail-review-badge">该品牌出勤{{ rv.brandCount }}次</span>
-            </div>
-            <span v-if="rv.imageCount" class="detail-review-img">+{{ rv.imageCount }}</span>
+        <div class="detail-section-title solo">岗位要求</div>
+        <p v-if="extra.requirementDetail.intro" class="req-intro">
+          {{ extra.requirementDetail.intro }}
+        </p>
+        <template v-if="reqExpanded">
+          <div class="req-block">
+            <div class="req-block-title">工作职责</div>
+            <ol class="req-list">
+              <li v-for="(item, idx) in extra.requirementDetail.duties" :key="`d-${idx}`">
+                {{ item }}
+              </li>
+            </ol>
+          </div>
+          <div class="req-block">
+            <div class="req-block-title">任职资格</div>
+            <ol class="req-list">
+              <li
+                v-for="(item, idx) in extra.requirementDetail.qualifications"
+                :key="`q-${idx}`"
+              >
+                {{ item }}
+              </li>
+            </ol>
+          </div>
+        </template>
+        <button type="button" class="req-toggle" @click="reqExpanded = !reqExpanded">
+          {{ reqExpanded ? '收起' : '展开' }}
+          <span class="req-toggle-icon">{{ reqExpanded ? '∧' : '∨' }}</span>
+        </button>
+      </section>
+
+      <section v-if="showAttendance" class="detail-section">
+        <div class="detail-section-title solo">出勤时间要求</div>
+        <p class="section-sub">{{ extra.attendanceRequirement.subtitle }}</p>
+        <div class="attendance-grid">
+          <div class="attendance-item">
+            <div class="attendance-icon orange">📅</div>
+            <div class="attendance-label">期望兼职时长</div>
+            <div class="attendance-value">{{ extra.attendanceRequirement.duration }}</div>
+          </div>
+          <div class="attendance-item">
+            <div class="attendance-icon purple">7</div>
+            <div class="attendance-label">每周出勤天数</div>
+            <div class="attendance-value">{{ extra.attendanceRequirement.weeklyDays }}</div>
+          </div>
+          <div class="attendance-item">
+            <div class="attendance-icon green">⏰</div>
+            <div class="attendance-label">具体出勤时段</div>
+            <div class="attendance-value">{{ extra.attendanceRequirement.timeSlots }}</div>
           </div>
         </div>
       </section>
 
-      <section class="detail-section">
+      <section v-if="showBenefits" class="detail-section">
         <div class="detail-section-title solo">您将享受的福利</div>
         <div class="detail-benefits">
           <div v-for="b in extra.benefits" :key="b.title" class="detail-benefit">
@@ -133,10 +175,19 @@ function apply() {
       </section>
 
       <section class="detail-section">
-        <div class="detail-section-title solo">岗位描述</div>
-        <p class="detail-desc">{{ job.description }}</p>
-        <div class="detail-meta-line">
-          招聘 {{ job.headcount }} 人 · 已招 {{ job.filledCount }} 人 · {{ job.department }}
+        <div class="detail-section-title solo">报名要求</div>
+        <div
+          v-for="(group, gIdx) in extra.registrationRules"
+          :key="group.title"
+          class="rule-group"
+          :class="{ 'rule-group-divider': gIdx > 0 }"
+        >
+          <div class="rule-group-title">{{ group.title }}</div>
+          <div v-for="item in group.items" :key="item.label" class="rule-row">
+            <span class="rule-label">{{ item.label }}</span>
+            <span class="rule-value">{{ item.value }}</span>
+          </div>
+          <p v-if="group.note" class="rule-note">注：{{ group.note }}</p>
         </div>
       </section>
     </div>
@@ -207,7 +258,7 @@ function apply() {
   margin-top: 12px;
   font-size: 22px;
   font-weight: 700;
-  color: #e60012;
+  color: #ef4444;
 }
 
 .detail-promo {
@@ -220,7 +271,7 @@ function apply() {
   background: linear-gradient(90deg, #fff5f5, #fff);
   border: 1px solid #ffe0e0;
   font-size: 12px;
-  color: #e60012;
+  color: #ef4444;
 }
 
 .detail-promo-arrow {
@@ -323,74 +374,147 @@ function apply() {
   cursor: pointer;
 }
 
-.detail-review-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.detail-review-tag {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #f5f5f5;
-  font-size: 12px;
-  color: #666;
-}
-
-.detail-review-card {
-  padding: 12px 0;
-  border-top: 1px solid #f5f5f5;
-}
-
-.detail-review-text {
-  margin: 0;
+.req-intro {
+  margin: 0 0 12px;
   font-size: 14px;
+  font-weight: 600;
   color: #333;
   line-height: 1.6;
 }
 
-.detail-review-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 10px;
+.req-block {
+  margin-bottom: 12px;
 }
 
-.detail-review-user {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
+.req-block-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.req-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
   color: #666;
+  line-height: 1.7;
 }
 
-.detail-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #ffe8e8;
-  color: #e60012;
+.req-list li + li {
+  margin-top: 6px;
+}
+
+.req-toggle {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  border: none;
+  background: none;
+  color: var(--app-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.req-toggle-icon {
+  font-size: 12px;
+}
+
+.section-sub {
+  margin: -4px 0 14px;
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
+}
+
+.attendance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.attendance-item {
+  text-align: center;
+}
+
+.attendance-icon {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 8px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
 }
 
-.detail-review-badge {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #f5f5f5;
-  font-size: 10px;
+.attendance-icon.orange {
+  background: linear-gradient(135deg, #fdba74, #fb923c);
 }
 
-.detail-review-img {
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #f0f0f0;
+.attendance-icon.purple {
+  background: linear-gradient(135deg, #c4b5fd, #8b5cf6);
+}
+
+.attendance-icon.green {
+  background: linear-gradient(135deg, #86efac, #22c55e);
+}
+
+.attendance-label {
   font-size: 11px;
   color: #999;
+  line-height: 1.4;
+}
+
+.attendance-value {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1a1a;
+}
+
+.rule-group-divider {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.rule-group-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-bottom: 10px;
+}
+
+.rule-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rule-label {
+  color: #666;
+  flex-shrink: 0;
+}
+
+.rule-value {
+  color: #999;
+  text-align: right;
+}
+
+.rule-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
 }
 
 .detail-benefits {
@@ -428,20 +552,7 @@ function apply() {
   border-radius: 8px;
   background: #fff5f5;
   font-size: 13px;
-  color: #e60012;
-}
-
-.detail-desc {
-  margin: 0;
-  font-size: 14px;
-  color: #666;
-  line-height: 1.7;
-}
-
-.detail-meta-line {
-  margin-top: 10px;
-  font-size: 12px;
-  color: #999;
+  color: #ef4444;
 }
 
 .detail-footer {

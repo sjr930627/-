@@ -1,8 +1,8 @@
 import { computed, ref, shallowRef, watch, type Ref } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { detectConflicts } from '@/services/schedule'
-import { cellKey, parseCellKey } from '@/constants/schedule'
-import type { Employee, ScheduleAssignment, ScheduleRule, Shift } from '@/types'
+import { detectComplianceConflicts } from '@/services/scheduleCompliance'
+import { cellKey, parseCellKey, normalizeConfirmStatus, getAssignmentStatsKey, formatStatsSummaryKey, isAssignmentConfirmedLocked } from '@/constants/schedule'
+import type { AttendanceGroupCompliance, Employee, ScheduleAssignment, Shift } from '@/types'
 import { addDays } from '@/utils'
 
 export type EditMode = 'readonly' | 'editing'
@@ -12,7 +12,7 @@ type Snapshot = ScheduleAssignment[]
 export function useScheduleBoard(options: {
   teamId: Ref<string>
   dates: Ref<string[]>
-  scheduleRule: Ref<ScheduleRule>
+  compliance: Ref<AttendanceGroupCompliance | null>
   memberIds: Ref<string[]>
 }) {
   const store = useAppStore()
@@ -83,27 +83,26 @@ export function useScheduleBoard(options: {
 
   const pageStatus = computed(() => {
     if (editMode.value === 'editing') return 'editing' as const
-    if (hasDraft.value) return 'draft' as const
+    if (hasDraft.value) return 'saved' as const
     if (publishRecord.value) return 'published' as const
     return 'draft' as const
   })
 
   const conflictMap = computed(() => {
     const map = new Map<string, string[]>()
-    const rule = options.scheduleRule.value
+    const compliance = options.compliance.value
+    if (!compliance) return map
     options.memberIds.value.forEach((employeeId) => {
       options.dates.value.forEach((date) => {
         const asn = getVisibleAssignment(employeeId, date)
         if (!asn) return
-        const list = detectConflicts(
+        const list = detectComplianceConflicts(
           employeeId,
           date,
           asn.shiftId,
           store.assignments,
-          store.employees,
           store.shifts,
-          store.holidays,
-          rule,
+          compliance,
         )
         if (list.length) map.set(cellKey(employeeId, date), list.map((c) => c.message))
       })
@@ -121,16 +120,32 @@ export function useScheduleBoard(options: {
         if (!asn) return
         const shift = store.shifts.find((s) => s.id === asn.shiftId)
         if (!shift || shift.code === 'REST') return
+        const statsKey = getAssignmentStatsKey(asn, shift)
+        shiftCounts[statsKey] = (shiftCounts[statsKey] ?? 0) + 1
+        if (!asn.published) return
         total += 1
-        shiftCounts[shift.name] = (shiftCounts[shift.name] ?? 0) + 1
-        if (asn.confirmStatus === 'confirmed') confirmed += 1
+        if (normalizeConfirmStatus(asn.confirmStatus) === 'confirmed') confirmed += 1
       })
       const shiftSummary = Object.entries(shiftCounts)
-        .map(([name, count]) => `${name.slice(0, 1)}:${count}`)
+        .map(([key, count]) => `${formatStatsSummaryKey(key)}:${count}`)
         .join(' ')
       return { date, shiftSummary, confirmed, total }
     }),
   )
+
+  function getPublishedAssignment(employeeId: string, date: string): ScheduleAssignment | undefined {
+    return store.assignments.find(
+      (a) =>
+        a.employeeId === employeeId &&
+        a.date === date &&
+        a.teamId === options.teamId.value &&
+        a.published,
+    )
+  }
+
+  function isCellLocked(employeeId: string, date: string): boolean {
+    return isAssignmentConfirmedLocked(getPublishedAssignment(employeeId, date))
+  }
 
   function enterEditMode() {
     store.enterEditModeForPeriod(options.teamId.value, options.dates.value)
@@ -148,6 +163,7 @@ export function useScheduleBoard(options: {
     opts?: { note?: string; manual?: boolean },
   ) {
     if (editMode.value !== 'editing') return
+    if (isCellLocked(employeeId, date)) return
     pushUndo()
     store.upsertAssignment({
       employeeId,
@@ -155,7 +171,6 @@ export function useScheduleBoard(options: {
       shiftId,
       teamId: options.teamId.value,
       published: false,
-      confirmStatus: 'pending',
       manualEdited: opts?.manual ?? true,
       note: opts?.note,
     })
@@ -163,11 +178,14 @@ export function useScheduleBoard(options: {
 
   function clearCell(employeeId: string, date: string) {
     if (editMode.value !== 'editing') return
+    if (isCellLocked(employeeId, date)) return
     pushUndo()
-    store.removeAssignment(employeeId, date)
+    store.removeAssignment(employeeId, date, false)
+    store.removeAssignment(employeeId, date, true)
   }
 
   function cycleShift(employeeId: string, date: string, shifts: Shift[]) {
+    if (isCellLocked(employeeId, date)) return
     const current = getVisibleAssignment(employeeId, date)
     const workShifts = shifts.filter((s) => s.code !== 'REST')
     if (!workShifts.length) return
@@ -185,13 +203,13 @@ export function useScheduleBoard(options: {
     pushUndo()
     selectedCells.value.forEach((key) => {
       const { employeeId, date } = parseCellKey(key)
+      if (isCellLocked(employeeId, date)) return
       store.upsertAssignment({
         employeeId,
         date,
         shiftId,
         teamId: options.teamId.value,
         published: false,
-        confirmStatus: 'pending',
         manualEdited: true,
       })
     })
@@ -203,6 +221,7 @@ export function useScheduleBoard(options: {
     pushUndo()
     selectedCells.value.forEach((key) => {
       const { employeeId, date } = parseCellKey(key)
+      if (isCellLocked(employeeId, date)) return
       store.removeAssignment(employeeId, date)
     })
     selectedCells.value = new Set()
@@ -214,6 +233,7 @@ export function useScheduleBoard(options: {
   ) {
     if (editMode.value !== 'editing') return
     if (from.employeeId === to.employeeId && from.date === to.date) return
+    if (isCellLocked(from.employeeId, from.date) || isCellLocked(to.employeeId, to.date)) return
     const fromAsn = getVisibleAssignment(from.employeeId, from.date)
     const toAsn = getVisibleAssignment(to.employeeId, to.date)
     if (!fromAsn) return
@@ -225,7 +245,6 @@ export function useScheduleBoard(options: {
         shiftId: fromAsn.shiftId,
         teamId: options.teamId.value,
         published: false,
-        confirmStatus: 'pending',
         manualEdited: true,
       })
       store.upsertAssignment({
@@ -234,7 +253,6 @@ export function useScheduleBoard(options: {
         shiftId: toAsn.shiftId,
         teamId: options.teamId.value,
         published: false,
-        confirmStatus: 'pending',
         manualEdited: true,
       })
     } else {
@@ -244,7 +262,6 @@ export function useScheduleBoard(options: {
         shiftId: fromAsn.shiftId,
         teamId: options.teamId.value,
         published: false,
-        confirmStatus: 'pending',
         manualEdited: true,
       })
       store.removeAssignment(from.employeeId, from.date)
@@ -263,20 +280,21 @@ export function useScheduleBoard(options: {
     if (!copyBuffer.value || editMode.value !== 'editing') return
     pushUndo()
     copyBuffer.value.dates.forEach((date, idx) => {
+      if (isCellLocked(employeeId, date)) return
       const shiftId = copyBuffer.value!.shiftIds[idx]
       if (!shiftId) {
         store.removeAssignment(employeeId, date)
         return
       }
-      const conflicts = detectConflicts(
+      const compliance = options.compliance.value
+      if (!compliance) return
+      const conflicts = detectComplianceConflicts(
         employeeId,
         date,
         shiftId,
         store.assignments,
-        store.employees,
         store.shifts,
-        store.holidays,
-        options.scheduleRule.value,
+        compliance,
       )
       if (conflicts.length) return
       store.upsertAssignment({
@@ -285,7 +303,6 @@ export function useScheduleBoard(options: {
         shiftId,
         teamId: options.teamId.value,
         published: false,
-        confirmStatus: 'pending',
         manualEdited: true,
       })
     })
@@ -333,6 +350,11 @@ export function useScheduleBoard(options: {
       })
     })
     return { added, modified, removed }
+  }
+
+  function saveDraft() {
+    store.persist('assignments')
+    exitEditMode()
   }
 
   function publish() {
@@ -416,6 +438,8 @@ export function useScheduleBoard(options: {
     dragSource,
     copyBuffer,
     getVisibleAssignment,
+    getPublishedAssignment,
+    isCellLocked,
     enterEditMode,
     exitEditMode,
     setCellShift,
@@ -428,6 +452,7 @@ export function useScheduleBoard(options: {
     pasteToEmployee,
     copyLastPeriod,
     clearDraft,
+    saveDraft,
     getPublishDiff,
     publish,
     toggleSelect,

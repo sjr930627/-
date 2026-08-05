@@ -1,7 +1,27 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import type { Component } from 'vue'
+import {
+  AlarmClock,
+  ArrowRight,
+  Bell,
+  Calendar,
+  ChatDotRound,
+  CircleCheck,
+  CircleClose,
+  Clock,
+  Document,
+  List,
+  Medal,
+  Reading,
+  Select,
+  Sunny,
+  Tickets,
+  Timer,
+  Wallet,
+} from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppNow } from '@/composables/useMiniAppNow'
@@ -13,6 +33,7 @@ import {
   formatHoursShort,
   sumWorkedMinutesInRange,
 } from '@/composables/useMiniSchedule'
+import { countPendingScheduleConfirms } from '@/constants/miniapp'
 import { sortedWorkflowNodes } from '@/services/task'
 import { resolveCourseAssignees } from '@/services/training'
 import type { TaskInstance } from '@/types'
@@ -21,6 +42,9 @@ const router = useRouter()
 const store = useAppStore()
 const { employeeId, employee, profileExt } = useMiniAppWorker()
 const { now } = useMiniAppNow()
+
+const activeMainTab = ref<'schedule' | 'tasks'>('schedule')
+const todoDrawerVisible = ref(false)
 
 function localDateStr(d: Date) {
   const y = d.getFullYear()
@@ -152,7 +176,7 @@ const weekPreview = computed(() => buildWeekPreview(store, employeeId.value, now
 
 interface TodoItem {
   id: string
-  icon: string
+  icon: Component
   title: string
   desc: string
   tone: 'red' | 'orange' | 'blue'
@@ -171,7 +195,7 @@ const todoItems = computed((): TodoItem[] => {
   if (!restToday && !punchedIn) {
     items.push({
       id: 'punch',
-      icon: '⏰',
+      icon: AlarmClock,
       title: '今日尚未打卡',
       desc: shift ? `${shift.name} ${shift.startTime.slice(0, 5)} 开始，请尽快签到` : '请完成今日签到',
       tone: 'orange',
@@ -183,7 +207,7 @@ const todoItems = computed((): TodoItem[] => {
   if (unread > 0) {
     items.push({
       id: 'msg',
-      icon: '💬',
+      icon: ChatDotRound,
       title: `${unread} 条未读消息`,
       desc: '查看收入、排班与系统通知',
       tone: 'red',
@@ -191,20 +215,15 @@ const todoItems = computed((): TodoItem[] => {
     })
   }
 
-  const pendingShifts = store.assignments.filter(
-    (a) =>
-      a.employeeId === eid &&
-      a.date >= today.value &&
-      (a.confirmStatus === 'pending' || a.confirmStatus === 'confirming'),
-  ).length
+  const pendingShifts = countPendingScheduleConfirms(store.miniAppMessages, eid)
   if (pendingShifts > 0) {
     items.push({
       id: 'shift',
-      icon: '📅',
+      icon: Select,
       title: `${pendingShifts} 个班次待确认`,
-      desc: '请尽快确认近期排班安排',
+      desc: '前往排班通知，点击「去确认」查看详情',
       tone: 'orange',
-      path: '/miniapp/schedule',
+      path: '/miniapp/messages?tab=schedule',
     })
   }
 
@@ -215,7 +234,7 @@ const todoItems = computed((): TodoItem[] => {
     const total = claimable.reduce((s, r) => s + r.amount, 0)
     items.push({
       id: 'income',
-      icon: '💰',
+      icon: Wallet,
       title: `${claimable.length} 笔收入待领取`,
       desc: `合计 ¥${total.toLocaleString()}，点击领取`,
       tone: 'orange',
@@ -229,7 +248,7 @@ const todoItems = computed((): TodoItem[] => {
   if (unsigned.length > 0) {
     items.push({
       id: 'agreement',
-      icon: '📝',
+      icon: Document,
       title: `${unsigned.length} 份协议待签署`,
       desc: unsigned[0]?.title ?? '完成签署后继续接单',
       tone: 'red',
@@ -244,7 +263,7 @@ const todoItems = computed((): TodoItem[] => {
     const job = store.jobRequirements.find((j) => j.id === interview.jobRequirementId)
     items.push({
       id: 'interview',
-      icon: '🎯',
+      icon: Tickets,
       title: '岗位面试待参加',
       desc: job?.title ?? '查看应聘进度',
       tone: 'blue',
@@ -264,7 +283,7 @@ const todoItems = computed((): TodoItem[] => {
     if (rec?.status === 'completed') continue
     items.push({
       id: `course_${course.id}`,
-      icon: '📚',
+      icon: Reading,
       title: '培训课程未完成',
       desc: course.name,
       tone: 'blue',
@@ -297,8 +316,10 @@ const activeTasks = computed(() =>
       ...calcInstanceProgress(instance),
     }))
     .filter((t) => !t.isDone)
-    .slice(0, 5),
+    .slice(0, 8),
 )
+
+const todoCount = computed(() => todoItems.value.length)
 
 const avatarText = computed(() => employee.value?.name?.slice(0, 1) ?? '员')
 
@@ -320,15 +341,15 @@ function handlePunchAction() {
   }
   goPunch()
 }
+
+function openTodo(path: string) {
+  todoDrawerVisible.value = false
+  router.push(path)
+}
 </script>
 
 <template>
   <div class="wb-page">
-    <!-- 白色顶部导航 -->
-    <div class="wb-top-nav">
-      <span class="wb-top-title">工作台</span>
-    </div>
-
     <!-- 用户信息 -->
     <div class="wb-hero">
       <div class="wb-profile">
@@ -340,211 +361,268 @@ function handlePunchAction() {
             <span v-if="profileExt?.level" class="wb-level-badge">{{ profileExt.level }}</span>
           </div>
         </div>
-        <button class="wb-cal-btn" type="button" @click="openSchedule('schedule')">
-          📅
+        <div class="wb-profile-actions">
+          <button class="wb-todo-btn" type="button" aria-label="待办事项" @click="todoDrawerVisible = true">
+            <el-icon :size="18"><Bell /></el-icon>
+            <span v-if="todoCount" class="wb-todo-badge">{{ todoCount > 9 ? '9+' : todoCount }}</span>
+          </button>
+          <button class="wb-cal-btn" type="button" @click="openSchedule('schedule')">
+            <el-icon :size="18"><Calendar /></el-icon>
+          </button>
+        </div>
+      </div>
+
+      <div class="wb-main-tabs">
+        <button
+          type="button"
+          class="wb-main-tab"
+          :class="{ active: activeMainTab === 'schedule' }"
+          @click="activeMainTab = 'schedule'"
+        >
+          打卡排班
+        </button>
+        <button
+          type="button"
+          class="wb-main-tab"
+          :class="{ active: activeMainTab === 'tasks' }"
+          @click="activeMainTab = 'tasks'"
+        >
+          任务进度
+          <span v-if="activeTasks.length" class="wb-tab-count">{{ activeTasks.length }}</span>
         </button>
       </div>
     </div>
 
-    <!-- 今日打卡卡片 -->
-    <div class="wb-punch-card" :class="{ 'not-punched': isNotPunched }">
-      <div class="wb-punch-head">
-        <div class="wb-punch-title">
-          <span
-            class="wb-dot"
-            :class="{ green: hasClockIn, orange: isNotPunched, grey: isRestToday }"
-          />
-          <span>今日打卡</span>
+    <template v-if="activeMainTab === 'schedule'">
+      <!-- 今日打卡卡片 -->
+      <div class="wb-punch-card" :class="{ 'not-punched': isNotPunched }">
+        <div class="wb-punch-head">
+          <div class="wb-punch-title">
+            <span
+              class="wb-dot"
+              :class="{ green: hasClockIn, orange: isNotPunched, grey: isRestToday }"
+            />
+            <span>今日打卡</span>
+          </div>
+          <span class="wb-punched-at" :class="punchStatusClass">{{ punchStatusText }}</span>
         </div>
-        <span class="wb-punched-at" :class="punchStatusClass">{{ punchStatusText }}</span>
-      </div>
 
-      <div v-if="!isRestToday" class="wb-punch-body">
-        <div v-if="isNotPunched && todayShift" class="wb-shift-tip">
-          今日 {{ todayShift.name }} · {{ todayShift.startTime.slice(0, 5) }}-{{ todayShift.endTime.slice(0, 5) }}
-        </div>
-        <div class="wb-punch-main">
-          <div class="wb-hours" :class="{ empty: isNotPunched }">{{ displayHours }}</div>
-          <div class="wb-punch-action">
-            <span v-if="isOnline" class="wb-online-tag">在线中</span>
-            <span v-else-if="isNotPunched" class="wb-online-tag pending">待上岗</span>
-            <span v-else-if="hasClockOut" class="wb-online-tag done">已下线</span>
-            <button
-              v-if="!hasClockOut"
-              class="wb-punch-primary"
-              :class="{ highlight: isNotPunched }"
-              type="button"
-              @click="handlePunchAction"
-            >
-              {{ hasClockIn ? '下线打卡' : '上线打卡' }}
-            </button>
-            <div v-else class="wb-complete-tip">✓ 今日已完成</div>
+        <div v-if="!isRestToday" class="wb-punch-body">
+          <div v-if="isNotPunched && todayShift" class="wb-shift-tip">
+            今日 {{ todayShift.name }} · {{ todayShift.startTime.slice(0, 5) }}-{{ todayShift.endTime.slice(0, 5) }}
+          </div>
+          <div class="wb-punch-main">
+            <div class="wb-hours" :class="{ empty: isNotPunched }">{{ displayHours }}</div>
+            <div class="wb-punch-action">
+              <span v-if="isOnline" class="wb-online-tag">在线中</span>
+              <span v-else-if="isNotPunched" class="wb-online-tag pending">待上岗</span>
+              <span v-else-if="hasClockOut" class="wb-online-tag done">已下线</span>
+              <button
+                v-if="!hasClockOut"
+                class="wb-punch-primary"
+                :class="{ highlight: isNotPunched }"
+                type="button"
+                @click="handlePunchAction"
+              >
+                {{ hasClockIn ? '下线打卡' : '上线打卡' }}
+              </button>
+              <div v-else class="wb-complete-tip">
+                <el-icon :size="14"><CircleCheck /></el-icon>
+                今日已完成
+              </div>
+            </div>
+          </div>
+
+          <div class="wb-progress-wrap">
+            <div class="wb-progress-bar">
+              <div
+                class="wb-progress-fill"
+                :class="{ idle: isNotPunched }"
+                :style="{ width: `${todayProgressPercent}%` }"
+              />
+            </div>
+            <div class="wb-progress-labels">
+              <span>今日目标 {{ (todayGoalMinutes / 60).toFixed(0) }} 小时</span>
+              <span v-if="isNotPunched">计划上班 {{ todayShift?.startTime?.slice(0, 5) ?? '08:00' }}</span>
+              <span v-else>预计下线 {{ estimatedClockOut }}</span>
+            </div>
           </div>
         </div>
 
-        <div class="wb-progress-wrap">
-          <div class="wb-progress-bar">
+        <div v-else class="wb-rest-body">
+          <div class="wb-rest-msg">
+            <el-icon :size="16" class="wb-rest-icon"><Sunny /></el-icon>
+            今日休息，无需打卡
+          </div>
+          <button class="wb-rest-link" type="button" @click="router.push('/miniapp/recommend')">
+            去抢额外班次 ›
+          </button>
+        </div>
+      </div>
+
+      <!-- 统计三列 -->
+      <div class="wb-stats-row">
+        <div class="wb-stat-card blue">
+          <div class="wb-stat-icon">
+            <el-icon :size="20"><Calendar /></el-icon>
+          </div>
+          <div class="wb-stat-title">本月在线</div>
+          <div class="wb-stat-value">{{ formatHoursShort(monthOnlineMinutes) }}</div>
+          <div class="wb-stat-goal">目标 120h</div>
+          <div class="wb-stat-bar">
             <div
-              class="wb-progress-fill"
-              :class="{ idle: isNotPunched }"
-              :style="{ width: `${todayProgressPercent}%` }"
+              class="wb-stat-bar-fill"
+              :style="{ width: `${Math.min(100, Math.round((monthOnlineMinutes / 60 / 120) * 100))}%` }"
             />
           </div>
-          <div class="wb-progress-labels">
-            <span>今日目标 {{ (todayGoalMinutes / 60).toFixed(0) }} 小时</span>
-            <span v-if="isNotPunched">计划上班 {{ todayShift?.startTime?.slice(0, 5) ?? '08:00' }}</span>
-            <span v-else>预计下线 {{ estimatedClockOut }}</span>
+        </div>
+        <div class="wb-stat-card green">
+          <div class="wb-stat-icon">
+            <el-icon :size="20"><Timer /></el-icon>
+          </div>
+          <div class="wb-stat-title">本周在线</div>
+          <div class="wb-stat-value">{{ formatHoursShort(weekOnlineMinutes) }}</div>
+          <div class="wb-stat-goal">目标 30h</div>
+          <div class="wb-stat-bar">
+            <div
+              class="wb-stat-bar-fill"
+              :style="{ width: `${Math.min(100, Math.round((weekOnlineMinutes / 60 / 30) * 100))}%` }"
+            />
+          </div>
+        </div>
+        <div class="wb-stat-card orange">
+          <div class="wb-stat-icon">
+            <el-icon :size="20"><Medal /></el-icon>
+          </div>
+          <div class="wb-stat-title">连续打卡</div>
+          <div class="wb-stat-value">{{ consecutiveDays }} 天</div>
+          <div class="wb-stat-goal">目标 20 天</div>
+          <div class="wb-stat-bar">
+            <div
+              class="wb-stat-bar-fill"
+              :style="{ width: `${Math.min(100, Math.round((consecutiveDays / 20) * 100))}%` }"
+            />
           </div>
         </div>
       </div>
 
-      <div v-else class="wb-rest-body">
-        <div class="wb-rest-msg">😊 今日休息，无需打卡</div>
-        <button class="wb-rest-link" type="button" @click="router.push('/miniapp/recommend')">
-          去抢额外班次 ›
-        </button>
-      </div>
-    </div>
+      <!-- 本周排班预览 -->
+      <section class="wb-section">
+        <div class="wb-section-head">
+          <div class="wb-section-title-row">
+            <span class="wb-icon wb-icon-purple">
+              <el-icon :size="16"><Calendar /></el-icon>
+            </span>
+            <span class="wb-section-title">本周排班预览</span>
+          </div>
+          <button class="wb-view-all" type="button" @click="openSchedule('schedule')">
+            完整排班 ›
+          </button>
+        </div>
 
-    <!-- 统计三列 -->
-    <div class="wb-stats-row">
-      <div class="wb-stat-card blue">
-        <div class="wb-stat-icon">📅</div>
-        <div class="wb-stat-title">本月在线</div>
-        <div class="wb-stat-value">{{ formatHoursShort(monthOnlineMinutes) }}</div>
-        <div class="wb-stat-goal">目标 120h</div>
-        <div class="wb-stat-bar">
+        <div class="wb-week-scroll">
           <div
-            class="wb-stat-bar-fill"
-            :style="{ width: `${Math.min(100, Math.round((monthOnlineMinutes / 60 / 120) * 100))}%` }"
-          />
-        </div>
-      </div>
-      <div class="wb-stat-card green">
-        <div class="wb-stat-icon">⏱</div>
-        <div class="wb-stat-title">本周在线</div>
-        <div class="wb-stat-value">{{ formatHoursShort(weekOnlineMinutes) }}</div>
-        <div class="wb-stat-goal">目标 30h</div>
-        <div class="wb-stat-bar">
-          <div
-            class="wb-stat-bar-fill"
-            :style="{ width: `${Math.min(100, Math.round((weekOnlineMinutes / 60 / 30) * 100))}%` }"
-          />
-        </div>
-      </div>
-      <div class="wb-stat-card orange">
-        <div class="wb-stat-icon">🔥</div>
-        <div class="wb-stat-title">连续打卡</div>
-        <div class="wb-stat-value">{{ consecutiveDays }} 天</div>
-        <div class="wb-stat-goal">目标 20 天</div>
-        <div class="wb-stat-bar">
-          <div
-            class="wb-stat-bar-fill"
-            :style="{ width: `${Math.min(100, Math.round((consecutiveDays / 20) * 100))}%` }"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- 本周排班预览 -->
-    <section class="wb-section">
-      <div class="wb-section-head">
-        <div class="wb-section-title-row">
-          <span class="wb-icon wb-icon-purple">📆</span>
-          <span class="wb-section-title">本周排班预览</span>
-        </div>
-        <button class="wb-view-all" type="button" @click="openSchedule('schedule')">
-          完整排班 ›
-        </button>
-      </div>
-
-      <div class="wb-week-scroll">
-        <div
-          v-for="day in weekPreview"
-          :key="day.date"
-          class="wb-day-card"
-          :class="[day.state, { today: day.isToday }]"
-          @click="openSchedule(day.date >= today ? 'schedule' : 'punch', day.date)"
-        >
-          <div class="wb-day-week">{{ day.weekday.replace('周', '') }}</div>
-          <div class="wb-day-num">{{ day.dayNum }}</div>
-          <div class="wb-day-shift">{{ day.shiftName }}</div>
-          <div class="wb-day-time">{{ day.timeRange }}</div>
-          <div class="wb-day-status">
-            <span v-if="day.state === 'done'" class="dot green">✓</span>
-            <span v-else-if="day.state === 'absent'" class="dot red">!</span>
-            <span v-else-if="day.state === 'active'" class="dot blue">●</span>
-            <span v-else-if="day.state === 'upcoming'" class="dot grey">🕐</span>
-            {{ day.stateLabel }}
+            v-for="day in weekPreview"
+            :key="day.date"
+            class="wb-day-card"
+            :class="[day.state, { today: day.isToday }]"
+            @click="openSchedule(day.date >= today ? 'schedule' : 'punch', day.date)"
+          >
+            <div class="wb-day-week">{{ day.weekday.replace('周', '') }}</div>
+            <div class="wb-day-num">{{ day.dayNum }}</div>
+            <div class="wb-day-shift">{{ day.shiftName }}</div>
+            <div class="wb-day-time">{{ day.timeRange }}</div>
+            <div class="wb-day-status">
+              <el-icon v-if="day.state === 'done'" class="status-icon green"><CircleCheck /></el-icon>
+              <el-icon v-else-if="day.state === 'absent'" class="status-icon red"><CircleClose /></el-icon>
+              <span v-else-if="day.state === 'active'" class="status-dot blue" />
+              <el-icon v-else-if="day.state === 'upcoming'" class="status-icon grey"><Clock /></el-icon>
+              {{ day.stateLabel }}
+            </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
+    </template>
 
-    <!-- 待办事项 -->
-    <section class="wb-section">
-      <div class="wb-section-head">
-        <div class="wb-section-title-row">
-          <span class="wb-icon wb-icon-red">🔔</span>
-          <span class="wb-section-title">待办事项</span>
-          <span v-if="todoItems.length" class="wb-badge">{{ todoItems.length }}</span>
+    <template v-else>
+      <section class="wb-section wb-task-section">
+        <div class="wb-section-head">
+          <div class="wb-section-title-row">
+            <span class="wb-icon wb-icon-green">
+              <el-icon :size="16"><List /></el-icon>
+            </span>
+            <span class="wb-section-title">进行中任务</span>
+          </div>
+          <button class="wb-view-all" type="button" @click="router.push('/miniapp/tasks')">
+            查看全部 ›
+          </button>
         </div>
-      </div>
 
+        <div v-if="activeTasks.length" class="wb-task-list">
+          <div
+            v-for="t in activeTasks"
+            :key="t.instance.id"
+            class="wb-task-card clickable"
+            @click="router.push(`/miniapp/tasks/${t.instance.id}`)"
+          >
+            <div class="wb-task-head">
+              <div class="wb-task-name">{{ t.instance.taskName }}</div>
+              <span class="wb-task-node">{{ t.instance.currentNodeName }}</span>
+            </div>
+            <div class="wb-task-meta">
+              <span>{{ t.instance.taskTypeName }}</span>
+              <span class="wb-task-amount">¥{{ t.instance.amount }}</span>
+            </div>
+            <div class="wb-task-progress-wrap">
+              <div class="wb-task-progress-bar">
+                <div class="wb-task-progress-fill" :style="{ width: `${t.progress}%` }" />
+              </div>
+              <div class="wb-task-progress-labels">
+                <span>节点 {{ t.stepIndex }}/{{ t.stepTotal }}</span>
+                <span>{{ t.progress }}%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div v-else class="wb-empty-todo">暂无进行中的任务</div>
+        <button class="wb-task-hall-link" type="button" @click="router.push('/miniapp/task-hall')">
+          去任务大厅领取 ›
+        </button>
+      </section>
+    </template>
+
+    <el-drawer
+      v-model="todoDrawerVisible"
+      title="待办事项"
+      direction="btt"
+      size="auto"
+      class="wb-todo-drawer"
+    >
       <div v-if="todoItems.length" class="wb-todo-list">
         <div
           v-for="item in todoItems"
           :key="item.id"
           class="wb-todo-banner"
           :class="item.tone"
-          @click="router.push(item.path)"
+          @click="openTodo(item.path)"
         >
-          <span class="wb-todo-icon">{{ item.icon }}</span>
+          <span class="wb-todo-icon" :class="item.tone">
+            <el-icon :size="18"><component :is="item.icon" /></el-icon>
+          </span>
           <div class="wb-todo-text">
             <div class="wb-todo-title">{{ item.title }}</div>
             <div class="wb-todo-desc">{{ item.desc }}</div>
           </div>
-          <span class="wb-chevron">›</span>
+          <span class="wb-chevron">
+            <el-icon :size="16"><ArrowRight /></el-icon>
+          </span>
         </div>
       </div>
-      <div v-else class="wb-empty-todo">暂无待办，一切顺利 ✓</div>
-    </section>
-
-    <!-- 任务进度 -->
-    <section class="wb-section">
-      <div class="wb-section-head">
-        <div class="wb-section-title-row">
-          <span class="wb-icon wb-icon-green">📋</span>
-          <span class="wb-section-title">任务进度</span>
-        </div>
-        <button class="wb-view-all" type="button" @click="router.push('/miniapp/tasks')">
-          查看全部 ›
-        </button>
+      <div v-else class="wb-empty-todo">
+        <el-icon :size="14" class="empty-check"><CircleCheck /></el-icon>
+        暂无待办，一切顺利
       </div>
-
-      <div v-if="activeTasks.length" class="wb-task-list">
-        <div v-for="t in activeTasks" :key="t.instance.id" class="wb-task-card">
-          <div class="wb-task-head">
-            <div class="wb-task-name">{{ t.instance.taskName }}</div>
-            <span class="wb-task-node">{{ t.instance.currentNodeName }}</span>
-          </div>
-          <div class="wb-task-meta">
-            <span>{{ t.instance.taskTypeName }}</span>
-            <span class="wb-task-amount">¥{{ t.instance.amount }}</span>
-          </div>
-          <div class="wb-task-progress-wrap">
-            <div class="wb-task-progress-bar">
-              <div class="wb-task-progress-fill" :style="{ width: `${t.progress}%` }" />
-            </div>
-            <div class="wb-task-progress-labels">
-              <span>节点 {{ t.stepIndex }}/{{ t.stepTotal }}</span>
-              <span>{{ t.progress }}%</span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div v-else class="wb-empty-todo">暂无进行中的任务</div>
-    </section>
+    </el-drawer>
   </div>
 </template>
 
@@ -555,26 +633,13 @@ function handlePunchAction() {
   padding-bottom: 16px;
 }
 
-.wb-top-nav {
+.wb-hero {
+  background: #fff;
+  padding: 12px 16px 0;
+  border-bottom: 1px solid #f5f5f5;
   position: sticky;
   top: 0;
   z-index: 20;
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
-  padding: 12px 16px;
-  text-align: center;
-}
-
-.wb-top-title {
-  font-size: 17px;
-  font-weight: 700;
-  color: #1a1a1a;
-}
-
-.wb-hero {
-  background: #fff;
-  padding: 12px 16px 20px;
-  border-bottom: 1px solid #f5f5f5;
 }
 
 .wb-profile {
@@ -587,8 +652,8 @@ function handlePunchAction() {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #e60012, #ff8a80);
-  border: 2px solid #fff5f5;
+  background: linear-gradient(135deg, #3b82f6, #60a5fa);
+  border: 2px solid #eff6ff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -619,11 +684,96 @@ function handlePunchAction() {
 }
 
 .wb-level-badge {
-  background: #fff0f0;
+  background: #eff6ff;
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 11px;
-  color: #e60012;
+  color: #3b82f6;
+}
+
+.wb-profile-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.wb-todo-btn {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid #eee;
+  background: #fafafa;
+  color: #ef4444;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wb-todo-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.wb-main-tabs {
+  display: flex;
+  gap: 0;
+  margin-top: 14px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.wb-main-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 0;
+  border: none;
+  background: none;
+  font-size: 15px;
+  font-weight: 500;
+  color: #999;
+  cursor: pointer;
+  position: relative;
+}
+
+.wb-main-tab.active {
+  color: #3b82f6;
+  font-weight: 700;
+}
+
+.wb-main-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 20%;
+  right: 20%;
+  bottom: 0;
+  height: 3px;
+  background: #3b82f6;
+  border-radius: 3px 3px 0 0;
+}
+
+.wb-tab-count {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #3b82f6;
+  font-weight: 600;
 }
 
 .wb-cal-btn {
@@ -632,9 +782,12 @@ function handlePunchAction() {
   border-radius: 10px;
   border: 1px solid #eee;
   background: #fafafa;
-  font-size: 18px;
+  color: #3b82f6;
   cursor: pointer;
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .wb-punch-card {
@@ -763,6 +916,9 @@ function handlePunchAction() {
 }
 
 .wb-complete-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 13px;
   color: #52c41a;
   font-weight: 600;
@@ -803,9 +959,16 @@ function handlePunchAction() {
 }
 
 .wb-rest-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 15px;
   color: #666;
   margin-bottom: 10px;
+}
+
+.wb-rest-icon {
+  color: #f59e0b;
 }
 
 .wb-rest-link {
@@ -833,9 +996,15 @@ function handlePunchAction() {
 }
 
 .wb-stat-icon {
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   margin-bottom: 4px;
 }
+
+.wb-stat-card.blue .wb-stat-icon { color: #3b82f6; }
+.wb-stat-card.green .wb-stat-icon { color: #52c41a; }
+.wb-stat-card.orange .wb-stat-icon { color: #fa8c16; }
 
 .wb-stat-title {
   font-size: 11px;
@@ -912,9 +1081,20 @@ function handlePunchAction() {
   font-size: 14px;
 }
 
-.wb-icon-purple { background: #f3eeff; }
-.wb-icon-red { background: #fff0f0; }
-.wb-icon-green { background: #e8f8ef; }
+.wb-icon-purple {
+  background: #eff6ff;
+  color: #3b82f6;
+}
+
+.wb-icon-red {
+  background: #fff0f0;
+  color: #ef4444;
+}
+
+.wb-icon-green {
+  background: #e8f8ef;
+  color: #22c55e;
+}
 
 .wb-badge {
   font-size: 11px;
@@ -942,7 +1122,30 @@ function handlePunchAction() {
 .wb-todo-banner.orange { background: #fff7e6; }
 .wb-todo-banner.blue { background: #f0f7ff; }
 
-.wb-todo-icon { font-size: 20px; flex-shrink: 0; }
+.wb-todo-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.wb-todo-icon.red {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+.wb-todo-icon.orange {
+  background: #ffedd5;
+  color: #f97316;
+}
+
+.wb-todo-icon.blue {
+  background: #dbeafe;
+  color: #3b82f6;
+}
 
 .wb-todo-text { flex: 1; min-width: 0; }
 
@@ -966,16 +1169,25 @@ function handlePunchAction() {
 }
 
 .wb-chevron {
-  font-size: 18px;
-  opacity: 0.4;
+  display: flex;
+  align-items: center;
+  color: #d1d5db;
   flex-shrink: 0;
 }
 
 .wb-empty-todo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   text-align: center;
   color: #ccc;
   font-size: 13px;
   padding: 16px 0;
+}
+
+.empty-check {
+  color: #22c55e;
 }
 
 .wb-task-list { display: flex; flex-direction: column; gap: 10px; }
@@ -984,6 +1196,28 @@ function handlePunchAction() {
   background: #f8f9fb;
   border-radius: 12px;
   padding: 12px;
+}
+
+.wb-task-card.clickable {
+  cursor: pointer;
+}
+
+.wb-task-section {
+  margin-top: 12px;
+}
+
+.wb-task-hall-link {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed #dbeafe;
+  border-radius: 12px;
+  background: #f8fbff;
+  color: #3b82f6;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .wb-task-head {
@@ -1117,12 +1351,31 @@ function handlePunchAction() {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 3px;
 }
 
-.dot { font-size: 10px; }
-.dot.green { color: #52c41a; }
-.dot.red { color: #ff4d4f; }
-.dot.blue { color: #409eff; }
-.dot.grey { color: #bbb; }
+.status-icon {
+  font-size: 12px;
+}
+
+.status-icon.green { color: #52c41a; }
+.status-icon.red { color: #ff4d4f; }
+.status-icon.grey { color: #9ca3af; }
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.blue {
+  background: #409eff;
+}
+
+:deep(.wb-todo-drawer .el-drawer__body) {
+  padding: 0 16px 24px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
 </style>

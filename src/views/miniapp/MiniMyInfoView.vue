@@ -1,15 +1,14 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 
-const router = useRouter()
 const { employee, department, profileExt } = useMiniAppWorker()
 </script>
 
 <template>
   <div>
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">← 返回</button>
+      <MiniNavBack fallback="/miniapp/profile" />
       <div class="mini-nav-title">我的资料</div>
     </div>
     <div class="mini-page">

@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { useMiniAppBack } from '@/composables/useMiniAppBack'
 import { examQuestionTypeMap } from '@/constants/training'
 import { getExamQuestions, getLearningProgress } from '@/services/training'
 
@@ -12,7 +12,6 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
-const { goBack } = useMiniAppBack('/miniapp/training/exams')
 
 const courseId = computed(() => route.params.courseId as string)
 const course = computed(() => store.trainingCourses.find((c) => c.id === courseId.value))
@@ -129,7 +128,7 @@ async function submitExam() {
 <template>
   <div class="exam-take-page">
     <div class="mini-nav-bar exam-nav">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/training/exams" />
       <div class="mini-nav-title">{{ exam?.name ?? '在线考核' }}</div>
       <span class="exam-timer">{{ elapsedMinutes }} 分钟</span>
     </div>

@@ -1,8 +1,8 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { trainingMaterialCategoryOptions } from '@/constants/training'
-import { useMiniAppBack } from '@/composables/useMiniAppBack'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniWorkerTraining } from '@/composables/useMiniWorkerTraining'
 import { useAppStore } from '@/stores/app'
@@ -10,7 +10,6 @@ import { useAppStore } from '@/stores/app'
 const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
-const { goBack } = useMiniAppBack('/miniapp/profile')
 const { myCourses, materialTypeIcon } = useMiniWorkerTraining()
 
 function categoryLabel(cat: string) {
@@ -38,7 +37,7 @@ function completeCourse(courseId: string) {
 <template>
   <div>
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/profile" />
       <div class="mini-nav-title">我的培训</div>
     </div>
     <div class="mini-page">

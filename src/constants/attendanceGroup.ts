@@ -3,7 +3,7 @@ import type { AttendanceGroupStatus, AttendanceGroupType } from '@/types'
 export const attendanceGroupTypeMap: Record<AttendanceGroupType, string> = {
   shift: '排班制',
   free: '自由打卡',
-  none: '不计考勤',
+  none: '无需打卡',
 }
 
 export const attendanceGroupStatusMap: Record<AttendanceGroupStatus, string> = {
@@ -32,3 +32,5 @@ export function formatDeptBindings(
   const extra = Math.max(0, bindings.length - max)
   return { visible, extra }
 }
+
+export { formatVersionLabel, formatVersionTime, summarizeVersionSnapshot } from '@/services/attendanceGroupVersion'

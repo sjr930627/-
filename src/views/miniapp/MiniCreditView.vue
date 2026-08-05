@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { workerLevelColors } from '@/constants/miniapp'
 
-const router = useRouter()
 const { profileExt } = useMiniAppWorker()
 
 const levelRules = [
@@ -25,7 +24,7 @@ const creditTips = [
 <template>
   <div>
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">← 返回</button>
+      <MiniNavBack fallback="/miniapp/profile" />
       <div class="mini-nav-title">等级与信用</div>
     </div>
     <div class="mini-page">

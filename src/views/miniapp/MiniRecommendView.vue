@@ -1,301 +1,655 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import {
+  ArrowDown,
+  ArrowRight,
+  RefreshRight,
+  User,
+} from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { formatSalaryRange } from '@/constants/recruitment'
-import { getGrabShiftPostExtra, getGrabShiftSlotExtra } from '@/mock/miniappDetailSeed'
+import { getGrabShiftPostExtra, getGrabShiftSlotExtra, getJobDetailExtra } from '@/mock/miniappDetailSeed'
+import { TASK_PREVIEW_LIMIT } from '@/services/miniTask'
 
 const store = useAppStore()
 const route = useRoute()
 const router = useRouter()
 const { employeeId } = useMiniAppWorker()
-const activeTab = ref<'jobs' | 'shifts' | 'tasks'>('jobs')
+const activeTab = ref<'jobs' | 'shifts'>('shifts')
+const city = ref('上海市')
 
 const tabs = [
   { key: 'jobs' as const, label: '岗位招聘' },
   { key: 'shifts' as const, label: '抢班' },
-  { key: 'tasks' as const, label: '任务管理' },
 ]
+
+const tabRefs = ref<(HTMLElement | null)[]>([])
+const indicatorStyle = ref({ left: '0px', width: '0px' })
+
+function setTabRef(el: unknown, index: number) {
+  tabRefs.value[index] = el instanceof HTMLElement ? el : null
+}
+
+function updateTabIndicator() {
+  const idx = tabs.findIndex((t) => t.key === activeTab.value)
+  const el = tabRefs.value[idx]
+  if (!el) return
+  indicatorStyle.value = {
+    left: `${el.offsetLeft}px`,
+    width: `${el.offsetWidth}px`,
+  }
+}
+
+const tagToneMap: Record<string, string> = {
+  收入秒结: 'orange',
+  免审核: 'green',
+  近期发布: 'blue',
+  平台加薪: 'red',
+  限时补贴: 'purple',
+  日结: 'orange',
+  兼职岗位: 'blue',
+  夜班补贴: 'purple',
+  奖金奖励: 'orange',
+  直面: 'blue',
+  星级补贴: 'purple',
+  专属福利: 'red',
+  高佣金: 'red',
+  急: 'orange',
+  新: 'blue',
+  限时: 'yellow',
+  长期: 'grey',
+  热门: 'red',
+  新品: 'green',
+  高佣: 'purple',
+}
 
 function syncTabFromRoute() {
   const tab = route.query.tab
-  if (tab === 'tasks' || tab === 'shifts' || tab === 'jobs') {
+  if (tab === 'tasks') {
+    router.replace('/miniapp/task-hall')
+    return
+  }
+  if (tab === 'shifts' || tab === 'jobs') {
     activeTab.value = tab
   }
 }
 
 syncTabFromRoute()
 watch(() => route.query.tab, syncTabFromRoute)
+watch(activeTab, () => nextTick(updateTabIndicator))
+onMounted(() => nextTick(updateTabIndicator))
 
-function switchTab(tab: 'jobs' | 'shifts' | 'tasks') {
+function switchTab(tab: 'jobs' | 'shifts') {
   activeTab.value = tab
   router.replace({ path: '/miniapp/recommend', query: { tab } })
 }
 
-const sectionTitle = computed(() => {
-  if (activeTab.value === 'jobs') return '岗位需求'
-  if (activeTab.value === 'shifts') return '抢班班次'
-  return '任务大厅'
-})
-
 const jobs = computed(() =>
   store.jobRequirements
-    .filter((j) => j.status === 'active')
-    .map((j) => ({
-      ...j,
-      salaryLabel: formatSalaryRange(j.salaryMin, j.salaryMax),
-      remain: j.headcount - j.filledCount,
-    })),
+    .filter((j) => j.status === 'recruiting')
+    .map((j) => {
+      const extra = getJobDetailExtra(
+        j.id,
+        {
+          storeName: j.enterpriseName,
+          location: j.location,
+        },
+        j,
+      )
+      return {
+        id: j.id,
+        title: j.title,
+        tags: extra.tags,
+        payMin: extra.hourlyMin,
+        payMax: extra.hourlyMax,
+        payUnit: '/小时',
+        payHint: '· 上岗后收入',
+        storeName: extra.storeName,
+        locationHint: `${extra.subwayHint ?? '地铁口附近'} · ${extra.distance}`,
+        brandLetter: extra.storeName.slice(0, 1),
+        previewSlots: [],
+        hasMoreSlots: false,
+        slotCount: 0,
+      }
+    }),
 )
 
-const grabPosts = computed(() => {
+const shiftCompanies = computed(() => {
   const open = store.grabShiftSlots.filter((s) => s.status === 'open' || s.status === 'partial')
   const teamIds = [...new Set(open.map((s) => s.teamId))]
   return teamIds.map((teamId) => {
-    const teamSlots = open.filter((s) => s.teamId === teamId)
+    const teamSlots = open
+      .filter((s) => s.teamId === teamId)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
     const first = teamSlots[0]
     const post = getGrabShiftPostExtra(teamId, first.teamName)
-    const pays = teamSlots.map((s) => getGrabShiftSlotExtra(s.id, s.date).pay)
-    const minPay = Math.min(...pays)
-    const maxPay = Math.max(...pays)
-    const appliedCount = teamSlots.filter((s) =>
-      store.grabShiftApplications.some(
+    const isWhitelisted = store.isGrabShiftWhitelisted(
+      employeeId.value,
+      first.attendanceGroupId,
+    )
+    const tags = post.tags.filter((t) => t !== '免审核' || isWhitelisted)
+    const slots = teamSlots.map((s) => {
+      const extra = getGrabShiftSlotExtra(s.id, s.date)
+      const applied = store.grabShiftApplications.some(
         (a) => a.slotId === s.id && a.employeeId === employeeId.value,
-      ),
-    ).length
+      )
+      const remain = s.requiredCount - s.grabbedCount
+      const hourly = extra.durationHours
+        ? Math.round(extra.pay / extra.durationHours)
+        : s.effectiveHourlyRate ?? 22
+      const monthDay = s.date.slice(5).replace('-', '月') + '日'
+      return {
+        id: s.id,
+        dateTimeLabel: `${monthDay} ${extra.weekdayLabel} ${s.startTime.slice(0, 5)}~${s.endTime.slice(0, 5)}`,
+        incomeLabel: `¥${extra.pay} · ${hourly}元/小时`,
+        capacity: `${s.grabbedCount}/${s.requiredCount}`,
+        hourly,
+        disabled: applied || remain <= 0,
+        applied,
+      }
+    })
+    const hourlies = slots.map((s) => s.hourly)
+    const hourlyMin = hourlies.length ? Math.min(...hourlies) : 0
+    const hourlyMax = hourlies.length ? Math.max(...hourlies) : 0
     return {
-      teamId,
+      id: teamId,
       title: post.title,
+      tags,
+      payMin: hourlyMin,
+      payMax: hourlyMax,
+      payUnit: '/小时',
+      payHint: '· 日结上岗',
       storeName: post.storeName,
-      shiftCount: teamSlots.length,
-      payLabel: minPay === maxPay ? `¥${minPay}/班` : `¥${minPay}~${maxPay}/班`,
-      tags: post.tags.slice(0, 3),
-      appliedAll: appliedCount === teamSlots.length,
+      locationHint: `${post.distance} · ${post.commute}`,
+      brandLetter: post.storeName.slice(0, 1),
+      slotCount: slots.length,
+      previewSlots: slots.slice(0, TASK_PREVIEW_LIMIT),
+      hasMoreSlots: slots.length > TASK_PREVIEW_LIMIT,
     }
   })
 })
 
-const hallTasks = computed(() =>
-  store.tasks
-    .filter((t) => t.status === 'active' && t.dispatchMode === 'hall')
-    .map((t) => ({
-      ...t,
-      myCount: store.taskInstances.filter(
-        (i) => i.taskId === t.id && i.workerId === employeeId.value,
-      ).length,
-    })),
-)
+const feedCards = computed(() => {
+  if (activeTab.value === 'jobs') {
+    return jobs.value.map((card) => ({
+      ...card,
+      tab: 'jobs' as const,
+    }))
+  }
+  return shiftCompanies.value.map((card) => ({
+    ...card,
+    tab: 'shifts' as const,
+    panelTitle: '可抢班次',
+  }))
+})
+
+const feedEmptyText = computed(() => {
+  if (activeTab.value === 'jobs') return '暂无在招岗位'
+  return '暂无抢班班次'
+})
+
+function openCard(card: (typeof feedCards.value)[number]) {
+  if (card.tab === 'jobs') openJob(card.id)
+  else openShiftEnterprise(card.id)
+}
+
+function slotActionLabel(
+  slot: (typeof feedCards.value)[number]['previewSlots'][number],
+) {
+  return slot.applied ? '已报名' : '立刻抢班'
+}
+
+function onSlotAction(
+  slot: (typeof feedCards.value)[number]['previewSlots'][number],
+  e: Event,
+) {
+  applyShiftSlot(slot.id, e)
+}
+
+function tagClass(tag: string) {
+  return tagToneMap[tag] ?? 'blue'
+}
 
 function openJob(id: string) {
   router.push(`/miniapp/recommend/job/${id}`)
 }
 
-function openShift(teamId: string) {
+function openShiftEnterprise(teamId: string) {
   router.push(`/miniapp/recommend/shift/${teamId}`)
 }
 
-function grabTask(taskId: string) {
+function applyShiftSlot(slotId: string, e: Event) {
+  e.stopPropagation()
   try {
-    store.acceptTaskFromHall(taskId, employeeId.value)
-    ElMessage.success('任务领取成功')
-  } catch (e) {
-    ElMessage.warning(e instanceof Error ? e.message : '领取失败')
+    const app = store.submitGrabShiftApplication({
+      slotId,
+      employeeId: employeeId.value,
+      message: '小程序抢班报名',
+    })
+    if (app.status === 'approved') {
+      ElMessage.success('抢班成功，已自动通过')
+    } else {
+      ElMessage.success('抢班成功，待审核')
+    }
+  } catch (err) {
+    ElMessage.warning(err instanceof Error ? err.message : '报名失败')
   }
 }
 
-function onViewMore() {
-  ElMessage.info('查看更多（演示）')
+function onLoadMore() {
+  ElMessage.info('加载更多（演示）')
 }
 </script>
 
 <template>
   <div class="rec-page">
-    <div class="rec-pill-tabs">
-      <button
-        v-for="tab in tabs"
-        :key="tab.key"
-        type="button"
-        class="rec-pill-tab"
-        :class="{ active: activeTab === tab.key }"
-        @click="switchTab(tab.key)"
-      >
-        {{ tab.label }}
+    <header class="rec-header">
+      <button type="button" class="rec-city">
+        {{ city }}
+        <el-icon :size="12"><ArrowDown /></el-icon>
       </button>
-    </div>
+    </header>
 
-    <div class="rec-section-head">
-      <span class="rec-section-title">{{ sectionTitle }}</span>
-      <button type="button" class="rec-section-more" @click="onViewMore">查看更多 ›</button>
-    </div>
-
-    <template v-if="activeTab === 'jobs'">
-      <div v-for="job in jobs" :key="job.id" class="mini-card job-card" @click="openJob(job.id)">
-        <div class="job-head">
-          <div>
-            <div class="job-title">{{ job.title }}</div>
-            <div class="job-sub">{{ job.enterpriseName }}</div>
-          </div>
-          <span class="mini-tag red">{{ job.salaryLabel }}</span>
-        </div>
-        <div class="job-meta">📍 {{ job.location }} · 招 {{ job.remain }} 人</div>
+    <div class="rec-tabs-wrap">
+      <div class="rec-tabs">
+        <button
+          v-for="(tab, index) in tabs"
+          :key="tab.key"
+          :ref="(el) => setTabRef(el, index)"
+          type="button"
+          class="rec-tab"
+          :class="{ active: activeTab === tab.key }"
+          @click="switchTab(tab.key)"
+        >
+          <span v-if="activeTab === tab.key" class="rec-tab-spark" aria-hidden="true">✦</span>
+          {{ tab.label }}
+        </button>
+        <span class="rec-tab-indicator" :style="indicatorStyle" />
       </div>
-      <div v-if="jobs.length === 0" class="mini-empty">暂无在招岗位</div>
-    </template>
+    </div>
 
-    <template v-if="activeTab === 'shifts'">
+    <article
+      v-for="card in feedCards"
+      :key="`${card.tab}-${card.id}`"
+      class="company-card job-post-card"
+      :class="{ 'job-post-card-clickable': card.tab === 'jobs' }"
+      @click="card.tab === 'jobs' ? openCard(card) : undefined"
+    >
       <div
-        v-for="post in grabPosts"
-        :key="post.teamId"
-        class="mini-card shift-card"
-        @click="openShift(post.teamId)"
+        class="job-post-head"
+        :class="{ 'job-post-head-clickable': card.tab !== 'jobs' }"
+        @click="card.tab !== 'jobs' ? openCard(card) : undefined"
       >
-        <div class="job-head">
-          <div>
-            <div class="job-title">{{ post.title }}</div>
-            <div class="job-sub">{{ post.storeName }}</div>
+        <div class="job-post-main">
+          <div class="job-post-title">{{ card.title }}</div>
+          <div class="job-post-tags">
+            <span
+              v-for="tag in card.tags.slice(0, 5)"
+              :key="tag"
+              class="mini-tag"
+              :class="tagClass(tag)"
+            >
+              {{ tag }}
+            </span>
           </div>
-          <span class="mini-tag red">{{ post.payLabel }}</span>
+          <div class="job-post-salary">
+            ¥{{ card.payMin }}~{{ card.payMax }}
+            <span class="job-post-salary-unit">{{ card.payUnit }}</span>
+            <span class="job-post-salary-hint">{{ card.payHint }}</span>
+          </div>
+          <div class="job-post-loc">{{ card.storeName }}</div>
+          <div class="job-post-loc-sub">{{ card.locationHint }}</div>
         </div>
-        <div class="shift-tags">
-          <span v-for="t in post.tags" :key="t" class="mini-tag red">{{ t }}</span>
-        </div>
-        <div class="job-meta">共 {{ post.shiftCount }} 个班次 · 点击查看并选择</div>
-        <div v-if="post.appliedAll" class="shift-applied-tip">已全部报名</div>
+        <div class="job-post-logo">{{ card.brandLetter }}</div>
       </div>
-      <div v-if="grabPosts.length === 0" class="mini-empty">暂无抢班班次</div>
-    </template>
 
-    <template v-if="activeTab === 'tasks'">
-      <div v-for="task in hallTasks" :key="task.id" class="mini-card task-card">
-        <div class="job-head">
-          <div class="job-title">{{ task.name }}</div>
-          <span class="mini-tag blue">{{ task.taskTypeName }}</span>
+      <div v-if="card.tab !== 'jobs'" class="job-slot-panel">
+        <div class="job-slot-panel-head">
+          <span class="job-slot-panel-title">{{ card.panelTitle }}</span>
+          <button
+            v-if="card.hasMoreSlots"
+            type="button"
+            class="job-slot-panel-more"
+            @click.stop="openCard(card)"
+          >
+            全部({{ card.slotCount }})
+            <el-icon :size="12"><ArrowRight /></el-icon>
+          </button>
+          <span v-else-if="card.slotCount > 0" class="job-slot-panel-count">
+            共 {{ card.slotCount }} 个
+          </span>
         </div>
-        <div class="job-sub">{{ task.enterpriseName }}</div>
-        <div class="job-meta">{{ task.description.slice(0, 60) }}…</div>
-        <div class="job-sub">
-          📍 {{ task.region ?? '不限' }} · 已领 {{ task.acceptedCount }} · 我领 {{ task.myCount }} 次
+        <div
+          v-for="slot in card.previewSlots"
+          :key="slot.id"
+          class="job-slot-row"
+        >
+          <div class="job-slot-main">
+            <div class="job-slot-time">{{ slot.dateTimeLabel }}</div>
+            <div class="job-slot-income">{{ slot.incomeLabel }}</div>
+          </div>
+          <div class="job-slot-capacity">
+            <el-icon :size="12"><User /></el-icon>
+            {{ slot.capacity }}
+          </div>
+          <button
+            type="button"
+            class="job-slot-apply"
+            :class="{ applied: slot.applied }"
+            :disabled="slot.disabled"
+            @click="onSlotAction(slot, $event)"
+          >
+            {{ slotActionLabel(slot) }}
+          </button>
         </div>
-        <button class="mini-btn-outline shift-btn" @click="grabTask(task.id)">领取任务</button>
       </div>
-      <div v-if="hallTasks.length === 0" class="mini-empty">暂无大厅任务</div>
-    </template>
+    </article>
+
+    <button
+      v-if="activeTab === 'shifts' && feedCards.length > 0"
+      type="button"
+      class="load-more"
+      @click="onLoadMore"
+    >
+      <el-icon :size="16"><RefreshRight /></el-icon>
+      加载更多
+    </button>
+
+    <div v-if="feedCards.length === 0" class="mini-empty">{{ feedEmptyText }}</div>
   </div>
 </template>
 
 <style scoped>
 .rec-page {
-  padding: 12px 12px 16px;
-  background: #f5f6f8;
   min-height: 100%;
+  padding: 0 0 16px;
+  background: var(--mini-bg);
 }
 
-.rec-pill-tabs {
+.rec-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  padding: 12px 16px 8px;
+  background: #f0f9ff;
 }
 
-.rec-pill-tab {
-  padding: 8px 18px;
-  border-radius: 999px;
+.rec-city {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   border: none;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.2;
-  background: #f3f4f6;
-  color: #666;
+  background: none;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--mini-text);
   cursor: pointer;
-  transition: background 0.2s, color 0.2s;
 }
 
-.rec-pill-tab.active {
-  background: #e60012;
-  color: #fff;
+.rec-tabs-wrap {
+  background: #f0f9ff;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-.rec-section-head {
+.rec-tabs-wrap::-webkit-scrollbar {
+  display: none;
+}
+
+.rec-tabs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  min-height: 46px;
+  padding: 4px 16px 10px;
+}
+
+.rec-tab {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  padding: 8px 0;
+  font-size: 15px;
+  font-weight: 400;
+  color: #999;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.2s, font-weight 0.2s;
+}
+
+.rec-tab.active {
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.rec-tab-spark {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--mini-primary);
+}
+
+.rec-tab-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  background: var(--mini-primary);
+  border-radius: 999px;
+  transition: left 0.25s ease, width 0.25s ease;
+  pointer-events: none;
+}
+
+.company-card {
+  margin: 12px 16px 0;
+  background: #fff;
+  border-radius: var(--mini-radius-lg);
+  box-shadow: var(--mini-shadow);
+  overflow: hidden;
+}
+
+.load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: calc(100% - 32px);
+  margin: 16px auto 0;
+  padding: 12px;
+  border: 1px dashed var(--mini-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--mini-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.job-post-card {
+  margin: 12px 16px 0;
+}
+
+.job-post-card-clickable {
+  cursor: pointer;
+}
+
+.job-post-head-clickable {
+  cursor: pointer;
+}
+
+.job-post-head {
+  display: flex;
+  gap: 12px;
+  padding: 14px 14px 12px;
+  cursor: pointer;
+}
+
+.job-post-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.job-post-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--mini-text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.job-post-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.job-post-salary {
+  margin-top: 10px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #ef4444;
+  line-height: 1.2;
+}
+
+.job-post-salary-unit {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.job-post-salary-hint {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mini-text-muted);
+}
+
+.job-post-loc {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mini-text);
+}
+
+.job-post-loc-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--mini-text-muted);
+}
+
+.job-post-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fde68a, #fbbf24);
+  color: #92400e;
+  font-size: 18px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.job-slot-panel {
+  margin: 0 14px 14px;
+  padding: 12px;
+  border: 1px solid #f3f4f6;
+  border-radius: 12px;
+  background: #fafafa;
+}
+
+.job-slot-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 0 10px;
-  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+.job-slot-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mini-text);
+}
+
+.job-slot-panel-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  color: var(--mini-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.job-slot-panel-count {
+  font-size: 12px;
+  color: var(--mini-text-muted);
+}
+
+.job-slot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0;
   border-top: 1px solid #f0f0f0;
 }
 
-.rec-section-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: #1a1a1a;
+.job-slot-panel-head + .job-slot-row {
+  border-top: none;
+  padding-top: 4px;
 }
 
-.rec-section-more {
+.job-slot-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.job-slot-time {
   font-size: 13px;
-  color: #e60012;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-}
-
-.job-card,
-.shift-card { cursor: pointer; }
-.task-card { cursor: default; }
-
-.job-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.job-title {
-  font-size: 16px;
   font-weight: 600;
-  color: #333;
+  color: var(--mini-text);
 }
 
-.job-sub {
-  font-size: 12px;
-  color: #999;
+.job-slot-income {
   margin-top: 4px;
-}
-
-.job-meta {
   font-size: 12px;
-  color: #666;
-  margin-top: 8px;
+  color: #ef4444;
 }
 
-.shift-tags {
-  margin-top: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+.job-slot-capacity {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--mini-text-muted);
+  flex-shrink: 0;
 }
 
-.shift-btn {
-  display: block;
-  box-sizing: border-box;
-  margin-top: 12px;
-  width: 100%;
-  padding: 12px;
-  font-size: 15px;
+.job-slot-apply {
+  padding: 6px 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--mini-primary);
+  color: #fff;
+  font-size: 11px;
   font-weight: 600;
-  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
-.shift-applied-tip {
-  margin-top: 8px;
-  font-size: 12px;
-  color: var(--app-primary);
-}
-
-.mini-tag.blue {
-  background: #f0f7ff;
-  color: #1890ff;
+.job-slot-apply.applied,
+.job-slot-apply:disabled {
+  background: #f3f4f6;
+  color: var(--mini-text-muted);
+  cursor: not-allowed;
 }
 </style>

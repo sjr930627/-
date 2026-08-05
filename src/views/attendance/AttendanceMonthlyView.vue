@@ -4,14 +4,28 @@ import { useAppStore } from '@/stores/app'
 import { buildDailyAttendanceList, buildMonthlySummary, getMonthDateRange } from '@/services/attendance'
 import { getDepartmentName } from '@/utils'
 
-defineProps<{ embedded?: boolean }>()
+const props = withDefaults(
+  defineProps<{ embedded?: boolean; enterpriseId?: string }>(),
+  { embedded: false },
+)
 
 const store = useAppStore()
 const selectedMonth = ref('2026-07')
 const filterDept = ref('')
 
+const scopedEmployees = computed(() => {
+  const list = props.enterpriseId
+    ? store.getEmployeesByEnterprise(props.enterpriseId)
+    : store.employees
+  return list.filter((e) => e.status === 'active')
+})
+
+const scopedDepartments = computed(() =>
+  props.enterpriseId ? store.getDepartmentsByEnterprise(props.enterpriseId) : store.departments,
+)
+
 const tableData = computed(() => {
-  const employees = store.activeEmployees.filter((e) => {
+  const employees = scopedEmployees.value.filter((e) => {
     if (filterDept.value && e.departmentId !== filterDept.value) return false
     return true
   })
@@ -33,7 +47,7 @@ const tableData = computed(() => {
       ...summary,
       name: emp.name,
       employeeNo: emp.employeeNo,
-      departmentName: getDepartmentName(store.departments, emp.departmentId),
+      departmentName: getDepartmentName(scopedDepartments.value, emp.departmentId),
     }
   })
 })
@@ -48,8 +62,8 @@ const totals = computed(() => ({
 </script>
 
 <template>
-  <div :class="{ 'page-card': !embedded }">
-    <div v-if="!embedded" class="page-header">
+  <div :class="{ 'page-card': !props.embedded }">
+    <div v-if="!props.embedded" class="page-header">
       <div>
         <h2 class="page-title">月考勤数据</h2>
         <p class="text-muted">按月汇总应出勤、实际出勤、迟到、请假、加班等</p>
@@ -68,7 +82,7 @@ const totals = computed(() => ({
       </el-form-item>
       <el-form-item label="部门">
         <el-select v-model="filterDept" clearable placeholder="全部" style="width: 160px">
-          <el-option v-for="d in store.departments" :key="d.id" :label="d.name" :value="d.id" />
+          <el-option v-for="d in scopedDepartments" :key="d.id" :label="d.name" :value="d.id" />
         </el-select>
       </el-form-item>
     </el-form>

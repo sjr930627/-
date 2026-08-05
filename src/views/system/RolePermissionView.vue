@@ -2,21 +2,38 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
+import { buildDepartmentTree } from '@/utils'
 import {
-  buildPermissionTree,
+  createDefaultMenuPermissions,
   dataScopeOptions,
-  getAllPermissionIds,
+  menuPermissionsToIds,
 } from '@/constants/permission'
-import type { DataScopeType, SystemRole } from '@/types'
+import { DEFAULT_WORKFORCE_ENTERPRISE_ID, isUnassignedDepartment } from '@/constants/department'
+import type { DataScopeType, MenuPermissionEntry, SystemRole } from '@/types'
 
 const store = useAppStore()
+const { isPlatform, isEnterprise } = usePortal()
 
-const selectedRoleId = ref<string | null>(store.systemRoles[0]?.id ?? null)
-const configTab = ref<'function' | 'data'>('function')
+const platformTab = ref<'op_roles' | 'ent_roles'>('op_roles')
+const selectedEnterpriseId = ref(store.enterprises[0]?.id ?? '')
+
+const roleSource = computed(() => {
+  if (isEnterprise.value) {
+    return store.getEnterpriseRoles(store.currentEnterpriseId)
+  }
+  if (platformTab.value === 'ent_roles') {
+    return store.getEnterpriseRoles(selectedEnterpriseId.value)
+  }
+  return store.systemRoles.filter((r) => !r.rolePortal || r.rolePortal === 'platform')
+})
+
+const selectedRoleId = ref<string | null>(roleSource.value[0]?.id ?? null)
 const roleDialogVisible = ref(false)
 const editingRoleId = ref<string | null>(null)
+const permExpanded = ref(true)
 
-const checkedPermissionIds = ref<string[]>([])
+const menuPermissions = ref<MenuPermissionEntry[]>([])
 const dataScope = ref<DataScopeType>('department')
 const customDepartmentIds = ref<string[]>([])
 
@@ -27,49 +44,78 @@ const roleForm = ref({
   status: 'enabled' as 'enabled' | 'disabled',
 })
 
-const permissionTree = computed(() => buildPermissionTree())
-const allPermissionIds = getAllPermissionIds()
+const currentPortal = computed(() => {
+  if (isEnterprise.value) return 'enterprise' as const
+  if (platformTab.value === 'ent_roles') return 'enterprise' as const
+  return 'platform' as const
+})
+
+const dataScopeEnterpriseId = computed(() => {
+  if (isEnterprise.value) return store.currentEnterpriseId
+  if (isPlatform.value && platformTab.value === 'ent_roles') return selectedEnterpriseId.value
+  return DEFAULT_WORKFORCE_ENTERPRISE_ID
+})
+
+const scopedDepartments = computed(() =>
+  store
+    .getDepartmentsByEnterprise(dataScopeEnterpriseId.value)
+    .filter((d) => !isUnassignedDepartment(d.id)),
+)
 
 const roleList = computed(() =>
-  store.systemRoles.map((r) => ({
+  roleSource.value.map((r) => ({
     ...r,
     statusLabel: r.status === 'enabled' ? '启用' : '停用',
-    permissionCount: r.permissionIds.length,
     dataScopeLabel: dataScopeOptions.find((o) => o.value === r.dataScope)?.label ?? r.dataScope,
   })),
 )
 
 const selectedRole = computed(() =>
-  store.systemRoles.find((r) => r.id === selectedRoleId.value) ?? null,
+  roleSource.value.find((r) => r.id === selectedRoleId.value) ?? null,
 )
 
 const departmentTree = computed(() => {
   type DeptNode = { id: string; label: string; children?: DeptNode[] }
-  const build = (parentId: string | null): DeptNode[] =>
-    store.departments
-      .filter((d) => d.parentId === parentId)
-      .sort((a, b) => a.sort - b.sort)
-      .map((d) => {
-        const children = build(d.id)
-        return children.length ? { id: d.id, label: d.name, children } : { id: d.id, label: d.name }
-      })
-  return build(null)
+  const mapNode = (node: ReturnType<typeof buildDepartmentTree>[number]): DeptNode => ({
+    id: node.id,
+    label: node.name,
+    children: node.children.length ? node.children.map(mapNode) : undefined,
+  })
+  return buildDepartmentTree(scopedDepartments.value).map(mapNode)
 })
 
 function loadRoleConfig(role: SystemRole) {
-  checkedPermissionIds.value = [...role.permissionIds]
+  menuPermissions.value = role.menuPermissions?.length
+    ? role.menuPermissions.map((p) => ({ ...p }))
+    : createDefaultMenuPermissions(currentPortal.value)
   dataScope.value = role.dataScope
   customDepartmentIds.value = [...role.customDepartmentIds]
 }
 
+watch(roleSource, (list) => {
+  if (!list.find((r) => r.id === selectedRoleId.value)) {
+    selectedRoleId.value = list[0]?.id ?? null
+  }
+})
+
 watch(
   selectedRoleId,
   (id) => {
-    const role = store.systemRoles.find((r) => r.id === id)
+    const role = roleSource.value.find((r) => r.id === id)
     if (role) loadRoleConfig(role)
   },
   { immediate: true },
 )
+
+watch(platformTab, () => {
+  selectedRoleId.value = roleSource.value[0]?.id ?? null
+})
+
+watch(selectedEnterpriseId, () => {
+  if (platformTab.value === 'ent_roles') {
+    selectedRoleId.value = roleSource.value[0]?.id ?? null
+  }
+})
 
 function selectRole(id: string) {
   selectedRoleId.value = id
@@ -112,7 +158,15 @@ function saveRoleMeta() {
         code: roleForm.value.code.trim(),
         description: roleForm.value.description.trim(),
         status: roleForm.value.status,
-        permissionIds: ['perm_dashboard'],
+        permissionIds: menuPermissionsToIds(createDefaultMenuPermissions(currentPortal.value)),
+        menuPermissions: createDefaultMenuPermissions(currentPortal.value),
+        rolePortal: isEnterprise.value || platformTab.value === 'ent_roles' ? 'enterprise' : 'platform',
+        enterpriseId:
+          isEnterprise.value
+            ? store.currentEnterpriseId
+            : platformTab.value === 'ent_roles'
+              ? selectedEnterpriseId.value
+              : undefined,
         dataScope: 'department',
         customDepartmentIds: [],
       })
@@ -134,9 +188,12 @@ function savePermissions() {
   try {
     store.updateRolePermissions(
       selectedRoleId.value,
-      checkedPermissionIds.value,
+      menuPermissionsToIds(menuPermissions.value),
       dataScope.value,
       customDepartmentIds.value,
+      {
+        menuPermissions: menuPermissions.value.map((p) => ({ ...p })),
+      },
     )
     ElMessage.success('权限配置已保存')
   } catch (e) {
@@ -144,16 +201,20 @@ function savePermissions() {
   }
 }
 
-function checkAllPermissions() {
-  checkedPermissionIds.value = [...allPermissionIds]
+function checkAllView() {
+  menuPermissions.value = menuPermissions.value.map((p) => ({ ...p, view: true }))
 }
 
-function clearAllPermissions() {
-  checkedPermissionIds.value = ['perm_dashboard']
+function checkAllEdit() {
+  menuPermissions.value = menuPermissions.value.map((p) => ({ ...p, view: true, edit: true }))
 }
 
-function onPermissionCheck(_node: unknown, payload: { checkedKeys: string[] }) {
-  checkedPermissionIds.value = payload.checkedKeys
+function clearPermissions() {
+  menuPermissions.value = menuPermissions.value.map((p) => ({
+    ...p,
+    view: p.code === 'dashboard:view',
+    edit: false,
+  }))
 }
 
 function onDepartmentCheck(_node: unknown, payload: { checkedKeys: string[] }) {
@@ -174,11 +235,35 @@ async function removeRole(role: SystemRole) {
     await ElMessageBox.confirm(`确定删除角色「${role.name}」？`, '删除角色', { type: 'warning' })
     store.removeSystemRole(role.id)
     if (selectedRoleId.value === role.id) {
-      selectedRoleId.value = store.systemRoles[0]?.id ?? null
+      selectedRoleId.value = roleSource.value[0]?.id ?? null
     }
     ElMessage.success('已删除')
   } catch {
-    // cancelled or error handled in store
+    // cancelled
+  }
+}
+
+const pageTitle = computed(() => (isEnterprise.value ? '权限管理' : '权限管理'))
+const pageDesc = computed(() => {
+  if (isEnterprise.value) return '配置本企业角色功能权限（查看/编辑）与数据访问范围'
+  if (platformTab.value === 'ent_roles') {
+    const ent = store.enterprises.find((e) => e.id === selectedEnterpriseId.value)
+    return ent ? `企业端角色库 · ${ent.name} · 各企业独立配置` : '企业端角色库 · 各企业独立配置'
+  }
+  return '配置运营角色功能权限与数据范围（与企业端一致：部门/本人/自定义）'
+})
+
+function applyTemplate(templateId: string) {
+  if (!selectedEnterpriseId.value) {
+    ElMessage.warning('请先选择企业')
+    return
+  }
+  try {
+    store.applyRoleTemplateToEnterprise(templateId, selectedEnterpriseId.value)
+    ElMessage.success('已从模板同步角色配置')
+    selectedRoleId.value = roleSource.value[0]?.id ?? null
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '导入失败')
   }
 }
 </script>
@@ -187,10 +272,42 @@ async function removeRole(role: SystemRole) {
   <div class="page-card role-page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">角色权限</h2>
-        <p class="text-muted">配置后台功能权限与数据访问范围 · 共 {{ roleList.length }} 个角色</p>
+        <h2 class="page-title">{{ pageTitle }}</h2>
+        <p class="text-muted">{{ pageDesc }} · 共 {{ roleList.length }} 个角色</p>
       </div>
+      <div class="header-actions">
       <el-button type="primary" @click="openCreateRole">新建角色</el-button>
+      <el-dropdown
+        v-if="isPlatform && platformTab === 'ent_roles'"
+        trigger="click"
+        @command="applyTemplate"
+      >
+        <el-button>从模板导入</el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item
+              v-for="tpl in store.enterpriseRoleTemplates"
+              :key="tpl.id"
+              :command="tpl.id"
+            >
+              {{ tpl.name }}
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      </div>
+    </div>
+
+    <el-tabs v-if="isPlatform" v-model="platformTab" class="platform-tabs">
+      <el-tab-pane label="运营角色" name="op_roles" />
+      <el-tab-pane label="企业端角色库" name="ent_roles" />
+    </el-tabs>
+
+    <div v-if="isPlatform && platformTab === 'ent_roles'" class="ent-picker">
+      <span class="ent-picker-label">配置企业</span>
+      <el-select v-model="selectedEnterpriseId" filterable style="width: 320px">
+        <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
+      </el-select>
     </div>
 
     <div class="role-layout">
@@ -209,7 +326,7 @@ async function removeRole(role: SystemRole) {
             </el-tag>
           </div>
           <div class="role-meta">{{ role.code }} · {{ role.userCount }} 人</div>
-          <div class="role-meta">功能 {{ role.permissionCount }} · {{ role.dataScopeLabel }}</div>
+          <div class="role-meta">{{ role.dataScopeLabel }}</div>
           <el-tag v-if="role.isSystem" size="small" type="warning" class="sys-tag">内置</el-tag>
         </div>
       </aside>
@@ -240,77 +357,73 @@ async function removeRole(role: SystemRole) {
           </div>
         </div>
 
-        <el-tabs v-model="configTab">
-          <el-tab-pane label="功能权限" name="function">
-            <div class="perm-toolbar">
-              <span class="text-muted">勾选该角色可访问的菜单与操作权限</span>
-              <div>
-                <el-button size="small" @click="checkAllPermissions">全选</el-button>
-                <el-button size="small" @click="clearAllPermissions">清空</el-button>
-              </div>
-            </div>
+        <div class="perm-card data-card">
+          <h4>数据权限</h4>
+          <el-radio-group v-model="dataScope" class="scope-row">
+            <el-radio
+              v-for="opt in dataScopeOptions"
+              :key="opt.value"
+              :value="opt.value"
+              class="scope-inline"
+            >
+              {{ opt.label }}
+            </el-radio>
+          </el-radio-group>
+          <div v-if="dataScope === 'custom'" class="custom-dept">
             <el-tree
-              :key="`perm-${selectedRoleId}`"
-              :data="permissionTree"
+              :key="`dept-${selectedRoleId}-${dataScopeEnterpriseId}`"
+              :data="departmentTree"
               show-checkbox
               node-key="id"
               default-expand-all
-              :props="{ label: 'name', children: 'children' }"
-              :default-checked-keys="checkedPermissionIds"
-              @check="onPermissionCheck"
+              :default-checked-keys="customDepartmentIds"
+              @check="onDepartmentCheck"
             />
-            <div class="perm-summary">
-              已选 {{ checkedPermissionIds.length }} / {{ allPermissionIds.length }} 项权限
-            </div>
-          </el-tab-pane>
+          </div>
+        </div>
 
-          <el-tab-pane label="数据权限" name="data">
-            <p class="text-muted scope-tip">控制该角色在业务模块中可访问的数据范围</p>
-            <el-radio-group v-model="dataScope" class="scope-group">
-              <el-radio
-                v-for="opt in dataScopeOptions"
-                :key="opt.value"
-                :value="opt.value"
-                class="scope-radio"
-              >
-                <span class="scope-label">{{ opt.label }}</span>
-                <span class="scope-desc">{{ opt.desc }}</span>
-              </el-radio>
-            </el-radio-group>
-
-            <div v-if="dataScope === 'custom'" class="custom-dept">
-              <div class="custom-dept-title">指定部门</div>
-              <el-tree
-                :key="`dept-${selectedRoleId}`"
-                :data="departmentTree"
-                show-checkbox
-                node-key="id"
-                default-expand-all
-                :default-checked-keys="customDepartmentIds"
-                @check="onDepartmentCheck"
-              />
+        <div class="perm-card function-card">
+          <div class="perm-card-head">
+            <h4>功能权限</h4>
+            <div class="perm-toolbar-btns">
+              <el-button size="small" @click="checkAllView">全选查看</el-button>
+              <el-button size="small" @click="checkAllEdit">全选编辑</el-button>
+              <el-button size="small" @click="clearPermissions">清空</el-button>
+              <el-button size="small" text @click="permExpanded = !permExpanded">
+                {{ permExpanded ? '收起' : '展开' }}
+              </el-button>
             </div>
-          </el-tab-pane>
-        </el-tabs>
+          </div>
+          <el-table v-show="permExpanded" :data="menuPermissions" border size="small">
+            <el-table-column prop="module" label="模块" width="140" />
+            <el-table-column prop="name" label="菜单" min-width="160" />
+            <el-table-column label="查看 (v)" width="100" align="center">
+              <template #default="{ row }">
+                <el-checkbox v-model="row.view" />
+              </template>
+            </el-table-column>
+            <el-table-column label="编辑 (e)" width="100" align="center">
+              <template #default="{ row }">
+                <el-checkbox v-model="row.edit" :disabled="!row.view" @change="(v: boolean) => { if (v) row.view = true }" />
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
 
       <el-empty v-else description="请选择或新建角色" class="role-empty" />
     </div>
   </div>
 
-  <el-dialog
-    v-model="roleDialogVisible"
-    :title="editingRoleId ? '编辑角色' : '新建角色'"
-    width="480px"
-  >
+  <el-dialog v-model="roleDialogVisible" :title="editingRoleId ? '编辑角色' : '新建角色'" width="480px">
     <el-form label-width="80px">
       <el-form-item label="角色名称" required>
-        <el-input v-model="roleForm.name" placeholder="如：区域经理" />
+        <el-input v-model="roleForm.name" placeholder="如：招聘专员" />
       </el-form-item>
       <el-form-item label="角色编码" required>
         <el-input
           v-model="roleForm.code"
-          placeholder="如：region_manager"
+          placeholder="如：recruiter"
           :disabled="!!editingRoleId && selectedRole?.isSystem"
         />
       </el-form-item>
@@ -334,6 +447,40 @@ async function removeRole(role: SystemRole) {
 <style scoped>
 .role-page {
   min-height: calc(100vh - 140px);
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.platform-tabs {
+  margin-bottom: 12px;
+}
+
+.ent-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-radius: 8px;
+}
+
+.ent-picker-label {
+  font-size: 14px;
+  color: #606266;
+  white-space: nowrap;
 }
 
 .role-layout {
@@ -424,62 +571,52 @@ async function removeRole(role: SystemRole) {
   justify-content: flex-end;
 }
 
-.perm-toolbar {
+.perm-card {
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.perm-card h4 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.data-card {
+  background: #fafbff;
+}
+
+.perm-card-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
 }
 
-.perm-summary {
-  margin-top: 12px;
-  font-size: 13px;
-  color: #909399;
+.perm-card-head h4 {
+  margin: 0;
 }
 
-.scope-tip {
-  margin: 0 0 16px;
-}
-
-.scope-group {
+.perm-toolbar-btns {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 14px;
+  gap: 8px;
 }
 
-.scope-radio {
+.scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+
+.scope-inline {
   height: auto;
-  align-items: flex-start;
+  margin-right: 0;
 }
 
-.scope-radio :deep(.el-radio__label) {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  white-space: normal;
-  line-height: 1.4;
-}
-
-.scope-label {
-  font-weight: 600;
-  color: #303133;
-}
-
-.scope-desc {
-  font-size: 12px;
-  color: #909399;
-}
-
+.partial-ent,
 .custom-dept {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px dashed var(--app-border);
-}
-
-.custom-dept-title {
-  font-weight: 600;
-  margin-bottom: 12px;
+  margin-top: 12px;
 }
 
 .role-empty {

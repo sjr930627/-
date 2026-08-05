@@ -1,11 +1,10 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import { useMiniAppBack } from '@/composables/useMiniAppBack'
 import { useMiniWorkerTraining } from '@/composables/useMiniWorkerTraining'
 
 const store = useAppStore()
-const { goBack } = useMiniAppBack('/miniapp/profile')
 const { myCourses } = useMiniWorkerTraining()
 
 function startLearning(courseId: string) {
@@ -26,7 +25,7 @@ function takeExam(courseId: string) {
 <template>
   <div>
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/profile" />
       <div class="mini-nav-title">培训管理</div>
     </div>
     <div class="mini-page">

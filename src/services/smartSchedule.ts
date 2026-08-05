@@ -1,17 +1,26 @@
 import type {
+  AttendanceGroupCompliance,
   Employee,
   Holiday,
   LeaveRequest,
   ScheduleAssignment,
-  ScheduleRule,
   Shift,
   ShiftRecommendation,
   SmartScheduleResult,
   Team,
 } from '@/types'
 import { calcShiftHours, getMonthDays } from '@/utils'
-import { detectConflicts, isRestDay } from './schedule'
+import { detectComplianceConflicts } from '@/services/scheduleCompliance'
 import { getDatesBetween } from '@/services/attendance'
+import { getShiftDemandHeadcount } from '@/services/schedule'
+
+export interface ShiftDemandSlot {
+  shiftId: string
+  templateName: string
+  requiredHeadcount: number
+  weekendRequiredHeadcount?: number
+  holidayRequiredHeadcount?: number
+}
 
 export interface SmartScheduleOptions {
   teamId: string
@@ -19,9 +28,12 @@ export interface SmartScheduleOptions {
   month?: string
   startDate?: string
   endDate?: string
-  primaryShiftId: string
-  restShiftId: string
-  workPattern?: string[]
+  /** 参与排班的人员 */
+  employeeIds: string[]
+  /** 每日各班次人数需求 */
+  shiftDemands: ShiftDemandSlot[]
+  /** 按日期解析人数需求，优先于 shiftDemands 中的平/末/节默认值 */
+  getDateHeadcount?: (date: string, shiftId: string) => number
   preferEmployeePreference?: boolean
   balanceHours?: boolean
   respectLeave?: boolean
@@ -34,9 +46,10 @@ export function recommendEmployeesForShift(
   employees: Employee[],
   assignments: ScheduleAssignment[],
   shifts: Shift[],
-  holidays: Holiday[],
-  rule: ScheduleRule,
+  _holidays: Holiday[],
+  compliance: AttendanceGroupCompliance,
   requiredSkills: string[] = [],
+  excludeEmployeeIds: string[] = [],
 ): ShiftRecommendation[] {
   const shift = shifts.find((s) => s.id === shiftId)
   if (!shift) return []
@@ -56,6 +69,8 @@ export function recommendEmployeesForShift(
 
   return team.memberIds
     .map((employeeId) => {
+      if (excludeEmployeeIds.includes(employeeId)) return null
+
       const emp = employees.find((e) => e.id === employeeId)
       if (!emp || emp.status !== 'active') return null
 
@@ -72,19 +87,17 @@ export function recommendEmployeesForShift(
         reasons.push('当日不可用')
       }
 
-      const conflicts = detectConflicts(
+      const conflicts = detectComplianceConflicts(
         employeeId,
         date,
         shiftId,
         assignments,
-        employees,
         shifts,
-        holidays,
-        rule,
+        compliance,
       )
       if (conflicts.length > 0) {
         score -= conflicts.length * 20
-        reasons.push(`存在 ${conflicts.length} 项规则冲突`)
+        reasons.push(`存在 ${conflicts.length} 项工时红线预警`)
       }
 
       const hours = monthHours(employeeId)
@@ -123,13 +136,14 @@ export function generateSmartSchedule(
   holidays: Holiday[],
   leaveRequests: LeaveRequest[],
   existingAssignments: ScheduleAssignment[],
-  rule: ScheduleRule,
+  compliance: AttendanceGroupCompliance,
   options: SmartScheduleOptions,
 ): SmartScheduleResult {
-  const { teamId, primaryShiftId, restShiftId } = options
-  const preferPref = options.preferEmployeePreference !== false
-  const balanceHours = options.balanceHours !== false
+  const { teamId, employeeIds, shiftDemands, getDateHeadcount } = options
   const respectLeave = options.respectLeave !== false
+
+  const resolveDateHeadcount = (demand: ShiftDemandSlot, date: string) =>
+    getDateHeadcount?.(date, demand.shiftId) ?? getShiftDemandHeadcount(demand, date, holidays)
 
   let days: string[]
   if (options.startDate && options.endDate) {
@@ -141,82 +155,101 @@ export function generateSmartSchedule(
     return { assignments: [], conflictCount: 0, balancedHours: {}, message: '请指定排班区间' }
   }
 
-  const workPattern =
-    options.workPattern ??
-    ([primaryShiftId, primaryShiftId, primaryShiftId, primaryShiftId, primaryShiftId, restShiftId, restShiftId] as string[])
+  const activeDemands = shiftDemands.filter((d) => {
+    if (!shifts.some((s) => s.id === d.shiftId)) return false
+    if (getDateHeadcount) {
+      return days.some((date) => getDateHeadcount(date, d.shiftId) > 0)
+    }
+    return (
+      d.requiredHeadcount > 0 ||
+      (d.weekendRequiredHeadcount ?? 0) > 0 ||
+      (d.holidayRequiredHeadcount ?? 0) > 0
+    )
+  })
 
-  const month = days[0]?.slice(0, 7) ?? options.month ?? ''
-  const restShift = shifts.find((s) => s.id === restShiftId)
-  const primaryShift = shifts.find((s) => s.id === primaryShiftId)
-
-  if (!restShift || !primaryShift) {
-    return { assignments: [], conflictCount: 0, balancedHours: {}, message: '班次配置无效' }
+  if (!activeDemands.length) {
+    return { assignments: [], conflictCount: 0, balancedHours: {}, message: '请先配置每日班次需求' }
   }
+
+  if (!employeeIds.length) {
+    return { assignments: [], conflictCount: 0, balancedHours: {}, message: '请选择参与排班的人员' }
+  }
+
+  const poolTeam: Team = { ...team, memberIds: employeeIds }
 
   const approvedLeave = respectLeave ? leaveRequests.filter((r) => r.status === 'approved') : []
   const isLeave = (empId: string, date: string) =>
     approvedLeave.some((r) => r.employeeId === empId && date >= r.startDate && date <= r.endDate)
 
-  const monthHours = (empId: string) =>
-    existingAssignments
-      .filter((a) => a.employeeId === empId && a.date.startsWith(month))
-      .reduce((sum, a) => {
-        const s = shifts.find((sh) => sh.id === a.shiftId)
-        return s && s.code !== 'REST' ? sum + calcShiftHours(s) : sum
-      }, 0)
-
-  const avgHours =
-    team.memberIds.reduce((sum, id) => sum + monthHours(id), 0) / Math.max(team.memberIds.length, 1)
-
-  const draft: Omit<ScheduleAssignment, 'id' | 'published'>[] = []
   const otherAssignments = existingAssignments.filter(
     (a) =>
       !(
         a.teamId === teamId &&
         days.includes(a.date) &&
-        team.memberIds.includes(a.employeeId)
+        employeeIds.includes(a.employeeId)
       ),
   )
 
-  team.memberIds.forEach((employeeId, empIndex) => {
-    const emp = employees.find((e) => e.id === employeeId)
-    days.forEach((date, dayIndex) => {
-      let shiftId = restShiftId
-      if (!isRestDay(holidays, date, rule.weekendWork) && !isLeave(employeeId, date)) {
-        const preferred = preferPref ? emp?.preferredShiftIds.filter((id) => id !== restShiftId) ?? [] : []
-        if (preferred.length > 0) {
-          shiftId = preferred[(dayIndex + empIndex) % preferred.length]
-        } else {
-          shiftId = workPattern[(dayIndex + empIndex) % workPattern.length]
-        }
-        if (balanceHours && shiftId !== restShiftId) {
-          const hours = monthHours(employeeId)
-          if (hours > avgHours + 8) {
-            shiftId = restShiftId
-          }
-        }
-      }
-      draft.push({ employeeId, shiftId, date, teamId })
+  const draft: Omit<ScheduleAssignment, 'id' | 'published'>[] = []
+
+  days.forEach((date) => {
+    const assignedToday = new Set<string>()
+
+    activeDemands.forEach((demand) => {
+      const dateHeadcount = resolveDateHeadcount(demand, date)
+      if (dateHeadcount <= 0) return
+
+      const simulated = [
+        ...otherAssignments,
+        ...draft.map((d) => ({ ...d, id: 'sim', published: false as const })),
+      ]
+
+      const leaveExcluded = respectLeave
+        ? employeeIds.filter((id) => isLeave(id, date))
+        : []
+
+      const recommendations = recommendEmployeesForShift(
+        date,
+        demand.shiftId,
+        poolTeam,
+        employees,
+        simulated,
+        shifts,
+        holidays,
+        compliance,
+        [],
+        [...assignedToday, ...leaveExcluded],
+      )
+
+      const picked = recommendations
+        .filter((r) => {
+          const emp = employees.find((e) => e.id === r.employeeId)
+          return emp && !emp.unavailableDates.includes(date)
+        })
+        .slice(0, dateHeadcount)
+
+      picked.forEach(({ employeeId }) => {
+        assignedToday.add(employeeId)
+        draft.push({ employeeId, shiftId: demand.shiftId, date, teamId })
+      })
     })
   })
 
   const simulated = [...otherAssignments, ...draft.map((d) => ({ ...d, id: 'sim', published: false }))]
   let conflictCount = 0
   draft.forEach((d) => {
-    conflictCount += detectConflicts(
+    conflictCount += detectComplianceConflicts(
       d.employeeId,
       d.date,
       d.shiftId,
       simulated,
-      employees,
       shifts,
-      holidays,
-      rule,
+      compliance,
     ).length
   })
 
   const balancedHours: Record<string, number> = {}
-  team.memberIds.forEach((empId) => {
+  employeeIds.forEach((empId) => {
     balancedHours[empId] = draft
       .filter((d) => d.employeeId === empId)
       .reduce((sum, d) => {
@@ -225,11 +258,22 @@ export function generateSmartSchedule(
       }, 0)
   })
 
+  const totalNeeded = days.reduce((sum, date) => {
+    return (
+      sum +
+      activeDemands.reduce(
+        (daySum, d) => daySum + resolveDateHeadcount(d, date),
+        0,
+      )
+    )
+  }, 0)
+  const fillRate = totalNeeded ? Math.round((draft.length / totalNeeded) * 100) : 0
+
   return {
     assignments: draft,
     conflictCount,
     balancedHours,
-    message: `已生成 ${draft.length} 条排班，${conflictCount} 处规则冲突待确认`,
+    message: `已生成 ${draft.length} 条排班（需求满足率 ${fillRate}%），${conflictCount} 处工时红线预警待确认`,
   }
 }
 

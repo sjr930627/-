@@ -1,15 +1,14 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { useMiniAppBack } from '@/composables/useMiniAppBack'
 import { examQuestionTypeMap } from '@/constants/training'
 import { getExamQuestions, gradeExamAnswers } from '@/services/training'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
-const { goBack } = useMiniAppBack('/miniapp/training/exams')
 
 const courseId = computed(() => route.params.courseId as string)
 const attemptId = computed(() => route.params.attemptId as string)
@@ -54,7 +53,7 @@ function backToList() {
 <template>
   <div class="review-page">
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" type="button" @click="goBack">← 返回</button>
+      <MiniNavBack fallback="/miniapp/training/exams" />
       <div class="mini-nav-title">答题解析</div>
     </div>
 

@@ -25,5 +25,7 @@ app.use(ElementPlus, { locale: zhCn })
 const store = useAppStore()
 store.syncExceptions()
 store.syncRoleUserCounts()
+store.syncUnassignedDepartment()
+store.syncEmployeeStatuses()
 
 app.mount('#app')

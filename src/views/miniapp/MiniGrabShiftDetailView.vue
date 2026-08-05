@@ -1,19 +1,20 @@
 <script setup lang="ts">
+import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { getGrabShiftPostExtra, getGrabShiftSlotExtra } from '@/mock/miniappDetailSeed'
 
 const route = useRoute()
-const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 
 const teamId = computed(() => route.params.teamId as string)
 const subscribed = ref(false)
 const selectedSlotIds = ref<string[]>([])
+const reqExpanded = ref(true)
 
 const slots = computed(() =>
   store.grabShiftSlots
@@ -51,6 +52,30 @@ const isWhitelisted = computed(() =>
 const displayTags = computed(() => {
   if (!post.value) return []
   return post.value.tags.filter((t) => t !== '免审核' || isWhitelisted.value)
+})
+
+function parsePositionRequirement(text?: string) {
+  if (!text?.trim()) return null
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+  if (!lines.length) return null
+  return {
+    intro: lines[0],
+    duties: lines.length > 1 ? lines.slice(1) : [],
+    qualifications: [] as string[],
+  }
+}
+
+const requirementDetail = computed(() => {
+  const slot = slots.value[0]
+  const fromSlot = parsePositionRequirement(slot?.positionRequirement)
+  if (fromSlot) return fromSlot
+  return post.value?.requirementDetail ?? { intro: '', duties: [], qualifications: [] }
+})
+
+const skillRequirements = computed(() => {
+  const slot = slots.value[0]
+  if (slot?.requirements?.length) return slot.requirements
+  return post.value?.skillRequirements ?? []
 })
 
 const selectedCount = computed(() => selectedSlotIds.value.length)
@@ -106,7 +131,7 @@ function applySelected() {
 <template>
   <div class="detail-shell">
     <div class="mini-nav-bar">
-      <button class="mini-nav-back" @click="router.back()">←</button>
+      <MiniNavBack fallback="/miniapp/recommend" />
       <div class="mini-nav-title">抢班详情</div>
     </div>
 
@@ -135,11 +160,6 @@ function applySelected() {
       <section class="detail-section">
         <div class="detail-section-head">
           <span class="detail-section-title">共{{ slots.length }}班次</span>
-          <button type="button" class="detail-section-more">全部 ›</button>
-        </div>
-        <div class="detail-requirements">
-          <span class="detail-req-icon">✓</span>
-          <span>{{ post.requirements.join(' · ') }}</span>
         </div>
         <div class="shift-grid">
           <button
@@ -166,26 +186,55 @@ function applySelected() {
       </section>
 
       <section class="detail-section">
-        <div class="detail-section-head">
-          <span class="detail-section-title">灵工到岗体验</span>
-          <span class="detail-section-count">{{ post.reviewCount }}</span>
-          <button type="button" class="detail-section-more">全部 ›</button>
-        </div>
-        <div class="detail-review-tags">
-          <span v-for="t in post.reviewTags" :key="t.label" class="detail-review-tag">
-            {{ t.label }} {{ t.count }}
-          </span>
-        </div>
-        <div v-for="rv in post.reviews" :key="rv.id" class="detail-review-card">
-          <p class="detail-review-text">“{{ rv.text }}”</p>
-          <div class="detail-review-foot">
-            <div class="detail-review-user">
-              <span class="detail-avatar">{{ rv.userName.slice(0, 1) }}</span>
-              <span>{{ rv.userName }}</span>
-              <span class="detail-review-badge">该品牌出勤{{ rv.brandCount }}次</span>
-            </div>
-            <span v-if="rv.imageCount" class="detail-review-img">+{{ rv.imageCount }}</span>
+        <div class="detail-section-title solo">岗位要求</div>
+        <p v-if="requirementDetail.intro" class="req-intro">
+          {{ requirementDetail.intro }}
+        </p>
+        <template v-if="reqExpanded && requirementDetail.duties.length">
+          <div class="req-block">
+            <div class="req-block-title">工作职责</div>
+            <ol class="req-list">
+              <li v-for="(item, idx) in requirementDetail.duties" :key="`d-${idx}`">
+                {{ item }}
+              </li>
+            </ol>
           </div>
+        </template>
+        <button
+          v-if="requirementDetail.duties.length"
+          type="button"
+          class="req-toggle"
+          @click="reqExpanded = !reqExpanded"
+        >
+          {{ reqExpanded ? '收起' : '展开' }}
+          <span class="req-toggle-icon">{{ reqExpanded ? '∧' : '∨' }}</span>
+        </button>
+      </section>
+
+      <section class="detail-section">
+        <div class="detail-section-title solo">技能要求</div>
+        <ol v-if="skillRequirements.length" class="req-list skill-list">
+          <li v-for="(item, idx) in skillRequirements" :key="`s-${idx}`">
+            {{ item }}
+          </li>
+        </ol>
+        <p v-else class="text-muted-mini">暂无技能要求</p>
+      </section>
+
+      <section class="detail-section">
+        <div class="detail-section-title solo">报名贴士</div>
+        <div
+          v-for="(group, gIdx) in post.registrationTips"
+          :key="group.title"
+          class="rule-group"
+          :class="{ 'rule-group-divider': gIdx > 0 }"
+        >
+          <div class="rule-group-title">{{ group.title }}</div>
+          <div v-for="item in group.items" :key="item.label" class="rule-row">
+            <span class="rule-label">{{ item.label }}</span>
+            <span class="rule-value">{{ item.value }}</span>
+          </div>
+          <p v-if="group.note" class="rule-note">注：{{ group.note }}</p>
         </div>
       </section>
     </div>
@@ -328,6 +377,10 @@ function applySelected() {
   color: #1a1a1a;
 }
 
+.detail-section-title.solo {
+  margin-bottom: 12px;
+}
+
 .detail-section-count {
   font-size: 14px;
   color: #999;
@@ -342,19 +395,102 @@ function applySelected() {
   cursor: pointer;
 }
 
-.detail-requirements {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
+.req-intro {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  line-height: 1.6;
+}
+
+.req-block {
   margin-bottom: 12px;
-  font-size: 12px;
+}
+
+.req-block-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.req-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
   color: #666;
+  line-height: 1.7;
+}
+
+.req-list li + li {
+  margin-top: 6px;
+}
+
+.skill-list {
+  padding-left: 18px;
+}
+
+.text-muted-mini {
+  margin: 0;
+  font-size: 13px;
+  color: #999;
+}
+
+.req-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  border: none;
+  background: none;
+  color: var(--app-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.req-toggle-icon {
+  font-size: 12px;
+}
+
+.rule-group-divider {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.rule-group-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-bottom: 10px;
+}
+
+.rule-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
   line-height: 1.5;
 }
 
-.detail-req-icon {
-  color: var(--app-primary);
-  font-weight: 700;
+.rule-label {
+  color: #666;
+  flex-shrink: 0;
+}
+
+.rule-value {
+  color: #999;
+  text-align: right;
+}
+
+.rule-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
 }
 
 .shift-grid {
@@ -430,77 +566,7 @@ function applySelected() {
   margin-top: 8px;
   font-size: 18px;
   font-weight: 700;
-  color: var(--app-primary);
-}
-
-.detail-review-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.detail-review-tag {
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #f5f5f5;
-  font-size: 12px;
-  color: #666;
-}
-
-.detail-review-card {
-  padding: 12px 0;
-  border-top: 1px solid #f5f5f5;
-}
-
-.detail-review-text {
-  margin: 0;
-  font-size: 14px;
-  color: #333;
-  line-height: 1.6;
-}
-
-.detail-review-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 10px;
-}
-
-.detail-review-user {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #666;
-}
-
-.detail-avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #ffe8e8;
-  color: #e60012;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.detail-review-badge {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #f5f5f5;
-  font-size: 10px;
-}
-
-.detail-review-img {
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #f0f0f0;
-  font-size: 11px;
-  color: #999;
+  color: #ef4444;
 }
 
 .detail-footer-shift {
