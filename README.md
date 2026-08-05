@@ -23,6 +23,21 @@ Phase 1–3 完整演示：排班 → 考勤 → 审批 → 薪酬 → 分析。
 - **薪酬联动** `/payroll` — 考勤算薪、CSV 导出、ERP 数据包、集成日志
 - **数据分析** `/analytics` — 部门出勤、排班模式、人力成本趋势
 
+## 在线演示
+
+GitHub Pages 演示地址：
+
+**https://sjr930627.github.io/-/**
+
+| 入口 | 链接 |
+|------|------|
+| 三端门户 | https://sjr930627.github.io/-/portals |
+| 运营后台 | https://sjr930627.github.io/-/dashboard |
+| 企业端 | https://sjr930627.github.io/-/enterprise/dashboard |
+| 灵工小程序 | https://sjr930627.github.io/-/miniapp/login |
+
+详细演示脚本见 [`docs/DEMO.md`](docs/DEMO.md)。`main` 分支推送后自动重新部署。
+
 ## 快速开始
 
 ```bash
