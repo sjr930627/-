@@ -6,6 +6,20 @@
 
 ## 1. 环境准备
 
+### 在线演示（GitHub Pages）
+
+| 项 | 链接 |
+|---|---|
+| **演示首页** | https://sjr930627.github.io/-/ |
+| 三端入口 | https://sjr930627.github.io/-/portals |
+| 运营后台 | https://sjr930627.github.io/-/dashboard |
+| 企业端 | https://sjr930627.github.io/-/enterprise/dashboard |
+| 灵工小程序 | https://sjr930627.github.io/-/miniapp/login |
+
+> 仓库开启 GitHub Pages（`main` 推送自动部署）。若深链首次打开为空白，可先打开首页再点菜单进入。
+
+### 本地启动
+
 ```bash
 cd shift-attendance-admin
 npm install
