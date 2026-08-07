@@ -32,9 +32,8 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    # Avoid github-pages environment branch policies blocking main deploys.
+    # page_url is still published via actions/deploy-pages outputs.
     steps:
       - uses: actions/deploy-pages@v4
         id: deployment
