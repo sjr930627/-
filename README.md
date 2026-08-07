@@ -31,10 +31,11 @@ GitHub Pages 演示地址：
 
 | 入口 | 链接 |
 |------|------|
-| 三端门户 | https://sjr930627.github.io/-/portals |
+| 多端门户 | https://sjr930627.github.io/-/portals |
 | 运营后台 | https://sjr930627.github.io/-/dashboard |
 | 企业端 | https://sjr930627.github.io/-/enterprise/dashboard |
 | 灵工小程序 | https://sjr930627.github.io/-/miniapp/login |
+| 企业小程序 | https://sjr930627.github.io/-/enterprise-miniapp/login |
 
 详细演示脚本见 [`docs/DEMO.md`](docs/DEMO.md)。`main` 分支推送后自动重新部署。
 

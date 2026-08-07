@@ -1368,6 +1368,9 @@ export type RecruitmentLeadStatus =
 export type BackgroundCheckStatus = 'not_started' | 'in_progress' | 'completed'
 export type MedicalCheckStatus = 'not_started' | 'in_progress' | 'completed'
 
+/** 招聘资质审核（无犯罪证明 / 健康证） */
+export type RecruitmentQualStatus = 'pending' | 'approved' | 'rejected' | 'missing'
+
 export interface RecruitmentLeadExt {
   deviated?: boolean
   deviateReason?: string
@@ -1375,6 +1378,12 @@ export interface RecruitmentLeadExt {
   expectedSalary?: string
   offerSalary?: string
   flowLog?: { at: string; from: string; to: string; note?: string }[]
+  /** 无犯罪证明审核 */
+  criminalRecordStatus?: RecruitmentQualStatus
+  criminalRecordNote?: string
+  /** 健康证审核 */
+  healthCertStatus?: RecruitmentQualStatus
+  healthCertNote?: string
 }
 
 /** 岗位出勤时间要求（对齐小程序岗位详情） */

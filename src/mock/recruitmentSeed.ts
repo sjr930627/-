@@ -253,7 +253,7 @@ export const seedRecruitmentLeads: RecruitmentLead[] = [
     phone: '139****6612',
     position: '店员',
     source: '内部推荐',
-    status: 'feedback_pending',
+    status: 'background_check',
     currentRound: 1,
     totalRounds: 1,
     interviewDate: '2026-07-26',
@@ -261,6 +261,12 @@ export const seedRecruitmentLeads: RecruitmentLead[] = [
     talentId: 'tal_002',
     createdAt: '2026-07-16T08:00:00.000Z',
     updatedAt: '2026-07-26T11:00:00.000Z',
+    bgStatus: 'in_progress',
+    ext: {
+      criminalRecordStatus: 'pending',
+      healthCertStatus: 'approved',
+      healthCertNote: '健康证有效期内',
+    },
   },
   {
     id: 'lead_003',
@@ -355,6 +361,10 @@ export const seedRecruitmentLeads: RecruitmentLead[] = [
     lastFollowUpAt: '2026-07-25T14:00:00.000Z',
     createdAt: '2026-07-15T08:00:00.000Z',
     updatedAt: '2026-07-26T11:00:00.000Z',
+    ext: {
+      criminalRecordStatus: 'pending',
+      healthCertStatus: 'pending',
+    },
   },
   {
     id: 'lead_009',

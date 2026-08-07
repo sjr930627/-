@@ -113,14 +113,23 @@ function submitCorrection() {
     ElMessage.warning('工时不能为负数')
     return
   }
-  store.setWorkHoursCorrection(
-    correctionTarget.value.employeeId,
-    correctionTarget.value.date,
-    correctionForm.value.workHours,
-    correctionForm.value.note.trim() || undefined,
-  )
-  ElMessage.success('工时已矫正')
-  correctionVisible.value = false
+  const note = correctionForm.value.note.trim()
+  if (!note) {
+    ElMessage.warning('工时确认/矫正必须填写具体原因')
+    return
+  }
+  try {
+    store.setWorkHoursCorrection(
+      correctionTarget.value.employeeId,
+      correctionTarget.value.date,
+      correctionForm.value.workHours,
+      note,
+    )
+    ElMessage.success('工时已矫正')
+    correctionVisible.value = false
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  }
 }
 </script>
 

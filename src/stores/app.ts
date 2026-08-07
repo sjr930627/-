@@ -1275,11 +1275,15 @@ export const useAppStore = defineStore('app', {
       workHours: number,
       note?: string,
     ) {
+      const reason = note?.trim()
+      if (!reason) {
+        throw new Error('工时确认/矫正必须填写具体原因')
+      }
       const key = `${employeeId}_${date}`
       this.manualOverrides[key] = {
         ...this.manualOverrides[key],
         workHours,
-        note: note ?? this.manualOverrides[key]?.note,
+        note: reason,
       }
       this.persist('manualOverrides')
     },

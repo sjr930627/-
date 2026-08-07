@@ -28,13 +28,21 @@ const portals = [
     color: '#059669',
     icon: 'Iphone',
   },
+  {
+    key: 'enterprise-miniapp',
+    title: '企业小程序',
+    desc: '企业侧招聘发布与进度、资质审核、排班抢班、考勤异常与工时确认',
+    path: '/enterprise-miniapp/workbench',
+    color: '#7c3aed',
+    icon: 'Cellphone',
+  },
 ]
 </script>
 
 <template>
   <div class="portal-home">
     <div class="portal-hero">
-      <h1>灵工平台 · 三端 Demo</h1>
+      <h1>灵工平台 · 多端 Demo</h1>
       <p>请选择要进入的端侧环境（数据互通，角色权限不同）</p>
     </div>
     <div class="portal-grid">

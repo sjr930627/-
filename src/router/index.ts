@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import PlatformLayout from '@/layouts/PlatformLayout.vue'
 import EnterpriseLayout from '@/layouts/EnterpriseLayout.vue'
 import { isMiniAppAuthed, isMiniAppOnboardingComplete } from '@/composables/useMiniAppAuth'
+import { isEnterpriseMiniAuthed } from '@/composables/useEnterpriseMiniAuth'
 
 const sharedOpsRoutes: RouteRecordRaw[] = [
   {
@@ -827,6 +828,85 @@ const router = createRouter({
         },
       ],
     },
+    {
+      path: '/enterprise-miniapp',
+      component: () => import('@/layouts/EnterpriseMiniAppLayout.vue'),
+      redirect: '/enterprise-miniapp/workbench',
+      children: [
+        {
+          path: 'login',
+          name: 'EntMiniLogin',
+          component: () => import('@/views/enterprise-miniapp/EntMiniLoginView.vue'),
+          meta: { title: '登录', entMiniTab: false, entMiniPublic: true },
+        },
+        {
+          path: 'workbench',
+          name: 'EntMiniWorkbench',
+          component: () => import('@/views/enterprise-miniapp/EntMiniWorkbenchView.vue'),
+          meta: { title: '工作台', entMiniTab: true },
+        },
+        {
+          path: 'recruitment',
+          name: 'EntMiniRecruitment',
+          component: () => import('@/views/enterprise-miniapp/EntMiniRecruitmentView.vue'),
+          meta: { title: '招聘管理', entMiniTab: true },
+        },
+        {
+          path: 'recruitment/publish',
+          name: 'EntMiniPublish',
+          component: () => import('@/views/enterprise-miniapp/EntMiniPublishView.vue'),
+          meta: { title: '发布招聘', entMiniTab: false },
+        },
+        {
+          path: 'recruitment/progress',
+          name: 'EntMiniProgress',
+          component: () => import('@/views/enterprise-miniapp/EntMiniProgressView.vue'),
+          meta: { title: '招聘进度', entMiniTab: false },
+        },
+        {
+          path: 'recruitment/interview',
+          name: 'EntMiniInterview',
+          component: () => import('@/views/enterprise-miniapp/EntMiniInterviewView.vue'),
+          meta: { title: '面试进度', entMiniTab: false },
+        },
+        {
+          path: 'recruitment/qual',
+          name: 'EntMiniQual',
+          component: () => import('@/views/enterprise-miniapp/EntMiniQualView.vue'),
+          meta: { title: '资质审核', entMiniTab: false },
+        },
+        {
+          path: 'schedule',
+          name: 'EntMiniSchedule',
+          component: () => import('@/views/enterprise-miniapp/EntMiniScheduleView.vue'),
+          meta: { title: '排班管理', entMiniTab: true },
+        },
+        {
+          path: 'grab',
+          name: 'EntMiniGrab',
+          component: () => import('@/views/enterprise-miniapp/EntMiniGrabShiftView.vue'),
+          meta: { title: '发布抢班', entMiniTab: false },
+        },
+        {
+          path: 'exceptions',
+          name: 'EntMiniExceptions',
+          component: () => import('@/views/enterprise-miniapp/EntMiniExceptionView.vue'),
+          meta: { title: '考勤异常', entMiniTab: false },
+        },
+        {
+          path: 'hours',
+          name: 'EntMiniHours',
+          component: () => import('@/views/enterprise-miniapp/EntMiniHoursView.vue'),
+          meta: { title: '工时确认', entMiniTab: false },
+        },
+        {
+          path: 'profile',
+          name: 'EntMiniProfile',
+          component: () => import('@/views/enterprise-miniapp/EntMiniProfileView.vue'),
+          meta: { title: '我的', entMiniTab: true },
+        },
+      ],
+    },
     // legacy redirects
     { path: '/partnership', redirect: '/enterprise/partnership' },
     { path: '/enterprise/task-types', redirect: '/enterprise/task/types' },
@@ -839,6 +919,20 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  if (to.path.startsWith('/enterprise-miniapp')) {
+    const isPublic = to.meta.entMiniPublic === true
+    if (isPublic) {
+      if (isEnterpriseMiniAuthed() && to.path === '/enterprise-miniapp/login') {
+        return '/enterprise-miniapp/workbench'
+      }
+      return true
+    }
+    if (!isEnterpriseMiniAuthed()) {
+      return { path: '/enterprise-miniapp/login', query: { redirect: to.fullPath } }
+    }
+    return true
+  }
+
   if (!to.path.startsWith('/miniapp')) return true
 
   const isPublic = to.meta.miniPublic === true
@@ -867,15 +961,17 @@ router.beforeEach((to) => {
 })
 
 router.afterEach((to) => {
-  const suffix = to.path.startsWith('/miniapp')
-    ? '灵工小程序'
-    : to.path.startsWith('/enterprise')
-      ? '企业端'
-      : to.path.startsWith('/portals')
-        ? '三端入口'
-        : to.path.startsWith('/bi')
-          ? '数据监控'
-          : '运营后台'
+  const suffix = to.path.startsWith('/enterprise-miniapp')
+    ? '企业小程序'
+    : to.path.startsWith('/miniapp')
+      ? '灵工小程序'
+      : to.path.startsWith('/enterprise')
+        ? '企业端'
+        : to.path.startsWith('/portals')
+          ? '多端入口'
+          : to.path.startsWith('/bi')
+            ? '数据监控'
+            : '运营后台'
   document.title = `${to.meta.title ?? '管理后台'} - ${suffix}`
 })
 
