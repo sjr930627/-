@@ -13,9 +13,10 @@ import {
   invoiceStats,
   invoiceTypeMap,
   normalizeInvoiceType,
+  profilesForEnterprise,
   resolveInvoiceStatusMeta,
 } from '@/constants/invoice'
-import type { InvoiceApplication, InvoiceStatus } from '@/types'
+import type { EnterpriseInvoiceProfile, InvoiceApplication, InvoiceStatus, InvoiceType } from '@/types'
 
 const store = useAppStore()
 const router = useRouter()
@@ -26,6 +27,24 @@ const keyword = ref('')
 const uploadVisible = ref(false)
 const uploadTargetId = ref<string | null>(null)
 const uploadFileName = ref('')
+
+const profileDialogVisible = ref(false)
+const profileSaving = ref(false)
+const editingProfileId = ref<string | null>(null)
+const invoiceTypeOptions = (
+  Object.entries(invoiceTypeMap) as [InvoiceType, string][]
+).map(([value, label]) => ({ value, label }))
+const profileForm = ref({
+  title: '',
+  taxNo: '',
+  address: '',
+  phone: '',
+  bankName: '',
+  bankAccount: '',
+  defaultInvoiceType: 'electronic_special' as InvoiceType,
+  isDefault: false,
+  remark: '',
+})
 
 const enterpriseId = computed(() =>
   isEnterprise.value ? store.currentEnterprise?.id : undefined,
@@ -40,7 +59,11 @@ const stats = computed(() =>
   invoiceStats(store.invoiceApplications, store.settlementBills, enterpriseId.value),
 )
 
-const invoiceProfile = computed(() =>
+const invoiceProfiles = computed(() =>
+  profilesForEnterprise(store.enterpriseInvoiceProfiles, enterpriseId.value),
+)
+
+const defaultProfile = computed(() =>
   defaultInvoiceProfile(store.enterpriseInvoiceProfiles, enterpriseId.value),
 )
 
@@ -136,6 +159,83 @@ function downloadInvoice(row: InvoiceApplication) {
     ElMessage.success(`正在下载 ${row.applicationNo} 发票文件（演示）`)
   }
 }
+
+function resetProfileForm() {
+  editingProfileId.value = null
+  profileForm.value = {
+    title: store.currentEnterprise?.name ?? '',
+    taxNo: store.currentEnterprise?.creditCode ?? '',
+    address: '',
+    phone: '',
+    bankName: '',
+    bankAccount: '',
+    defaultInvoiceType: 'electronic_special',
+    isDefault: invoiceProfiles.value.length === 0,
+    remark: '',
+  }
+}
+
+function openCreateProfile() {
+  resetProfileForm()
+  profileDialogVisible.value = true
+}
+
+function openEditProfile(profile: EnterpriseInvoiceProfile) {
+  editingProfileId.value = profile.id
+  profileForm.value = {
+    title: profile.title,
+    taxNo: profile.taxNo,
+    address: profile.address,
+    phone: profile.phone,
+    bankName: profile.bankName,
+    bankAccount: profile.bankAccount,
+    defaultInvoiceType: normalizeInvoiceType(profile.defaultInvoiceType),
+    isDefault: !!profile.isDefault,
+    remark: profile.remark ?? '',
+  }
+  profileDialogVisible.value = true
+}
+
+async function saveProfile() {
+  if (!enterpriseId.value) return
+  profileSaving.value = true
+  try {
+    store.saveEnterpriseInvoiceProfile({
+      id: editingProfileId.value ?? undefined,
+      enterpriseId: enterpriseId.value,
+      ...profileForm.value,
+    })
+    profileDialogVisible.value = false
+    ElMessage.success(editingProfileId.value ? '抬头已更新' : '抬头已新增')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    profileSaving.value = false
+  }
+}
+
+function setDefaultProfile(profile: EnterpriseInvoiceProfile) {
+  try {
+    store.setDefaultEnterpriseInvoiceProfile(profile.id)
+    ElMessage.success('已设为默认抬头')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+async function removeProfile(profile: EnterpriseInvoiceProfile) {
+  try {
+    await ElMessageBox.confirm(`确认删除抬头「${profile.title}」？`, '删除抬头', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+    store.deleteEnterpriseInvoiceProfile(profile.id)
+    ElMessage.success('已删除')
+  } catch {
+    // cancelled
+  }
+}
 </script>
 
 <template>
@@ -213,14 +313,55 @@ function downloadInvoice(row: InvoiceApplication) {
       </el-col>
       <el-col :span="isEnterprise ? 10 : 24">
         <div class="panel-card">
-          <div class="panel-title">开票信息</div>
-          <template v-if="invoiceProfile">
+          <div class="panel-title-row">
+            <div class="panel-title">开票抬头（付款主体）</div>
+            <el-button
+              v-if="isEnterprise"
+              link
+              type="primary"
+              @click="openCreateProfile"
+            >
+              新增抬头
+            </el-button>
+          </div>
+          <template v-if="isEnterprise">
+            <el-table
+              :data="invoiceProfiles"
+              size="small"
+              border
+              empty-text="暂无开票抬头，请先新增"
+            >
+              <el-table-column prop="title" label="付款主体/抬头" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="taxNo" label="信用代码" min-width="140" show-overflow-tooltip />
+              <el-table-column label="默认" width="70" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.isDefault" size="small" type="success">默认</el-tag>
+                  <span v-else class="text-muted">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="150" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openEditProfile(row)">编辑</el-button>
+                  <el-button
+                    v-if="!row.isDefault"
+                    link
+                    type="primary"
+                    @click="setDefaultProfile(row)"
+                  >
+                    默认
+                  </el-button>
+                  <el-button link type="danger" @click="removeProfile(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+          <template v-else-if="defaultProfile">
             <dl class="profile-inline">
-              <div><dt>企业名称</dt><dd>{{ invoiceProfile.title }}</dd></div>
-              <div><dt>纳税人识别号</dt><dd>{{ invoiceProfile.taxNo }}</dd></div>
-              <div><dt>默认发票类型</dt><dd>{{ invoiceTypeMap[normalizeInvoiceType(invoiceProfile.defaultInvoiceType)] }}</dd></div>
-              <div><dt>开户银行</dt><dd>{{ invoiceProfile.bankName }}</dd></div>
-              <div><dt>银行账号</dt><dd>{{ invoiceProfile.bankAccount }}</dd></div>
+              <div><dt>企业名称</dt><dd>{{ defaultProfile.title }}</dd></div>
+              <div><dt>纳税人识别号</dt><dd>{{ defaultProfile.taxNo }}</dd></div>
+              <div><dt>默认发票类型</dt><dd>{{ invoiceTypeMap[normalizeInvoiceType(defaultProfile.defaultInvoiceType)] }}</dd></div>
+              <div><dt>开户银行</dt><dd>{{ defaultProfile.bankName }}</dd></div>
+              <div><dt>银行账号</dt><dd>{{ defaultProfile.bankAccount }}</dd></div>
             </dl>
           </template>
         </div>
@@ -320,6 +461,54 @@ function downloadInvoice(row: InvoiceApplication) {
       <el-button type="primary" @click="confirmUpload">确认上传</el-button>
     </template>
   </el-dialog>
+
+  <el-dialog
+    v-model="profileDialogVisible"
+    :title="editingProfileId ? '编辑开票抬头' : '新增开票抬头'"
+    width="560px"
+    destroy-on-close
+  >
+    <el-form label-width="110px">
+      <el-form-item label="发票抬头" required>
+        <el-input v-model="profileForm.title" placeholder="付款主体 / 开票企业名称" maxlength="100" />
+      </el-form-item>
+      <el-form-item label="纳税人识别号" required>
+        <el-input v-model="profileForm.taxNo" placeholder="统一社会信用代码" maxlength="32" />
+      </el-form-item>
+      <el-form-item label="开户银行">
+        <el-input v-model="profileForm.bankName" placeholder="选填" maxlength="80" />
+      </el-form-item>
+      <el-form-item label="银行账号">
+        <el-input v-model="profileForm.bankAccount" placeholder="选填" maxlength="40" />
+      </el-form-item>
+      <el-form-item label="注册地址">
+        <el-input v-model="profileForm.address" placeholder="选填" maxlength="120" />
+      </el-form-item>
+      <el-form-item label="电话">
+        <el-input v-model="profileForm.phone" placeholder="选填" maxlength="30" />
+      </el-form-item>
+      <el-form-item label="默认发票类型">
+        <el-select v-model="profileForm.defaultInvoiceType" style="width: 100%">
+          <el-option
+            v-for="item in invoiceTypeOptions"
+            :key="item.value"
+            :label="item.label"
+            :value="item.value"
+          />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="备注">
+        <el-input v-model="profileForm.remark" placeholder="如：总部主体 / 分公司" maxlength="80" />
+      </el-form-item>
+      <el-form-item v-if="!editingProfileId" label="设为默认">
+        <el-switch v-model="profileForm.isDefault" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="profileDialogVisible = false">取消</el-button>
+      <el-button type="primary" :loading="profileSaving" @click="saveProfile">保存</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -388,6 +577,18 @@ function downloadInvoice(row: InvoiceApplication) {
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 14px;
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.panel-title-row .panel-title {
+  margin-bottom: 0;
 }
 
 .progress-bar {

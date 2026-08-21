@@ -52,9 +52,29 @@ export function getExamEligibilityLabel(
 ) {
   const progress = getLearningProgress(record, course)
   if (progress < 100) return `待解锁（学习 ${progress}%）`
-  if (examPassed === true) return `通过 ${examScore ?? '-'}分`
-  if (examPassed === false) return `未通过 ${examScore ?? 0}分`
-  return '可考试'
+  if (examPassed === true) {
+    const hist = record.historicalExam ? ' · 历史考核' : ''
+    return `考核通过：${examScore ?? '-'}分${hist}`
+  }
+  if (examPassed === false) {
+    const hist = record.historicalExam ? ' · 历史考核' : ''
+    return `未通过${examScore != null ? `：${examScore}分` : ''}${hist}`
+  }
+  return '待考核'
+}
+
+/** 考核数据明细用状态文案 */
+export function getExamDetailStatusLabel(params: {
+  progress: number
+  canTake: boolean
+  hasAttempt: boolean
+  passed?: boolean
+}): string {
+  if (params.progress < 100) return `待解锁（学习${params.progress}%）`
+  if (params.canTake && !params.hasAttempt) return '可考试'
+  if (!params.hasAttempt) return '未考核'
+  if (params.canTake) return '可考试'
+  return '不可重考'
 }
 
 export function canEmployeeTakeExam(

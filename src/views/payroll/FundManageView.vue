@@ -9,18 +9,33 @@ import {
   fundTransactionStatusMap,
   fundTransactionTypeMap,
 } from '@/constants/fundManage'
-import { formatAccountConfigSummary, isIncomeTransaction } from '@/services/fundManagement'
-import type { FundAccountType, ProviderFundAccount } from '@/types'
+import { formatIncomeDate, formatIncomeDateTime } from '@/constants/miniapp'
+import { formatAccountConfigSummary, isIncomeTransaction, resolveFundAccountNo } from '@/services/fundManagement'
+import {
+  buildWorkerFundAccounts,
+  collectWorkerIncomeDetailRows,
+  collectWorkerWithdrawals,
+  type WorkerFundAccountRow,
+} from '@/services/workerFundManage'
+import type { FundAccountType, FundTransactionType, ProviderFundAccount } from '@/types'
 
 const store = useAppStore()
 
+const mainTab = ref<'provider' | 'worker'>('provider')
 const providerId = ref('sp_zhongqin')
-const activeTab = ref<'accounts' | 'transactions'>('accounts')
+const activeTab = ref<'accounts' | 'transactions' | 'failed'>('accounts')
 const accountDialogVisible = ref(false)
 const accountFormRef = ref<FormInstance>()
 const editingAccountId = ref<string | null>(null)
-const txTypeFilter = ref<'all' | 'alipay' | 'cmb'>('all')
+const txAccountFilter = ref<string>('all')
+const txFlowTypeFilter = ref<'all' | FundTransactionType>('all')
 const txKeyword = ref('')
+const failedKeyword = ref('')
+
+const workerKeyword = ref('')
+const workerDetailVisible = ref(false)
+const selectedWorker = ref<WorkerFundAccountRow | null>(null)
+const workerDetailTab = ref<'pending' | 'settled' | 'withdrawals'>('pending')
 
 const providerOptions = computed(() =>
   store.serviceProviders.map((item) => ({
@@ -65,17 +80,47 @@ const accountRows = computed(() =>
     typeMeta: fundAccountTypeMap[account.accountType],
     statusMeta: fundAccountStatusMap[account.status],
     configSummary: formatAccountConfigSummary(account),
+    accountNo: resolveFundAccountNo(account),
     balanceLabel: formatFundAmount(account.balance),
   })),
 )
 
+function mapTransactionRow(transaction: (typeof store.fundTransactions)[number]) {
+  const account = store.providerFundAccounts.find((item) => item.id === transaction.accountId)
+  const typeMeta = fundTransactionTypeMap[transaction.type] ?? { label: transaction.type }
+  const statusMeta = fundTransactionStatusMap[transaction.status]
+  const signedAmount = isIncomeTransaction(transaction)
+    ? transaction.amount
+    : -transaction.amount
+  return {
+    ...transaction,
+    accountName: account?.name ?? '—',
+    accountNo: resolveFundAccountNo(account),
+    typeMeta,
+    statusMeta,
+    amountLabel: `${signedAmount >= 0 ? '+' : '-'}${formatFundAmount(Math.abs(transaction.amount))}`,
+    amountClass: signedAmount >= 0 ? 'amount-in' : 'amount-out',
+    balanceLabel: formatFundAmount(transaction.balanceAfter),
+    createdAtLabel: new Date(transaction.createdAt).toLocaleString('zh-CN'),
+    counterpartyLabel: transaction.counterparty || '—',
+    counterpartyAccountLabel: transaction.counterpartyAccount || '—',
+    failReasonLabel: transaction.failReason || '—',
+  }
+}
+
+const providerTransactions = computed(() =>
+  store.getFundTransactionsByProvider(providerId.value),
+)
+
 const transactionRows = computed(() =>
-  store
-    .getFundTransactionsByProvider(providerId.value)
+  providerTransactions.value
+    .filter((transaction) => transaction.status !== 'failed')
     .filter((transaction) => {
-      if (txTypeFilter.value !== 'all') {
-        const account = store.providerFundAccounts.find((item) => item.id === transaction.accountId)
-        if (account?.accountType !== txTypeFilter.value) return false
+      if (txAccountFilter.value !== 'all' && transaction.accountId !== txAccountFilter.value) {
+        return false
+      }
+      if (txFlowTypeFilter.value !== 'all' && transaction.type !== txFlowTypeFilter.value) {
+        return false
       }
       if (!txKeyword.value.trim()) return true
       const kw = txKeyword.value.trim().toLowerCase()
@@ -83,33 +128,44 @@ const transactionRows = computed(() =>
       const haystack = [
         transaction.remark,
         transaction.counterparty ?? '',
+        transaction.counterpartyAccount ?? '',
         transaction.relatedOrderNo ?? '',
+        account?.name ?? '',
+        resolveFundAccountNo(account),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(kw)
+    })
+    .map(mapTransactionRow),
+)
+
+const failedTransactionRows = computed(() =>
+  providerTransactions.value
+    .filter((transaction) => transaction.status === 'failed')
+    .filter((transaction) => {
+      if (!failedKeyword.value.trim()) return true
+      const kw = failedKeyword.value.trim().toLowerCase()
+      const account = store.providerFundAccounts.find((item) => item.id === transaction.accountId)
+      const haystack = [
+        transaction.remark,
+        transaction.failReason ?? '',
+        transaction.counterparty ?? '',
+        transaction.counterpartyAccount ?? '',
         account?.name ?? '',
       ]
         .join(' ')
         .toLowerCase()
       return haystack.includes(kw)
     })
-    .map((transaction) => {
-      const account = store.providerFundAccounts.find((item) => item.id === transaction.accountId)
-      const typeMeta = fundTransactionTypeMap[transaction.type]
-      const statusMeta = fundTransactionStatusMap[transaction.status]
-      const signedAmount = isIncomeTransaction(transaction.type)
-        ? transaction.amount
-        : -transaction.amount
-      return {
-        ...transaction,
-        accountName: account?.name ?? '—',
-        accountTypeLabel: account ? fundAccountTypeMap[account.accountType].label : '—',
-        typeMeta,
-        statusMeta,
-        amountLabel: `${signedAmount >= 0 ? '+' : ''}${formatFundAmount(Math.abs(transaction.amount))}`,
-        amountClass: signedAmount >= 0 ? 'amount-in' : 'amount-out',
-        balanceLabel: formatFundAmount(transaction.balanceAfter),
-        createdAtLabel: new Date(transaction.createdAt).toLocaleString('zh-CN'),
-      }
-    }),
+    .map(mapTransactionRow),
 )
+
+watch(providerId, () => {
+  txAccountFilter.value = 'all'
+  txKeyword.value = ''
+  failedKeyword.value = ''
+})
 
 const accountForm = reactive({
   name: '',
@@ -233,6 +289,83 @@ async function saveAccount() {
 function selectProvider(id: string) {
   providerId.value = id
 }
+
+function openAccountTransactions(accountId: string) {
+  txAccountFilter.value = accountId
+  txFlowTypeFilter.value = 'all'
+  txKeyword.value = ''
+  activeTab.value = 'transactions'
+}
+
+const workerAccounts = computed(() =>
+  buildWorkerFundAccounts(
+    store.employees,
+    store.departments,
+    store.enterprises,
+    store.workerIncomeRecords,
+  ),
+)
+
+const filteredWorkerAccounts = computed(() => {
+  const kw = workerKeyword.value.trim().toLowerCase()
+  if (!kw) return workerAccounts.value
+  return workerAccounts.value.filter((row) =>
+    [row.employeeName, row.employeeNo, row.phone].join(' ').toLowerCase().includes(kw),
+  )
+})
+
+const workerFundSummary = computed(() => ({
+  workerCount: filteredWorkerAccounts.value.length,
+  pendingAmount: filteredWorkerAccounts.value.reduce((sum, row) => sum + row.pendingAmount, 0),
+  balanceAmount: filteredWorkerAccounts.value.reduce((sum, row) => sum + row.balanceAmount, 0),
+}))
+
+const workerPendingRows = computed(() => {
+  if (!selectedWorker.value) return []
+  return collectWorkerIncomeDetailRows(
+    store.workerIncomeRecords,
+    selectedWorker.value.employeeId,
+    ['pending_settlement'],
+  ).map((row) => ({
+    ...row,
+    dateLabel: formatIncomeDate(row.date),
+    amountLabel: formatFundAmount(row.amount),
+  }))
+})
+
+const workerSettledRows = computed(() => {
+  if (!selectedWorker.value) return []
+  return collectWorkerIncomeDetailRows(
+    store.workerIncomeRecords,
+    selectedWorker.value.employeeId,
+    ['claimable', 'claimed'],
+  ).map((row) => ({
+    ...row,
+    dateLabel: formatIncomeDate(row.date),
+    amountLabel: formatFundAmount(row.amount),
+  }))
+})
+
+const workerWithdrawalRows = computed(() => {
+  if (!selectedWorker.value) return []
+  return collectWorkerWithdrawals(
+    store.workerIncomeRecords,
+    selectedWorker.value.employeeId,
+  ).map((batch) => ({
+    ...batch,
+    claimedAtLabel: formatIncomeDateTime(batch.claimedAt),
+    grossLabel: formatFundAmount(batch.gross),
+    taxLabel: formatFundAmount(batch.tax),
+    netLabel: formatFundAmount(batch.netAmount),
+    titleLabel: batch.titles.join('；'),
+  }))
+})
+
+function openWorkerDetail(row: WorkerFundAccountRow) {
+  selectedWorker.value = row
+  workerDetailTab.value = row.pendingAmount > 0 ? 'pending' : 'settled'
+  workerDetailVisible.value = true
+}
 </script>
 
 <template>
@@ -240,162 +373,335 @@ function selectProvider(id: string) {
     <div class="page-header">
       <div>
         <h2 class="page-title">资金管理</h2>
-        <p class="text-muted">查看服务商资金账户余额、资金流水及灵工待领取汇总</p>
+        <p class="text-muted">服务商资金账户与灵工账户余额、待结算及提现记录</p>
       </div>
-      <el-button type="primary" @click="openCreateAccount">
+      <el-button v-if="mainTab === 'provider'" type="primary" @click="openCreateAccount">
         <el-icon><Plus /></el-icon>
         新增账户
       </el-button>
     </div>
 
-    <div class="page-card provider-overview-card">
-      <div class="card-title">服务商资金概览</div>
-      <el-table :data="allProviderSummaries" border stripe size="small">
-        <el-table-column prop="providerCode" label="服务商编号" width="130" />
-        <el-table-column prop="providerName" label="服务商名称" min-width="200" />
-        <el-table-column label="账户数" width="80" align="center">
-          <template #default="{ row }">{{ row.accountCount }}</template>
-        </el-table-column>
-        <el-table-column label="账户总余额" width="140" align="right">
-          <template #default="{ row }">{{ formatFundAmount(row.totalBalance) }}</template>
-        </el-table-column>
-        <el-table-column label="灵工待领取汇总" width="150" align="right">
-          <template #default="{ row }">
-            <span class="pending-amount">{{ formatFundAmount(row.pendingClaimable) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="selectProvider(row.providerId)">查看</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </div>
+    <el-tabs v-model="mainTab" class="main-tabs">
+      <el-tab-pane label="服务商资金" name="provider" />
+      <el-tab-pane label="灵工资金管理" name="worker" />
+    </el-tabs>
 
-    <div class="page-card filter-card">
-      <div class="filter-row">
-        <span class="filter-label">当前服务商</span>
-        <el-select v-model="providerId" style="width: 320px">
-          <el-option
-            v-for="item in providerOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-        <span v-if="currentProvider" class="provider-code">{{ currentProvider.code }}</span>
+    <template v-if="mainTab === 'provider'">
+      <div class="page-card provider-overview-card">
+        <div class="card-title">服务商资金概览</div>
+        <el-table :data="allProviderSummaries" border stripe size="small">
+          <el-table-column prop="providerCode" label="服务商编号" width="130" />
+          <el-table-column prop="providerName" label="服务商名称" min-width="200" />
+          <el-table-column label="账户数" width="80" align="center">
+            <template #default="{ row }">{{ row.accountCount }}</template>
+          </el-table-column>
+          <el-table-column label="账户总余额" width="140" align="right">
+            <template #default="{ row }">{{ formatFundAmount(row.totalBalance) }}</template>
+          </el-table-column>
+          <el-table-column label="灵工待领取汇总" width="150" align="right">
+            <template #default="{ row }">
+              <span class="pending-amount">{{ formatFundAmount(row.pendingClaimable) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="selectProvider(row.providerId)">查看</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
-    </div>
 
-    <div class="summary-grid">
-      <div class="summary-card">
-        <div class="summary-label">账户总余额</div>
-        <div class="summary-value">{{ formatFundAmount(providerSummary.totalBalance) }}</div>
-        <div class="summary-sub">{{ providerSummary.accountCount }} 个资金账户</div>
-      </div>
-      <div class="summary-card highlight">
-        <div class="summary-label">灵工待领取汇总</div>
-        <div class="summary-value pending">{{ formatFundAmount(providerSummary.pendingClaimable) }}</div>
-        <div class="summary-sub">该服务商关联企业下灵工待领取总额</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">可用资金覆盖率</div>
-        <div class="summary-value">
-          {{
-            providerSummary.pendingClaimable > 0
-              ? `${Math.min(999, Math.round((providerSummary.totalBalance / providerSummary.pendingClaimable) * 100))}%`
-              : '—'
-          }}
-        </div>
-        <div class="summary-sub">账户余额 / 待领取金额</div>
-      </div>
-    </div>
-
-    <div class="page-card detail-card">
-      <el-tabs v-model="activeTab">
-        <el-tab-pane label="资金账户" name="accounts">
-          <el-table :data="accountRows" border stripe empty-text="该服务商暂无资金账户">
-            <el-table-column prop="name" label="账户名称" min-width="180" />
-            <el-table-column label="账户类型" width="110">
-              <template #default="{ row }">
-                <el-tag size="small" :style="{ color: row.typeMeta.color, borderColor: row.typeMeta.color }">
-                  {{ row.typeMeta.label }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="balanceLabel" label="账户余额" width="140" align="right" />
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.statusMeta.type">{{ row.statusMeta.label }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="账户参数" min-width="240">
-              <template #default="{ row }">
-                <div class="config-summary">{{ row.configSummary }}</div>
-                <div v-if="row.accountType === 'alipay' && row.alipayConfig" class="config-detail text-muted">
-                  AppID {{ row.alipayConfig.appId }} · PID {{ row.alipayConfig.partnerId }}
-                </div>
-                <div v-if="row.accountType === 'cmb' && row.cmbConfig" class="config-detail text-muted">
-                  {{ row.cmbConfig.branchName }} · 联行号 {{ row.cmbConfig.bankCode }}
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="默认" width="70" align="center">
-              <template #default="{ row }">
-                <el-tag v-if="row.isDefault" size="small" type="success">默认</el-tag>
-                <span v-else class="text-muted">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="90" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="openEditAccount(row)">编辑</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-tab-pane>
-
-        <el-tab-pane label="资金流水" name="transactions">
-          <div class="tx-toolbar">
-            <el-input
-              v-model="txKeyword"
-              placeholder="搜索流水备注、对手方、单号..."
-              clearable
-              prefix-icon="Search"
-              style="width: 280px"
+      <div class="page-card filter-card">
+        <div class="filter-row">
+          <span class="filter-label">当前服务商</span>
+          <el-select v-model="providerId" style="width: 320px">
+            <el-option
+              v-for="item in providerOptions"
+              :key="item.value"
+              :label="item.label"
+              :value="item.value"
             />
-            <el-select v-model="txTypeFilter" style="width: 140px">
-              <el-option label="全部账户类型" value="all" />
-              <el-option label="支付宝" value="alipay" />
-              <el-option label="招商银行" value="cmb" />
-            </el-select>
+          </el-select>
+          <span v-if="currentProvider" class="provider-code">{{ currentProvider.code }}</span>
+        </div>
+      </div>
+
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="summary-label">账户总余额</div>
+          <div class="summary-value">{{ formatFundAmount(providerSummary.totalBalance) }}</div>
+          <div class="summary-sub">{{ providerSummary.accountCount }} 个资金账户</div>
+        </div>
+        <div class="summary-card highlight">
+          <div class="summary-label">灵工待领取汇总</div>
+          <div class="summary-value pending">{{ formatFundAmount(providerSummary.pendingClaimable) }}</div>
+          <div class="summary-sub">该服务商关联企业下灵工待领取总额</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">可用资金覆盖率</div>
+          <div class="summary-value">
+            {{
+              providerSummary.pendingClaimable > 0
+                ? `${Math.min(999, Math.round((providerSummary.totalBalance / providerSummary.pendingClaimable) * 100))}%`
+                : '—'
+            }}
           </div>
-          <el-table :data="transactionRows" border stripe empty-text="暂无资金流水">
-            <el-table-column prop="createdAtLabel" label="时间" width="170" />
-            <el-table-column prop="accountName" label="账户" min-width="160" />
-            <el-table-column prop="accountTypeLabel" label="账户类型" width="100" />
-            <el-table-column label="类型" width="100">
-              <template #default="{ row }">
-                <el-tag size="small">{{ row.typeMeta.label }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="金额" width="130" align="right">
-              <template #default="{ row }">
-                <span :class="row.amountClass">{{ row.amountLabel }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="balanceLabel" label="余额" width="130" align="right" />
-            <el-table-column prop="counterparty" label="对手方" min-width="140" show-overflow-tooltip />
-            <el-table-column prop="relatedOrderNo" label="关联单号" width="160" show-overflow-tooltip />
-            <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.statusMeta.type">{{ row.statusMeta.label }}</el-tag>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-tab-pane>
-      </el-tabs>
-    </div>
+          <div class="summary-sub">账户余额 / 待领取金额</div>
+        </div>
+      </div>
+
+      <div class="page-card detail-card">
+        <el-tabs v-model="activeTab">
+          <el-tab-pane label="资金账户" name="accounts">
+            <el-table :data="accountRows" border stripe empty-text="该服务商暂无资金账户">
+              <el-table-column prop="name" label="账户名称" min-width="180" />
+              <el-table-column label="账户类型" width="110">
+                <template #default="{ row }">
+                  <el-tag size="small" :style="{ color: row.typeMeta.color, borderColor: row.typeMeta.color }">
+                    {{ row.typeMeta.label }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="balanceLabel" label="账户余额" width="140" align="right" />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.statusMeta.type">{{ row.statusMeta.label }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="账户参数" min-width="240">
+                <template #default="{ row }">
+                  <div class="config-summary">{{ row.configSummary }}</div>
+                  <div v-if="row.accountType === 'alipay' && row.alipayConfig" class="config-detail text-muted">
+                    AppID {{ row.alipayConfig.appId }} · PID {{ row.alipayConfig.partnerId }}
+                  </div>
+                  <div v-if="row.accountType === 'cmb' && row.cmbConfig" class="config-detail text-muted">
+                    {{ row.cmbConfig.branchName }} · 联行号 {{ row.cmbConfig.bankCode }}
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="默认" width="70" align="center">
+                <template #default="{ row }">
+                  <el-tag v-if="row.isDefault" size="small" type="success">默认</el-tag>
+                  <span v-else class="text-muted">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="160" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openAccountTransactions(row.id)">
+                    查看流水
+                  </el-button>
+                  <el-button link type="primary" @click="openEditAccount(row)">编辑</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="资金流水" name="transactions">
+            <div class="tx-toolbar">
+              <el-select v-model="txAccountFilter" style="width: 240px" placeholder="全部账户">
+                <el-option label="全部账户" value="all" />
+                <el-option
+                  v-for="account in accountRows"
+                  :key="account.id"
+                  :label="account.name"
+                  :value="account.id"
+                />
+              </el-select>
+              <el-select v-model="txFlowTypeFilter" style="width: 140px">
+                <el-option label="全部类型" value="all" />
+                <el-option label="收入" value="income" />
+                <el-option label="代发" value="payout" />
+                <el-option label="转账" value="transfer" />
+              </el-select>
+              <el-input
+                v-model="txKeyword"
+                placeholder="搜索对手方、账号、备注..."
+                clearable
+                prefix-icon="Search"
+                style="width: 260px"
+              />
+            </div>
+            <el-table :data="transactionRows" border stripe empty-text="暂无资金流水">
+              <el-table-column prop="createdAtLabel" label="时间" width="170" />
+              <el-table-column prop="accountName" label="账户" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="accountNo" label="账户号" min-width="160" show-overflow-tooltip />
+              <el-table-column label="类型" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small">{{ row.typeMeta.label }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="金额" width="130" align="right">
+                <template #default="{ row }">
+                  <span :class="row.amountClass">{{ row.amountLabel }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="balanceLabel" label="余额" width="130" align="right" />
+              <el-table-column prop="counterpartyLabel" label="对手方" min-width="140" show-overflow-tooltip />
+              <el-table-column
+                prop="counterpartyAccountLabel"
+                label="对手方账号"
+                min-width="150"
+                show-overflow-tooltip
+              />
+              <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="失败记录查询" name="failed">
+            <div class="tx-toolbar">
+              <el-input
+                v-model="failedKeyword"
+                placeholder="搜索失败原因、对手方、备注..."
+                clearable
+                prefix-icon="Search"
+                style="width: 320px"
+              />
+              <span class="failed-count">共 {{ failedTransactionRows.length }} 条失败流水</span>
+            </div>
+            <el-table :data="failedTransactionRows" border stripe empty-text="暂无失败流水记录">
+              <el-table-column prop="createdAtLabel" label="时间" width="170" />
+              <el-table-column prop="accountName" label="账户" min-width="150" show-overflow-tooltip />
+              <el-table-column prop="accountNo" label="账户号" min-width="150" show-overflow-tooltip />
+              <el-table-column label="类型" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" type="danger">{{ row.typeMeta.label }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="金额" width="130" align="right">
+                <template #default="{ row }">
+                  <span :class="row.amountClass">{{ row.amountLabel }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="balanceLabel" label="余额" width="130" align="right" />
+              <el-table-column prop="counterpartyLabel" label="对手方" min-width="120" show-overflow-tooltip />
+              <el-table-column
+                prop="counterpartyAccountLabel"
+                label="对手方账号"
+                min-width="140"
+                show-overflow-tooltip
+              />
+              <el-table-column prop="failReasonLabel" label="失败原因" min-width="220" show-overflow-tooltip />
+              <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </template>
+
+    <template v-else>
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="summary-label">灵工账户数</div>
+          <div class="summary-value">{{ workerFundSummary.workerCount }}</div>
+          <div class="summary-sub">有收入记录的灵工</div>
+        </div>
+        <div class="summary-card highlight">
+          <div class="summary-label">待结算合计</div>
+          <div class="summary-value pending">{{ formatFundAmount(workerFundSummary.pendingAmount) }}</div>
+          <div class="summary-sub">尚未结算至灵工账户</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-label">账户余额合计</div>
+          <div class="summary-value">{{ formatFundAmount(workerFundSummary.balanceAmount) }}</div>
+          <div class="summary-sub">已结算待领取金额</div>
+        </div>
+      </div>
+
+      <div class="page-card detail-card">
+        <div class="tx-toolbar">
+          <el-input
+            v-model="workerKeyword"
+            placeholder="搜索姓名、工号、手机号..."
+            clearable
+            prefix-icon="Search"
+            style="width: 320px"
+          />
+        </div>
+        <el-table
+          :data="filteredWorkerAccounts"
+          border
+          stripe
+          empty-text="暂无灵工资金账户"
+          class="clickable-table"
+          @row-click="openWorkerDetail"
+        >
+          <el-table-column prop="employeeName" label="灵工" width="100" />
+          <el-table-column prop="employeeNo" label="工号" width="120" />
+          <el-table-column prop="phone" label="手机号" width="130" />
+          <el-table-column label="待结算金额" width="140" align="right">
+            <template #default="{ row }">
+              <span class="pending-amount">{{ formatFundAmount(row.pendingAmount) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="账户余额" width="140" align="right">
+            <template #default="{ row }">{{ formatFundAmount(row.balanceAmount) }}</template>
+          </el-table-column>
+          <el-table-column label="累计提现" width="130" align="right">
+            <template #default="{ row }">{{ formatFundAmount(row.withdrawnNetAmount) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click.stop="openWorkerDetail(row)">详情</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+    </template>
+
+    <el-drawer
+      v-model="workerDetailVisible"
+      :title="selectedWorker ? `${selectedWorker.employeeName} · 资金明细` : '资金明细'"
+      size="800px"
+      destroy-on-close
+    >
+      <template v-if="selectedWorker">
+        <el-descriptions :column="2" border class="worker-desc">
+          <el-descriptions-item label="工号">{{ selectedWorker.employeeNo }}</el-descriptions-item>
+          <el-descriptions-item label="手机号">{{ selectedWorker.phone }}</el-descriptions-item>
+          <el-descriptions-item label="企业">{{ selectedWorker.enterpriseName }}</el-descriptions-item>
+          <el-descriptions-item label="部门">{{ selectedWorker.departmentName }}</el-descriptions-item>
+          <el-descriptions-item label="待结算金额">
+            <span class="pending-amount">{{ formatFundAmount(selectedWorker.pendingAmount) }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="账户余额">
+            {{ formatFundAmount(selectedWorker.balanceAmount) }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <el-tabs v-model="workerDetailTab" class="worker-detail-tabs">
+          <el-tab-pane label="待结算明细" name="pending">
+            <el-table :data="workerPendingRows" border stripe size="small" empty-text="暂无待结算明细">
+              <el-table-column prop="dateLabel" label="日期" width="100" />
+              <el-table-column prop="name" label="班次/任务名称" min-width="200" show-overflow-tooltip />
+              <el-table-column prop="quantityLabel" label="工时/任务数量" width="130" align="right" />
+              <el-table-column prop="unitPriceLabel" label="工时单价/任务单价" width="150" align="right" />
+              <el-table-column prop="amountLabel" label="发薪金额" width="120" align="right" />
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="结算明细" name="settled">
+            <el-table :data="workerSettledRows" border stripe size="small" empty-text="暂无结算明细">
+              <el-table-column prop="dateLabel" label="日期" width="100" />
+              <el-table-column prop="name" label="班次/任务名称" min-width="200" show-overflow-tooltip />
+              <el-table-column prop="quantityLabel" label="工时/任务数量" width="130" align="right" />
+              <el-table-column prop="unitPriceLabel" label="工时单价/任务单价" width="150" align="right" />
+              <el-table-column prop="amountLabel" label="发薪金额" width="120" align="right" />
+            </el-table>
+          </el-tab-pane>
+
+          <el-tab-pane label="提现记录" name="withdrawals">
+            <el-table :data="workerWithdrawalRows" border stripe size="small" empty-text="暂无提现记录">
+              <el-table-column prop="claimedAtLabel" label="提现时间" width="160" />
+              <el-table-column prop="titleLabel" label="关联收入" min-width="200" show-overflow-tooltip />
+              <el-table-column prop="recordCount" label="笔数" width="70" align="center" />
+              <el-table-column prop="grossLabel" label="提现金额" width="120" align="right" />
+              <el-table-column prop="taxLabel" label="个税" width="100" align="right" />
+              <el-table-column prop="netLabel" label="到账净额" width="120" align="right" />
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+      </template>
+    </el-drawer>
 
     <el-dialog
       v-model="accountDialogVisible"
@@ -490,10 +796,26 @@ function selectProvider(id: string) {
   margin: 0 0 4px;
 }
 
+.main-tabs {
+  margin-bottom: 4px;
+}
+
 .provider-overview-card,
 .filter-card,
 .detail-card {
   padding: 16px 20px;
+}
+
+.clickable-table :deep(.el-table__row) {
+  cursor: pointer;
+}
+
+.worker-desc {
+  margin-bottom: 16px;
+}
+
+.worker-detail-tabs {
+  margin-top: 4px;
 }
 
 .card-title {
@@ -575,8 +897,15 @@ function selectProvider(id: string) {
 
 .tx-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
+  align-items: center;
   margin-bottom: 12px;
+}
+
+.failed-count {
+  font-size: 13px;
+  color: #909399;
 }
 
 .amount-in {

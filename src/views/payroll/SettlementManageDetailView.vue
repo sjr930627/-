@@ -22,6 +22,8 @@ const slip = computed(() =>
   store.settlementSlips.find((item) => item.id === route.params.id as string),
 )
 
+const isImport = computed(() => slip.value?.type === 'import')
+
 const tableData = computed(() =>
   (slip.value?.lines ?? []).map((line) => ({
     ...line,
@@ -61,17 +63,29 @@ function formatTime(iso?: string) {
       <el-descriptions-item label="结算单号">{{ slip.slipNo }}</el-descriptions-item>
       <el-descriptions-item label="企业">{{ slipEnterpriseLabel(slip) }}</el-descriptions-item>
       <el-descriptions-item label="类型">{{ settlementManageTypeMap[slip.type] }}</el-descriptions-item>
-      <el-descriptions-item label="结算时间">{{ formatTime(slip.settledAt) }}</el-descriptions-item>
-      <el-descriptions-item label="灵工数">{{ slip.workerCount }}</el-descriptions-item>
-      <el-descriptions-item label="工时/次数">
+      <el-descriptions-item label="发薪时间">{{ formatTime(slip.settledAt) }}</el-descriptions-item>
+      <el-descriptions-item label="人数">{{ slip.workerCount }}</el-descriptions-item>
+      <el-descriptions-item v-if="!isImport" label="工时/次数">
         {{ formatSettlementQuantity(slip.type, slip.totalQuantity) }}
       </el-descriptions-item>
-      <el-descriptions-item label="结算金额">{{ formatMoney(slip.totalAmount) }}</el-descriptions-item>
+      <el-descriptions-item label="发薪金额">{{ formatMoney(slip.totalAmount) }}</el-descriptions-item>
     </el-descriptions>
 
-    <h3 class="section-title">灵工明细</h3>
+    <h3 class="section-title">发薪明细</h3>
 
-    <el-table :data="tableData" border stripe>
+    <el-table v-if="isImport" :data="tableData" border stripe>
+      <el-table-column prop="enterpriseName" label="企业" min-width="160" />
+      <el-table-column prop="phone" label="手机号" min-width="140">
+        <template #default="{ row }">{{ row.phone || '—' }}</template>
+      </el-table-column>
+      <el-table-column prop="employeeName" label="姓名" width="100" />
+      <el-table-column prop="employeeNo" label="工号" width="120">
+        <template #default="{ row }">{{ row.employeeNo || '—' }}</template>
+      </el-table-column>
+      <el-table-column prop="amountLabel" label="发薪金额" width="130" align="right" />
+    </el-table>
+
+    <el-table v-else :data="tableData" border stripe>
       <el-table-column prop="enterpriseName" label="企业" min-width="160" />
       <el-table-column prop="employeeName" label="灵工" width="100" />
       <el-table-column prop="employeeNo" label="工号" width="120" />
@@ -85,7 +99,7 @@ function formatTime(iso?: string) {
         align="right"
       />
       <el-table-column prop="unitPriceLabel" label="结算单价" width="120" align="right" />
-      <el-table-column prop="amountLabel" label="结算金额" width="130" align="right" />
+      <el-table-column prop="amountLabel" label="发薪金额" width="130" align="right" />
     </el-table>
   </div>
 
@@ -98,11 +112,11 @@ function formatTime(iso?: string) {
 .header-left {
   display: flex;
   align-items: flex-start;
-  gap: 16px;
+  gap: 12px;
 }
 
 .summary-desc {
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .section-title {

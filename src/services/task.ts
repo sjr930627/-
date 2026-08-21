@@ -95,9 +95,9 @@ export const instanceWorkflowStatusMap: Record<
   InstanceWorkflowStatus,
   { label: string; type: 'success' | 'warning' | 'info' }
 > = {
-  running: { label: '进行中', type: 'warning' },
+  running: { label: '执行中', type: 'warning' },
   completed: { label: '已完成', type: 'success' },
-  cancelled: { label: '已取消', type: 'info' },
+  cancelled: { label: '已结束', type: 'info' },
 }
 
 export function getCurrentWorkflowNode(

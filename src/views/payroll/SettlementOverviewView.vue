@@ -13,6 +13,7 @@ import {
   formatSettlementUnitPrice,
   groupPendingByEnterprise,
   parseSettlementLineKey,
+  pendingSettlementTypes,
   settlementManageStatusMap,
   settlementManageTypeMap,
   slipEnterpriseLabel,
@@ -27,8 +28,8 @@ const router = useRouter()
 const { pathPrefix } = usePortal()
 const { isPlatform, enterpriseFilter, matchesEnterprise } = useEnterpriseScope('filter')
 
-const typeTab = ref<SettlementManageType>('hourly')
 const statusTab = ref<'pending_settlement' | 'settled'>('pending_settlement')
+const typeTab = ref<Exclude<SettlementManageType, 'import'>>('hourly')
 const periodRange = ref<[string, string] | null>(null)
 const keyword = ref('')
 const selectedKeys = ref<Set<string>>(new Set())
@@ -78,14 +79,13 @@ const enterpriseGroups = computed(() => groupPendingByEnterprise(pendingLines.va
 
 const pendingSummary = computed(() => ({
   enterpriseCount: enterpriseGroups.value.length,
-  workerCount: pendingLines.value.length,
+  workerCount: new Set(pendingLines.value.map((line) => line.employeeId)).size,
   totalAmount: pendingLines.value.reduce((sum, line) => sum + line.amount, 0),
 }))
 
 const filteredSlips = computed(() =>
   store.settlementSlips
     .filter((slip) => {
-      if (slip.type !== typeTab.value) return false
       if (periodRange.value) {
         const [start, end] = periodRange.value
         const day = slip.settledAt.slice(0, 10)
@@ -96,12 +96,14 @@ const filteredSlips = computed(() =>
         const kw = keyword.value.trim().toLowerCase()
         const haystack = [
           slip.slipNo,
+          settlementManageTypeMap[slip.type],
           ...slip.lines.flatMap((line) => [
             line.enterpriseName,
             line.orderNo,
             line.orderName,
             line.employeeName,
             line.employeeNo ?? '',
+            line.phone ?? '',
           ]),
         ]
           .join(' ')
@@ -176,7 +178,8 @@ function toggleAllPending(checked: boolean) {
 function formatLineRow(row: PendingSettlementLineRow) {
   return {
     ...row,
-    quantityLabel: formatSettlementQuantity(row.type, row.quantity),
+    dateLabel: row.date.replace(/-/g, '.'),
+    quantityLabel: `${row.quantity}`,
     unitPriceLabel: formatSettlementUnitPrice(row.type, row.unitPrice),
     amountLabel: formatMoney(row.amount),
   }
@@ -184,21 +187,25 @@ function formatLineRow(row: PendingSettlementLineRow) {
 
 function batchSettle() {
   if (!selectedKeys.value.size) {
-    ElMessage.warning('请先选择待结算灵工')
+    ElMessage.warning('请先选择待发薪明细')
     return
   }
   try {
     const items = [...selectedKeys.value].map(parseSettlementLineKey)
     const slip = store.batchSettleWorkerLines(items, typeTab.value)
     selectedKeys.value = new Set()
-    ElMessage.success(`结算单 ${slip.slipNo} 已生成，共 ${slip.workerCount} 名灵工`)
+    ElMessage.success(`结算单 ${slip.slipNo} 已生成，共 ${slip.workerCount} 笔明细`)
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '结算失败')
+    ElMessage.error(e instanceof Error ? e.message : '发薪失败')
   }
 }
 
 function goSlipDetail(row: { id: string }) {
   router.push(`${pathPrefix.value}/payroll/settlement/slip/${row.id}`)
+}
+
+function goImport() {
+  router.push(`${pathPrefix.value}/payroll/settlement/import`)
 }
 </script>
 
@@ -206,29 +213,40 @@ function goSlipDetail(row: { id: string }) {
   <div class="page-card">
     <div class="page-header">
       <div>
-        <h2 class="page-title">结算管理</h2>
+        <h2 class="page-title">发薪管理</h2>
         <p class="text-muted">
-          待结算按企业展开灵工明细，筛选后批量勾选结算；每次结算操作生成一张结算单
+          待结算按企业汇总，展开查看单笔班次/任务明细；已结算含工时、任务与导入发薪
         </p>
       </div>
-      <el-button
-        v-if="statusTab === 'pending_settlement'"
-        type="primary"
-        :disabled="!selectedCount"
-        @click="batchSettle"
-      >
-        批量结算{{ selectedCount ? `（${selectedCount}）` : '' }}
-      </el-button>
+      <div class="header-actions">
+        <el-button @click="goImport">导入发薪</el-button>
+        <el-button
+          v-if="statusTab === 'pending_settlement'"
+          type="primary"
+          :disabled="!selectedCount"
+          @click="batchSettle"
+        >
+          确认发薪{{ selectedCount ? `（${selectedCount}）` : '' }}
+        </el-button>
+      </div>
     </div>
-
-    <el-tabs v-model="typeTab" class="type-tabs">
-      <el-tab-pane label="工时" name="hourly" />
-      <el-tab-pane label="任务" name="task" />
-    </el-tabs>
 
     <el-tabs v-model="statusTab" class="status-tabs">
       <el-tab-pane label="待结算" name="pending_settlement" />
       <el-tab-pane label="已结算" name="settled" />
+    </el-tabs>
+
+    <el-tabs
+      v-if="statusTab === 'pending_settlement'"
+      v-model="typeTab"
+      class="type-tabs"
+    >
+      <el-tab-pane
+        v-for="t in pendingSettlementTypes"
+        :key="t"
+        :label="settlementManageTypeMap[t]"
+        :name="t"
+      />
     </el-tabs>
 
     <el-row v-if="statusTab === 'pending_settlement'" :gutter="16" class="summary-row">
@@ -236,10 +254,10 @@ function goSlipDetail(row: { id: string }) {
         <el-statistic title="企业数" :value="pendingSummary.enterpriseCount" />
       </el-col>
       <el-col :span="8">
-        <el-statistic title="待结算灵工" :value="pendingSummary.workerCount" />
+        <el-statistic title="待发薪人数" :value="pendingSummary.workerCount" />
       </el-col>
       <el-col :span="8">
-        <el-statistic title="待结算金额" :value="pendingSummary.totalAmount" prefix="¥" :precision="2" />
+        <el-statistic title="待发薪金额" :value="pendingSummary.totalAmount" prefix="¥" :precision="2" />
       </el-col>
     </el-row>
 
@@ -248,10 +266,10 @@ function goSlipDetail(row: { id: string }) {
         <el-statistic title="结算单数" :value="settledSummary.slipCount" />
       </el-col>
       <el-col :span="8">
-        <el-statistic title="已结算灵工" :value="settledSummary.workerCount" />
+        <el-statistic title="已发薪人数" :value="settledSummary.workerCount" />
       </el-col>
       <el-col :span="8">
-        <el-statistic title="已结算金额" :value="settledSummary.totalAmount" prefix="¥" :precision="2" />
+        <el-statistic title="已发薪金额" :value="settledSummary.totalAmount" prefix="¥" :precision="2" />
       </el-col>
     </el-row>
 
@@ -262,14 +280,14 @@ function goSlipDetail(row: { id: string }) {
         type="daterange"
         value-format="YYYY-MM-DD"
         range-separator="至"
-        :start-placeholder="statusTab === 'pending_settlement' ? '结算起始日' : '结算操作起始日'"
-        :end-placeholder="statusTab === 'pending_settlement' ? '结算结束日' : '结算操作结束日'"
+        :start-placeholder="statusTab === 'pending_settlement' ? '明细起始日' : '发薪操作起始日'"
+        :end-placeholder="statusTab === 'pending_settlement' ? '明细结束日' : '发薪操作结束日'"
         clearable
         style="width: 280px"
       />
       <el-input
         v-model="keyword"
-        :placeholder="statusTab === 'pending_settlement' ? '搜索企业、灵工、班次/任务单' : '搜索结算单号、企业、灵工'"
+        :placeholder="statusTab === 'pending_settlement' ? '搜索企业、姓名、班次/任务' : '搜索结算单号、企业、灵工、类型'"
         clearable
         prefix-icon="Search"
         style="width: 280px"
@@ -311,21 +329,26 @@ function goSlipDetail(row: { id: string }) {
                     />
                   </template>
                 </el-table-column>
-                <el-table-column prop="employeeName" label="灵工" width="100" />
-                <el-table-column prop="employeeNo" label="工号" width="120" />
-                <el-table-column prop="departmentName" label="部门" min-width="120" />
-                <el-table-column prop="orderLabel" label="班次/任务单" min-width="220" />
-                <el-table-column prop="periodLabel" label="结算周期" min-width="180" />
-                <el-table-column prop="quantityLabel" :label="typeTab === 'hourly' ? '工时' : '次数'" width="110" align="right" />
-                <el-table-column prop="unitPriceLabel" label="结算单价" width="120" align="right" />
-                <el-table-column prop="amountLabel" label="结算金额" width="130" align="right" />
+                <el-table-column prop="employeeName" label="姓名" width="100" />
+                <el-table-column prop="dateLabel" label="日期" width="120" />
+                <template v-if="typeTab === 'hourly'">
+                  <el-table-column prop="orderName" label="班次/抢班名称" min-width="200" show-overflow-tooltip />
+                  <el-table-column prop="quantityLabel" label="工时" width="90" align="right" />
+                  <el-table-column prop="unitPriceLabel" label="工时单价" width="120" align="right" />
+                </template>
+                <template v-else>
+                  <el-table-column prop="orderName" label="任务名称" min-width="200" show-overflow-tooltip />
+                  <el-table-column prop="quantityLabel" label="任务数量" width="90" align="right" />
+                  <el-table-column prop="unitPriceLabel" label="任务单价" width="120" align="right" />
+                </template>
+                <el-table-column prop="amountLabel" label="发薪金额" width="120" align="right" />
               </el-table>
             </div>
           </template>
         </el-table-column>
         <el-table-column prop="enterpriseName" label="企业" min-width="200" />
-        <el-table-column prop="workerCount" label="待结算灵工" width="120" align="center" />
-        <el-table-column label="待结算金额" width="140" align="right">
+        <el-table-column prop="workerCount" label="待发薪人数" width="120" align="center" />
+        <el-table-column label="待发薪金额" width="140" align="right">
           <template #default="{ row }">{{ formatMoney(row.totalAmount) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -338,12 +361,11 @@ function goSlipDetail(row: { id: string }) {
       </el-table>
 
       <el-empty v-if="!enterpriseGroups.length" description="暂无待结算数据" />
-      <p v-else class="toolbar-hint">展开企业查看灵工明细，勾选后点击「批量结算」生成结算单</p>
+      <p v-else class="toolbar-hint">展开企业查看单笔班次/任务明细，勾选后点击「确认发薪」生成结算单</p>
     </template>
 
     <template v-else>
       <el-table
-        :key="`${typeTab}-settled`"
         :data="filteredSlips"
         border
         stripe
@@ -352,11 +374,11 @@ function goSlipDetail(row: { id: string }) {
       >
         <el-table-column prop="slipNo" label="结算单号" min-width="160" />
         <el-table-column prop="enterpriseLabel" label="企业" min-width="180" />
-        <el-table-column prop="typeLabel" label="类型" width="80" />
-        <el-table-column prop="workerCount" label="灵工数" width="90" align="center" />
-        <el-table-column prop="quantityLabel" :label="typeTab === 'hourly' ? '工时合计' : '次数合计'" width="120" align="right" />
-        <el-table-column prop="amountLabel" label="结算金额" width="130" align="right" />
-        <el-table-column prop="settledAtLabel" label="结算时间" min-width="170" />
+        <el-table-column prop="typeLabel" label="类型" width="100" />
+        <el-table-column prop="workerCount" label="人数" width="90" align="center" />
+        <el-table-column prop="quantityLabel" label="工时/次数/人数" width="140" align="right" />
+        <el-table-column prop="amountLabel" label="发薪金额" width="130" align="right" />
+        <el-table-column prop="settledAtLabel" label="发薪时间" min-width="170" />
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click.stop="goSlipDetail(row)">详情</el-button>
@@ -365,22 +387,28 @@ function goSlipDetail(row: { id: string }) {
       </el-table>
 
       <el-empty v-if="!filteredSlips.length" description="暂无结算单" />
-      <p v-else class="toolbar-hint">每次批量结算操作生成一张结算单，点击查看灵工明细</p>
+      <p v-else class="toolbar-hint">类型含工时、任务、导入发薪；点击查看明细</p>
     </template>
   </div>
 </template>
 
 <style scoped>
-.type-tabs {
+.status-tabs {
   margin-bottom: 4px;
 }
 
-.status-tabs {
+.type-tabs {
   margin-bottom: 16px;
 }
 
 .summary-row {
   margin-bottom: 16px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .page-toolbar {

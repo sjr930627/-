@@ -73,6 +73,11 @@ export function useTrainingScope() {
     return { path: '/training/exam-results', query: { exam: examId } }
   }
 
+  function examQuestionsPath(examId: string) {
+    if (isEnterprise.value) return `/enterprise/training/exams/${examId}/questions`
+    return `/training/exams/${examId}/questions`
+  }
+
   return {
     isPlatform,
     isEnterprise,
@@ -84,5 +89,6 @@ export function useTrainingScope() {
     ownerTypeLabel,
     progressPath,
     examResultPath,
+    examQuestionsPath,
   }
 }

@@ -1,5 +1,8 @@
 export const MINIAPP_DEMO_PASSWORD = '123456'
 
+/** 不定时人脸复核间隔（小时）：2 或 4 */
+export const FACE_REVERIFY_INTERVAL_OPTIONS_HOURS = [2, 4] as const
+
 export const MINIAPP_WEEKDAY_OPTIONS = [
   '周一',
   '周二',

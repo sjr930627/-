@@ -6,6 +6,7 @@ import type {
   TrainingCourse,
   TrainingExam,
   TrainingMaterial,
+  TrainingMaterialCategoryItem,
 } from '@/types'
 import { loadFromStorage, saveToStorage } from '@/utils'
 
@@ -13,6 +14,19 @@ const now = '2026-07-20T10:00:00'
 const weekAgo = '2026-07-13T09:00:00'
 const ENT_CM = 'ent_china_mobile_agent'
 const ENT_PINGAN = 'ent_pingan_partner'
+
+export const seedTrainingMaterialCategories: TrainingMaterialCategoryItem[] = [
+  { id: 'tmc_info_security', name: '信息安全', enterpriseId: null, builtin: true, createdAt: weekAgo },
+  { id: 'tmc_safety', name: '安全生产', enterpriseId: null, builtin: true, createdAt: weekAgo },
+  { id: 'tmc_anti_fraud', name: '反诈骗', enterpriseId: null, builtin: true, createdAt: weekAgo },
+  { id: 'tmc_service', name: '服务规范', enterpriseId: null, builtin: true, createdAt: weekAgo },
+  { id: 'tmc_emergency', name: '应急处理', enterpriseId: null, builtin: true, createdAt: weekAgo },
+  { id: 'tmc_other', name: '其他', enterpriseId: null, builtin: true, createdAt: weekAgo },
+]
+
+export function loadTrainingMaterialCategories(): TrainingMaterialCategoryItem[] {
+  return loadFromStorage('trainingMaterialCategories', seedTrainingMaterialCategories)
+}
 
 export const seedTrainingMaterials: TrainingMaterial[] = [
   {

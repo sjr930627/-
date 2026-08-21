@@ -87,9 +87,11 @@ export const taskTypeStatusMap: Record<TaskTypeStatus, string> = {
 
 export const taskPublishStatusMap: Record<TaskPublishStatus, string> = {
   draft: '未发布',
+  pending: '待审核',
   active: '进行中',
   ended: '已结束',
   cancelled: '已取消',
+  rejected: '已驳回',
 }
 
 export const dispatchModeMap: Record<DispatchMode, string> = {
@@ -126,6 +128,60 @@ export function formatTaskTypePrice(row: {
   return row.tieredPrices
     .map((t) => `${t.minCount}-${t.maxCount === 999 ? '∞' : t.maxCount}单 ¥${t.unitPrice}`)
     .join('；')
+}
+
+/** 优先取任务自身定价，兼容旧数据回退任务类型 */
+export function resolveTaskPricing(
+  task: {
+    pricingMode?: 'fixed' | 'tiered'
+    fixedPrice?: number
+    tieredPrices?: { minCount: number; maxCount: number; unitPrice: number }[]
+    pricingUnit?: 'piece' | 'time'
+    taskTypeId?: string
+  },
+  taskTypes: Array<{
+    id: string
+    pricingMode: 'fixed' | 'tiered'
+    fixedPrice?: number
+    tieredPrices?: { minCount: number; maxCount: number; unitPrice: number }[]
+    pricingUnit?: 'piece' | 'time'
+  }>,
+) {
+  if (task.pricingMode) {
+    return {
+      pricingMode: task.pricingMode,
+      fixedPrice: task.fixedPrice,
+      tieredPrices: task.tieredPrices,
+      pricingUnit: task.pricingUnit,
+    }
+  }
+  if (!task.taskTypeId) return undefined
+  return taskTypes.find((t) => t.id === task.taskTypeId)
+}
+
+/** 客户单价参考值（固定价或阶梯首档） */
+export function resolveTaskCustomerUnitPrice(task: {
+  pricingMode?: 'fixed' | 'tiered'
+  fixedPrice?: number
+  tieredPrices?: { unitPrice: number }[]
+}): number {
+  if (task.pricingMode === 'tiered') {
+    return task.tieredPrices?.[0]?.unitPrice ?? 0
+  }
+  return task.fixedPrice ?? 0
+}
+
+/** 灵工结算单价：审批配置优先，否则回退客户单价 */
+export function resolveTaskSettlementUnitPrice(task: {
+  settlementUnitPrice?: number
+  pricingMode?: 'fixed' | 'tiered'
+  fixedPrice?: number
+  tieredPrices?: { unitPrice: number }[]
+}): number {
+  if (task.settlementUnitPrice != null && task.settlementUnitPrice >= 0) {
+    return task.settlementUnitPrice
+  }
+  return resolveTaskCustomerUnitPrice(task)
 }
 
 export function formatTaskQuantity(

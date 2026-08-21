@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import {
   getJobDetailExtra,
   shouldShowJobAttendance,
@@ -14,6 +15,7 @@ import {
 const route = useRoute()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
+const { ensureActionAllowed } = useMiniAppActionGate()
 const subscribed = ref(false)
 const reqExpanded = ref(true)
 
@@ -58,8 +60,10 @@ function chatOnline() {
   ElMessage.info('在线沟通（演示）')
 }
 
-function apply() {
+async function apply() {
   if (!job.value) return
+  const allowed = await ensureActionAllowed({ from: 'job' })
+  if (!allowed) return
   try {
     store.applyForJob(employeeId.value, job.value.id)
     ElMessage.success('报名成功，请等待审核')

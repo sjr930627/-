@@ -16,6 +16,7 @@ interface MenuChild {
   path: string
   title: string
   icon: string
+  badgeKey?: 'scheduleAttendance' | 'grabAttendance'
 }
 
 interface MenuGroup {
@@ -48,17 +49,45 @@ const menuGroups: MenuGroup[] = [
     ],
   },
   {
-    index: 'attendance',
-    title: '人员考勤管理',
+    index: 'personnel',
+    title: '人员管理',
     icon: 'Avatar',
     children: [
-      { path: '/enterprise/employees', title: '人员管理', icon: 'UserFilled' },
+      { path: '/enterprise/employees', title: '人员管理', icon: 'Avatar' },
       { path: '/enterprise/attendance-groups', title: '考勤组管理', icon: 'Grid' },
-      { path: '/enterprise/schedule-manage', title: '排班管理', icon: 'Notebook' },
-      { path: '/enterprise/grab-shifts', title: '抢班管理', icon: 'Bell' },
-      { path: '/enterprise/attendance-data', title: '考勤数据', icon: 'DataBoard' },
-      { path: '/enterprise/attendance-exceptions', title: '考勤审批处理', icon: 'WarningFilled' },
+      { path: '/enterprise/contracts', title: '合同管理', icon: 'Document' },
       { path: '/enterprise/insurance', title: '保险管理', icon: 'FirstAidKit' },
+    ],
+  },
+  {
+    index: 'schedule',
+    title: '排班管理',
+    icon: 'Calendar',
+    children: [
+      { path: '/enterprise/schedule-manage', title: '排班管理', icon: 'Notebook' },
+      { path: '/enterprise/attendance-data', title: '考勤数据', icon: 'DataBoard' },
+      {
+        path: '/enterprise/attendance-exceptions',
+        title: '考勤审批',
+        icon: 'WarningFilled',
+        badgeKey: 'scheduleAttendance',
+      },
+    ],
+  },
+  {
+    index: 'grab',
+    title: '抢班管理',
+    icon: 'Bell',
+    children: [
+      { path: '/enterprise/grab-interview', title: '抢班面试管理', icon: 'ChatDotRound' },
+      { path: '/enterprise/grab-shifts', title: '抢班管理', icon: 'Bell' },
+      { path: '/enterprise/grab-attendance-data', title: '考勤数据', icon: 'DataBoard' },
+      {
+        path: '/enterprise/grab-attendance-exceptions',
+        title: '考勤审批记录',
+        icon: 'WarningFilled',
+        badgeKey: 'grabAttendance',
+      },
     ],
   },
   {
@@ -66,7 +95,6 @@ const menuGroups: MenuGroup[] = [
     title: '任务管理',
     icon: 'List',
     children: [
-      { path: '/enterprise/task/types', title: '任务类型管理', icon: 'Collection' },
       { path: '/enterprise/task/publish', title: '任务发布', icon: 'Promotion' },
       { path: '/enterprise/task/progress', title: '任务进度', icon: 'DataLine' },
     ],
@@ -120,6 +148,12 @@ const openMenus = computed(() => {
   }
   return []
 })
+
+function menuBadgeValue(child: MenuChild) {
+  if (child.badgeKey === 'scheduleAttendance') return store.pendingScheduleAttendanceApprovalCount
+  if (child.badgeKey === 'grabAttendance') return store.pendingGrabAttendanceApprovalCount
+  return 0
+}
 
 function navigate(path: string) {
   router.push(path)
@@ -242,8 +276,8 @@ function formatTime(iso: string) {
                   <span class="menu-item-title">
                     {{ child.title }}
                     <el-badge
-                      v-if="child.path === '/enterprise/attendance-exceptions' && store.pendingAttendanceApprovalCount > 0"
-                      :value="store.pendingAttendanceApprovalCount"
+                      v-if="menuBadgeValue(child) > 0"
+                      :value="menuBadgeValue(child)"
                       class="menu-badge"
                     />
                   </span>

@@ -8,12 +8,11 @@ import {
   formatFileSize,
   getMaterialCategoryLabel,
   getMaterialTypeLabel,
-  trainingMaterialCategoryOptions,
   trainingMaterialStatusMap,
   trainingMaterialTypeOptions,
 } from '@/constants/training'
-import { isGlobalTrainingOwner, type TrainingOwnerScope } from '@/services/training'
-import type { TrainingMaterial, TrainingMaterialCategory, TrainingMaterialType } from '@/types'
+import { filterDepartmentsByEnterprise, isGlobalTrainingOwner, type TrainingOwnerScope } from '@/services/training'
+import type { TrainingMaterial, TrainingMaterialCategoryItem, TrainingMaterialType } from '@/types'
 
 const store = useAppStore()
 const {
@@ -28,29 +27,81 @@ const {
 
 const keyword = ref('')
 const typeFilterMedia = ref<TrainingMaterialType | ''>('')
-const categoryFilter = ref<TrainingMaterialCategory | ''>('')
+const categoryFilter = ref<string>('')
 const dialogVisible = ref(false)
 const previewVisible = ref(false)
+const categoryDialogVisible = ref(false)
 const editingId = ref<string | null>(null)
 const previewItem = ref<TrainingMaterial | null>(null)
+const editingCategoryId = ref<string | null>(null)
+const categoryFormName = ref('')
 
 const form = ref({
   ownerType: 'enterprise' as TrainingOwnerScope,
   enterpriseId: defaultEnterpriseId.value as string | null,
   name: '',
   type: 'video' as TrainingMaterialType,
-  category: 'info_security' as TrainingMaterialCategory,
+  category: '' as string,
   fileName: '',
   fileSize: 0,
-  tags: [] as string[],
   description: '',
+  departmentScope: 'all' as 'all' | 'department',
+  departmentIds: [] as string[],
 })
+
+const formEnterpriseId = computed(() =>
+  form.value.ownerType === 'global' ? null : form.value.enterpriseId,
+)
+
+const availableCategories = computed(() => {
+  const eid = formEnterpriseId.value
+  return store.trainingMaterialCategories.filter(
+    (c) => c.enterpriseId == null || (eid && c.enterpriseId === eid),
+  )
+})
+
+const filterCategoryOptions = computed(() => store.trainingMaterialCategories)
+
+const categoryManageList = computed(() => {
+  const eid = formEnterpriseId.value
+  return store.trainingMaterialCategories.filter(
+    (c) => c.enterpriseId == null || (eid && c.enterpriseId === eid),
+  )
+})
+
+const formDepartments = computed(() =>
+  filterDepartmentsByEnterprise(store.departments, form.value.enterpriseId || undefined),
+)
 
 watch(
   () => form.value.ownerType,
   (t) => {
-    if (t === 'global') form.value.enterpriseId = null
-    else if (!form.value.enterpriseId) form.value.enterpriseId = defaultEnterpriseId.value
+    if (t === 'global') {
+      form.value.enterpriseId = null
+      form.value.departmentScope = 'all'
+      form.value.departmentIds = []
+    } else if (!form.value.enterpriseId) {
+      form.value.enterpriseId = defaultEnterpriseId.value
+    }
+  },
+)
+
+watch(
+  () => form.value.enterpriseId,
+  () => {
+    const allowed = new Set(formDepartments.value.map((d) => d.id))
+    form.value.departmentIds = form.value.departmentIds.filter((id) => allowed.has(id))
+    const catIds = new Set(availableCategories.value.map((c) => c.id))
+    if (form.value.category && !catIds.has(form.value.category)) {
+      form.value.category = ''
+    }
+  },
+)
+
+watch(
+  () => form.value.departmentScope,
+  (scope) => {
+    if (scope === 'all') form.value.departmentIds = []
   },
 )
 
@@ -61,9 +112,7 @@ const tableData = computed(() =>
       if (categoryFilter.value && m.category !== categoryFilter.value) return false
       if (keyword.value.trim()) {
         const kw = keyword.value.trim().toLowerCase()
-        if (!m.name.toLowerCase().includes(kw) && !m.tags.some((t) => t.includes(kw))) {
-          return false
-        }
+        if (!m.name.toLowerCase().includes(kw)) return false
       }
       return true
     })
@@ -71,7 +120,7 @@ const tableData = computed(() =>
       ...m,
       ownerTypeLabel: ownerTypeLabel(m.enterpriseId),
       typeLabel: getMaterialTypeLabel(m.type),
-      categoryLabel: getMaterialCategoryLabel(m.category),
+      categoryLabel: getMaterialCategoryLabel(m.category, store.trainingMaterialCategories),
       statusLabel: trainingMaterialStatusMap[m.status],
       refCount: store.getMaterialReferenceCount(m.id),
       fileSizeLabel: formatFileSize(m.fileSize),
@@ -91,11 +140,12 @@ function openCreate() {
     enterpriseId: defaultEnterpriseId.value,
     name: '',
     type: 'video',
-    category: 'info_security',
+    category: '',
     fileName: '',
     fileSize: 0,
-    tags: [],
     description: '',
+    departmentScope: 'all',
+    departmentIds: [],
   }
   dialogVisible.value = true
 }
@@ -107,11 +157,12 @@ function openEdit(row: TrainingMaterial) {
     enterpriseId: row.enterpriseId ?? defaultEnterpriseId.value,
     name: row.name,
     type: row.type,
-    category: row.category,
+    category: row.category ?? '',
     fileName: row.fileName,
     fileSize: row.fileSize,
-    tags: [...row.tags],
     description: row.description ?? '',
+    departmentScope: row.departmentScope ?? 'all',
+    departmentIds: [...(row.departmentIds ?? [])],
   }
   dialogVisible.value = true
 }
@@ -139,16 +190,25 @@ function submit() {
     ElMessage.warning('请填写资料名称并上传文件')
     return
   }
+  if (form.value.departmentScope === 'department' && form.value.departmentIds.length === 0) {
+    ElMessage.warning('请选择部门')
+    return
+  }
   const payload = {
     enterpriseId: isGlobal ? null : form.value.enterpriseId,
     name: form.value.name.trim(),
     type: form.value.type,
-    category: form.value.category,
+    category: form.value.category || undefined,
     fileUrl: `/mock/training/${form.value.fileName}`,
     fileName: form.value.fileName,
     fileSize: form.value.fileSize || 1024,
-    tags: form.value.tags,
+    tags: [] as string[],
     description: form.value.description,
+    departmentScope: isGlobal ? ('all' as const) : form.value.departmentScope,
+    departmentIds:
+      !isGlobal && form.value.departmentScope === 'department'
+        ? form.value.departmentIds
+        : undefined,
     status: 'approved' as const,
   }
   try {
@@ -182,6 +242,57 @@ async function handleDelete(row: TrainingMaterial & { refCount: number }) {
 function openPreview(row: TrainingMaterial) {
   previewItem.value = row
   previewVisible.value = true
+}
+
+function openCategoryManage() {
+  editingCategoryId.value = null
+  categoryFormName.value = ''
+  categoryDialogVisible.value = true
+}
+
+function startEditCategory(cat: TrainingMaterialCategoryItem) {
+  editingCategoryId.value = cat.id
+  categoryFormName.value = cat.name
+}
+
+function cancelEditCategory() {
+  editingCategoryId.value = null
+  categoryFormName.value = ''
+}
+
+function saveCategory() {
+  const name = categoryFormName.value.trim()
+  if (!name) {
+    ElMessage.warning('请填写分类名称')
+    return
+  }
+  try {
+    if (editingCategoryId.value) {
+      store.updateTrainingMaterialCategory(editingCategoryId.value, name)
+      ElMessage.success('分类已更新')
+    } else {
+      store.addTrainingMaterialCategory({
+        name,
+        enterpriseId: formEnterpriseId.value,
+      })
+      ElMessage.success('分类已添加')
+    }
+    editingCategoryId.value = null
+    categoryFormName.value = ''
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+async function deleteCategory(cat: TrainingMaterialCategoryItem) {
+  await ElMessageBox.confirm(`确定删除分类「${cat.name}」？`, '提示', { type: 'warning' })
+  try {
+    store.removeTrainingMaterialCategory(cat.id)
+    ElMessage.success('已删除')
+    if (form.value.category === cat.id) form.value.category = ''
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
 }
 </script>
 
@@ -218,12 +329,17 @@ function openPreview(row: TrainingMaterial) {
       >
         <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
       </el-select>
-      <el-input v-model="keyword" placeholder="搜索资料名称/标签" clearable style="width: 220px" />
+      <el-input v-model="keyword" placeholder="搜索资料名称" clearable style="width: 220px" />
       <el-select v-model="typeFilterMedia" placeholder="资料类型" clearable style="width: 130px">
         <el-option v-for="o in trainingMaterialTypeOptions" :key="o.value" :label="o.label" :value="o.value" />
       </el-select>
       <el-select v-model="categoryFilter" placeholder="资料分类" clearable style="width: 140px">
-        <el-option v-for="o in trainingMaterialCategoryOptions" :key="o.value" :label="o.label" :value="o.value" />
+        <el-option
+          v-for="c in filterCategoryOptions"
+          :key="c.id"
+          :label="c.name"
+          :value="c.id"
+        />
       </el-select>
     </div>
 
@@ -292,6 +408,26 @@ function openPreview(row: TrainingMaterial) {
           <el-option v-for="e in store.enterprises" :key="e.id" :label="e.name" :value="e.id" />
         </el-select>
       </el-form-item>
+      <el-form-item v-if="form.ownerType === 'enterprise'" label="部门选择">
+        <el-radio-group v-model="form.departmentScope">
+          <el-radio value="all">全部部门</el-radio>
+          <el-radio value="department">指定部门</el-radio>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item
+        v-if="form.ownerType === 'enterprise' && form.departmentScope === 'department'"
+        label="选择部门"
+      >
+        <el-select
+          v-model="form.departmentIds"
+          multiple
+          filterable
+          style="width: 100%"
+          placeholder="选择部门"
+        >
+          <el-option v-for="d in formDepartments" :key="d.id" :label="d.name" :value="d.id" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="资料名称" required>
         <el-input v-model="form.name" placeholder="如：信息安全操作规范" />
       </el-form-item>
@@ -304,15 +440,18 @@ function openPreview(row: TrainingMaterial) {
           </el-form-item>
         </el-col>
         <el-col :span="12">
-          <el-form-item label="资料分类" required>
-            <el-select v-model="form.category" style="width: 100%">
-              <el-option
-                v-for="o in trainingMaterialCategoryOptions"
-                :key="o.value"
-                :label="o.label"
-                :value="o.value"
-              />
-            </el-select>
+          <el-form-item label="资料分类">
+            <div class="category-row">
+              <el-select v-model="form.category" clearable style="flex: 1" placeholder="可选">
+                <el-option
+                  v-for="c in availableCategories"
+                  :key="c.id"
+                  :label="c.name"
+                  :value="c.id"
+                />
+              </el-select>
+              <el-button @click="openCategoryManage">管理</el-button>
+            </div>
           </el-form-item>
         </el-col>
       </el-row>
@@ -321,17 +460,6 @@ function openPreview(row: TrainingMaterial) {
           <div class="el-upload__text">拖拽或点击上传<br><small>视频 MP4≤500M / PDF≤50M / 图片≤10M</small></div>
         </el-upload>
         <div v-if="form.fileName" class="text-muted" style="margin-top: 8px">已选：{{ form.fileName }}</div>
-      </el-form-item>
-      <el-form-item label="标签">
-        <el-select
-          v-model="form.tags"
-          multiple
-          filterable
-          allow-create
-          default-first-option
-          placeholder="自定义标签"
-          style="width: 100%"
-        />
       </el-form-item>
       <el-form-item label="资料简介">
         <el-input v-model="form.description" type="textarea" :rows="3" placeholder="对该资料的简要说明" />
@@ -343,11 +471,41 @@ function openPreview(row: TrainingMaterial) {
     </template>
   </el-dialog>
 
+  <el-dialog v-model="categoryDialogVisible" title="资料分类管理" width="480px">
+    <div class="category-add-row">
+      <el-input
+        v-model="categoryFormName"
+        :placeholder="editingCategoryId ? '编辑分类名称' : '新增分类名称'"
+        style="flex: 1"
+      />
+      <el-button type="primary" @click="saveCategory">
+        {{ editingCategoryId ? '保存' : '添加' }}
+      </el-button>
+      <el-button v-if="editingCategoryId" @click="cancelEditCategory">取消</el-button>
+    </div>
+    <el-table :data="categoryManageList" border stripe style="margin-top: 12px">
+      <el-table-column prop="name" label="分类名称" />
+      <el-table-column label="范围" width="90">
+        <template #default="{ row }">
+          {{ row.enterpriseId == null ? '通用' : '企业' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="140">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="startEditCategory(row)">编辑</el-button>
+          <el-button v-if="!row.builtin" link type="danger" @click="deleteCategory(row)">删除</el-button>
+          <span v-else class="text-muted" style="font-size: 12px">内置</span>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-dialog>
+
   <el-dialog v-model="previewVisible" title="资料预览" width="560px">
     <template v-if="previewItem">
       <p><strong>{{ previewItem.name }}</strong></p>
       <p class="text-muted">
-        {{ getMaterialTypeLabel(previewItem.type) }} · {{ getMaterialCategoryLabel(previewItem.category) }}
+        {{ getMaterialTypeLabel(previewItem.type) }} ·
+        {{ getMaterialCategoryLabel(previewItem.category, store.trainingMaterialCategories) }}
       </p>
       <div v-if="previewItem.type === 'video'" class="preview-box">▶ 视频预览：{{ previewItem.fileName }}</div>
       <div v-else-if="previewItem.type === 'pdf'" class="preview-box">📄 PDF 预览：{{ previewItem.fileName }}</div>
@@ -364,5 +522,16 @@ function openPreview(row: TrainingMaterial) {
   background: #f5f7fa;
   border-radius: 8px;
   color: #606266;
+}
+
+.category-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.category-add-row {
+  display: flex;
+  gap: 8px;
 }
 </style>

@@ -95,11 +95,11 @@ async function review(approved: boolean) {
     <div class="page-breadcrumb-row">
       <el-breadcrumb separator=">">
         <el-breadcrumb-item>任务管理</el-breadcrumb-item>
-        <el-breadcrumb-item @click="router.push('/task-type-approval')">任务类型审批</el-breadcrumb-item>
+        <el-breadcrumb-item @click="router.push('/task-approval')">任务审批</el-breadcrumb-item>
         <el-breadcrumb-item>类型详情</el-breadcrumb-item>
       </el-breadcrumb>
       <div class="header-actions">
-        <el-button @click="router.push('/task-type-approval')">返回列表</el-button>
+        <el-button @click="router.push('/task-approval')">返回列表</el-button>
       </div>
     </div>
 
@@ -253,7 +253,7 @@ async function review(approved: boolean) {
   </div>
 
   <el-empty v-else description="任务类型不存在" class="page-card">
-    <el-button type="primary" @click="router.push('/task-type-approval')">返回列表</el-button>
+    <el-button type="primary" @click="router.push('/task-approval')">返回</el-button>
   </el-empty>
 </template>
 

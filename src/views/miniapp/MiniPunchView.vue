@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import MiniInsuranceSuccessDialog, {
   type InsuranceSuccessInfo,
 } from '@/components/miniapp/MiniInsuranceSuccessDialog.vue'
@@ -30,6 +31,7 @@ import type { PunchMethod } from '@/types'
 const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
+const { ensureActionAllowed } = useMiniAppActionGate()
 const { now } = useMiniPunchClock()
 const { locating, lat, lng, address, locateError, refreshLocation } = useMiniPunchLocation()
 
@@ -160,8 +162,10 @@ function buildInsuranceDialogInfo(
   }
 }
 
-function submitPunch() {
+async function submitPunch() {
   if (!canPunch.value || !nextPunchType.value) return
+  const allowed = await ensureActionAllowed({ from: 'punch' })
+  if (!allowed) return
   const punchType = nextPunchType.value
   const method = punchMethod.value as PunchMethod
   const target = activeTarget.value

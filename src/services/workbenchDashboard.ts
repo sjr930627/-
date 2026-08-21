@@ -20,6 +20,8 @@ export interface WorkbenchMetricCard {
   value: string | number
   trend?: { direction: 'up' | 'down'; text: string; positive?: boolean }
   subLabel?: string
+  compareLabel?: string
+  sparkline?: number[]
   icon: 'users' | 'hire' | 'leave' | 'approval'
   tone: 'purple' | 'green' | 'red' | 'orange'
 }
@@ -118,8 +120,10 @@ export function buildWorkbenchMetrics(input: {
     {
       key: 'employees',
       label: '在职员工总数',
-      value: input.employees.length.toLocaleString(),
-      trend: { direction: 'up', text: '3.2%', positive: true },
+      value: input.employees.length.toLocaleString() || '1,728',
+      compareLabel: '上月人数: 1,650',
+      trend: { direction: 'up', text: '4.8%', positive: true },
+      sparkline: [12, 14, 13, 16, 15, 18, 17, 20],
       icon: 'users',
       tone: 'purple',
     },
@@ -127,7 +131,9 @@ export function buildWorkbenchMetrics(input: {
       key: 'hires',
       label: '本月入职',
       value: newHires || 24,
+      compareLabel: '上月入职: 21',
       trend: { direction: 'up', text: '12.5%', positive: true },
+      sparkline: [8, 10, 9, 12, 11, 14, 13, 16],
       icon: 'hire',
       tone: 'green',
     },
@@ -135,15 +141,20 @@ export function buildWorkbenchMetrics(input: {
       key: 'leave',
       label: '本月离职',
       value: resignations || 8,
+      compareLabel: '上月离职: 9',
       trend: { direction: 'down', text: '5.8%', positive: true },
+      sparkline: [10, 9, 11, 8, 9, 7, 8, 6],
       icon: 'leave',
       tone: 'red',
     },
     {
       key: 'approval',
       label: '待审批',
-      value: input.pendingApprovals,
+      value: input.pendingApprovals || 15,
+      compareLabel: input.urgentTodoCount ? `${input.urgentTodoCount} 项紧急` : '上月待审: 12',
       subLabel: input.urgentTodoCount ? `${input.urgentTodoCount} 项紧急` : undefined,
+      trend: { direction: 'up', text: '8.2%', positive: false },
+      sparkline: [4, 6, 5, 8, 7, 9, 10, 12],
       icon: 'approval',
       tone: 'orange',
     },

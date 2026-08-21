@@ -14,6 +14,7 @@ import {
   isPendingEnterpriseAction,
   isPendingWorkerAction,
   pickWorkerSubmitAction,
+  resolvePricingForTask,
   taskPricingUnitMap,
 } from '@/services/miniTask'
 import {
@@ -42,8 +43,8 @@ const task = computed(() =>
   instance.value ? store.tasks.find((t) => t.id === instance.value!.taskId) : undefined,
 )
 
-const taskType = computed(() =>
-  task.value ? store.taskTypes.find((t) => t.id === task.value!.taskTypeId) : undefined,
+const pricing = computed(() =>
+  task.value ? resolvePricingForTask(task.value, store.taskTypes) : undefined,
 )
 
 const workflow = computed(() =>
@@ -94,12 +95,12 @@ const submitLabel = computed(() =>
   submitAction.value ? workflowActionMap[submitAction.value] : '提交',
 )
 
-const unitLabel = computed(() => taskPricingUnitMap[getTaskPricingUnit(taskType.value)])
+const unitLabel = computed(() => taskPricingUnitMap[getTaskPricingUnit(pricing.value)])
 
 const priceLabel = computed(
   () =>
     extra.value.priceRange ??
-    formatTaskUnitPrice(taskType.value).replace('/单', `/${unitLabel.value}`),
+    formatTaskUnitPrice(pricing.value).replace('/单', `/${unitLabel.value}`),
 )
 
 const workflowSteps = computed(() =>

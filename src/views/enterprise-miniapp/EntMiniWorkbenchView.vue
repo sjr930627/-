@@ -8,8 +8,8 @@ import {
   DocumentChecked,
   EditPen,
   Promotion,
+  Timer,
   UserFilled,
-  Warning,
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
@@ -86,23 +86,23 @@ const entries = [
     color: '#7c3aed',
   },
   {
-    title: '发布抢班',
-    desc: '开放名额与审批',
-    path: '/enterprise-miniapp/grab',
+    title: '需求总览',
+    desc: '查看排班缺口并发布需求',
+    path: '/enterprise-miniapp/shift-demand',
     icon: Clock,
     color: '#d97706',
   },
   {
-    title: '考勤异常',
-    desc: '补卡与异常处理',
-    path: '/enterprise-miniapp/exceptions',
-    icon: Warning,
-    color: '#dc2626',
+    title: '抢班管理',
+    desc: '报名情况与发布抢班',
+    path: '/enterprise-miniapp/grab-manage',
+    icon: Timer,
+    color: '#ea580c',
   },
   {
     title: '工时确认',
-    desc: '确认与矫正（须填原因）',
-    path: '/enterprise-miniapp/hours',
+    desc: '确认与批量确认工时',
+    path: '/enterprise-miniapp/hours-confirm',
     icon: Checked,
     color: '#0f766e',
   },
@@ -150,7 +150,7 @@ const entries = [
 }
 .hero {
   padding: 20px 16px 12px;
-  background: linear-gradient(160deg, #5b4fdb 0%, #7c6ff0 55%, #eef2ff 100%);
+  background: linear-gradient(160deg, #5b4fdb 0%, #7c6df0 55%, #eef2ff 100%);
   color: #fff;
 }
 .eyebrow {

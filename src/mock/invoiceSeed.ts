@@ -1,7 +1,8 @@
-import type { InvoiceApplication } from '@/types'
+import type { EnterpriseInvoiceProfile, InvoiceApplication } from '@/types'
 
-export const seedEnterpriseInvoiceProfiles = [
+export const seedEnterpriseInvoiceProfiles: EnterpriseInvoiceProfile[] = [
   {
+    id: 'eip_huaxin_main',
     enterpriseId: 'ent_china_mobile_agent',
     title: '华信通信服务有限公司',
     taxNo: '91610131MA6TXY8X1K',
@@ -9,9 +10,23 @@ export const seedEnterpriseInvoiceProfiles = [
     phone: '029-88886666',
     bankName: '中国工商银行西安高新支行',
     bankAccount: '6222 0210 0123 4567 890',
-    defaultInvoiceType: 'electronic_special' as const,
+    defaultInvoiceType: 'electronic_special',
+    isDefault: true,
   },
   {
+    id: 'eip_huaxin_payer',
+    enterpriseId: 'ent_china_mobile_agent',
+    title: '华信通信（西安）运营中心',
+    taxNo: '91610131MA6TXY8X9Z',
+    address: '陕西省西安市高新区锦业路1号',
+    phone: '029-88886667',
+    bankName: '招商银行西安高新支行',
+    bankAccount: '7559 1234 5678 001',
+    defaultInvoiceType: 'electronic_special',
+    remark: '常用付款主体抬头',
+  },
+  {
+    id: 'eip_yilian_main',
     enterpriseId: 'ent_china_telecom_agent',
     title: '翼联渠道管理有限公司',
     taxNo: '91610131MA6TXY8X2L',
@@ -19,9 +34,11 @@ export const seedEnterpriseInvoiceProfiles = [
     phone: '029-88887777',
     bankName: '中国建设银行西安雁塔支行',
     bankAccount: '6217 0010 0123 4567 891',
-    defaultInvoiceType: 'electronic_special' as const,
+    defaultInvoiceType: 'electronic_special',
+    isDefault: true,
   },
   {
+    id: 'eip_anlian_main',
     enterpriseId: 'ent_pingan_partner',
     title: '安联保险经纪有限公司',
     taxNo: '91610131MA6TXY8X3M',
@@ -29,7 +46,8 @@ export const seedEnterpriseInvoiceProfiles = [
     phone: '010-66668888',
     bankName: '中国银行北京朝阳支行',
     bankAccount: '6216 6600 0123 4567 892',
-    defaultInvoiceType: 'electronic_normal' as const,
+    defaultInvoiceType: 'electronic_normal',
+    isDefault: true,
   },
 ]
 
@@ -40,6 +58,7 @@ export const seedInvoiceApplications: InvoiceApplication[] = [
     bills: [{ billId: 'bill_004', billNo: 'BILL-202407-0003', amount: 939840 }],
     enterpriseId: 'ent_china_mobile_agent',
     enterpriseName: '华信通信服务有限公司',
+    invoiceProfileId: 'eip_huaxin_main',
     invoiceType: 'electronic_special',
     invoiceContent: '现代服务*技术服务费',
     invoiceCategory: '生活服务*现代服务',
@@ -62,11 +81,12 @@ export const seedInvoiceApplications: InvoiceApplication[] = [
     bills: [{ billId: 'bill_002', billNo: 'BILL-202409-0002', amount: 500000 }],
     enterpriseId: 'ent_china_mobile_agent',
     enterpriseName: '华信通信服务有限公司',
+    invoiceProfileId: 'eip_huaxin_payer',
     invoiceType: 'electronic_normal',
     invoiceContent: '现代服务*咨询服务费',
     invoiceCategory: '生活服务*现代服务',
-    title: '华信通信服务有限公司',
-    taxNo: '91610131MA6TXY8X1K',
+    title: '华信通信（西安）运营中心',
+    taxNo: '91610131MA6TXY8X9Z',
     amount: 500000,
     recipientName: '财务部',
     email: 'finance@huaxin.com',
@@ -83,6 +103,7 @@ export const seedInvoiceApplications: InvoiceApplication[] = [
     ],
     enterpriseId: 'ent_china_mobile_agent',
     enterpriseName: '华信通信服务有限公司',
+    invoiceProfileId: 'eip_huaxin_main',
     invoiceType: 'electronic_special',
     invoiceContent: '现代服务*技术服务费',
     invoiceCategory: '生活服务*现代服务',
@@ -101,6 +122,7 @@ export const seedInvoiceApplications: InvoiceApplication[] = [
     bills: [{ billId: 'bill_000', billNo: 'BILL-202411-0001', amount: 120000 }],
     enterpriseId: 'ent_china_telecom_agent',
     enterpriseName: '翼联渠道管理有限公司',
+    invoiceProfileId: 'eip_yilian_main',
     invoiceType: 'electronic_normal',
     invoiceContent: '现代服务*渠道推广费',
     invoiceCategory: '生活服务*现代服务',

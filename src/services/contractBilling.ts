@@ -1,46 +1,107 @@
 import type {
   ContractBillingRule,
   ContractBillingRuleType,
+  ContractServiceFeeCategory,
+  ContractServiceFeeItem,
   ContractTermPreset,
   FeeTier,
   ServiceContract,
   ServiceFeeType,
 } from '@/types'
+import { contractServiceFeeCategoryMap } from '@/constants/partnership'
 
 export function defaultHourlyTiers(): FeeTier[] {
-  return [
-    { id: 't1', minQuantity: 0, maxQuantity: 2000, rate: 18, label: '基础档' },
-    { id: 't2', minQuantity: 2000, maxQuantity: undefined, rate: 15, label: '规模档' },
-  ]
+  return []
 }
 
-export function defaultTaskTiers(chargeMethod: 'fixed' | 'percentage'): FeeTier[] {
-  if (chargeMethod === 'percentage') {
-    return [
-      { id: 't1', minQuantity: 0, maxQuantity: 500000, rate: 10, label: '标准档' },
-      { id: 't2', minQuantity: 500000, maxQuantity: undefined, rate: 8, label: '大额档' },
-    ]
+export function defaultTaskTiers(_chargeMethod: 'fixed' | 'percentage'): FeeTier[] {
+  return []
+}
+
+export function serviceFeeCategoriesForType(
+  type: ContractBillingRuleType,
+): ContractServiceFeeCategory[] {
+  return type === 'hourly' ? ['recruitment', 'management', 'grab'] : ['recruitment', 'management']
+}
+
+export function defaultServiceFees(
+  type: ContractBillingRuleType,
+  chargeMethod: 'fixed' | 'percentage' = type === 'hourly' ? 'fixed' : 'percentage',
+): ContractServiceFeeItem[] {
+  if (type === 'hourly') {
+    const rates =
+      chargeMethod === 'percentage'
+        ? { recruitment: 3, management: 4, grab: 2 }
+        : { recruitment: 6, management: 8, grab: 4 }
+    return serviceFeeCategoriesForType('hourly').map((category) => ({
+      category,
+      rate: rates[category],
+    }))
   }
-  return [
-    { id: 't1', minQuantity: 0, maxQuantity: 1000, rate: 8, label: '基础档' },
-    { id: 't2', minQuantity: 1000, maxQuantity: undefined, rate: 6.5, label: '规模档' },
-  ]
+  const rates =
+    chargeMethod === 'percentage'
+      ? { recruitment: 4, management: 6 }
+      : { recruitment: 3, management: 5 }
+  return serviceFeeCategoriesForType('task').map((category) => ({
+    category,
+    rate: rates[category as 'recruitment' | 'management'],
+  }))
+}
+
+export function sumServiceFeeRates(fees: ContractServiceFeeItem[] | undefined): number {
+  return (fees ?? []).reduce((sum, item) => sum + (Number(item.rate) || 0), 0)
+}
+
+/** 补齐分项；旧数据仅有 baseRate 时归入管理服务 */
+export function ensureServiceFees(rule: ContractBillingRule): ContractServiceFeeItem[] {
+  const categories = serviceFeeCategoriesForType(rule.type)
+  if (rule.serviceFees?.length) {
+    return categories.map((category) => {
+      const found = rule.serviceFees!.find((f) => f.category === category)
+      return { category, rate: Math.max(0, Number(found?.rate) || 0) }
+    })
+  }
+  const legacy = Math.max(0, Number(rule.baseRate) || 0)
+  return categories.map((category) => ({
+    category,
+    rate: category === 'management' ? legacy : 0,
+  }))
+}
+
+export function withSyncedServiceFees(rule: ContractBillingRule): ContractBillingRule {
+  const serviceFees = ensureServiceFees(rule)
+  return {
+    ...rule,
+    serviceFees,
+    baseRate: sumServiceFeeRates(serviceFees),
+    tiers: [],
+    serviceFeeIncludesTax: rule.serviceFeeIncludesTax ?? false,
+    unitPriceIncludesTax: rule.unitPriceIncludesTax ?? false,
+  }
 }
 
 export function defaultBillingRule(type: ContractBillingRuleType): ContractBillingRule {
   if (type === 'hourly') {
+    const serviceFees = defaultServiceFees('hourly', 'fixed')
     return {
       type: 'hourly',
       chargeMethod: 'fixed',
-      baseRate: 18,
-      tiers: defaultHourlyTiers(),
+      baseRate: sumServiceFeeRates(serviceFees),
+      tiers: [],
+      serviceFeeIncludesTax: false,
+      unitPriceIncludesTax: false,
+      serviceFees,
     }
   }
+  const serviceFees = defaultServiceFees('task', 'percentage')
   return {
     type: 'task',
     chargeMethod: 'percentage',
-    baseRate: 10,
-    tiers: defaultTaskTiers('percentage'),
+    baseRate: sumServiceFeeRates(serviceFees),
+    tiers: [],
+    serviceFeeIncludesTax: false,
+    unitPriceIncludesTax: false,
+    serviceFees,
   }
 }
 
@@ -67,34 +128,36 @@ export function inferContractTerm(
 }
 
 export function getContractBillingRules(contract: ServiceContract): ContractBillingRule[] {
-  if (contract.billingRules?.length) return contract.billingRules
+  if (contract.billingRules?.length) {
+    return contract.billingRules.map((rule) => withSyncedServiceFees(rule))
+  }
   if (contract.feeType === 'hourly') {
     return [
-      {
+      withSyncedServiceFees({
         type: 'hourly',
         chargeMethod: contract.chargeMethod,
         baseRate: contract.baseRate,
-        tiers: [...contract.tiers],
-      },
+        tiers: [],
+      }),
     ]
   }
   if (contract.feeType === 'piece') {
     return [
-      {
+      withSyncedServiceFees({
         type: 'task',
         chargeMethod: 'fixed',
         baseRate: contract.baseRate,
-        tiers: [...contract.tiers],
-      },
+        tiers: [],
+      }),
     ]
   }
   return [
-    {
+    withSyncedServiceFees({
       type: 'task',
       chargeMethod: 'percentage',
       baseRate: contract.baseRate,
-      tiers: [...contract.tiers],
-    },
+      tiers: [],
+    }),
   ]
 }
 
@@ -105,19 +168,20 @@ export function syncLegacyBillingFields(
   if (!primary) {
     return { feeType: 'hourly', chargeMethod: 'fixed', baseRate: 0, tiers: [] }
   }
-  if (primary.type === 'hourly') {
+  const synced = withSyncedServiceFees(primary)
+  if (synced.type === 'hourly') {
     return {
       feeType: 'hourly',
-      chargeMethod: primary.chargeMethod,
-      baseRate: primary.baseRate,
-      tiers: [...primary.tiers],
+      chargeMethod: synced.chargeMethod,
+      baseRate: synced.baseRate,
+      tiers: [],
     }
   }
   return {
-    feeType: primary.chargeMethod === 'percentage' ? 'percentage' : 'piece',
-    chargeMethod: primary.chargeMethod,
-    baseRate: primary.baseRate,
-    tiers: [...primary.tiers],
+    feeType: synced.chargeMethod === 'percentage' ? 'percentage' : 'piece',
+    chargeMethod: synced.chargeMethod,
+    baseRate: synced.baseRate,
+    tiers: [],
   }
 }
 
@@ -128,19 +192,58 @@ export function contractHasBillingType(
   return getContractBillingRules(contract).some((r) => r.type === type)
 }
 
+function formatFeeRateValue(
+  rate: number,
+  chargeMethod: 'fixed' | 'percentage',
+  type: ContractBillingRuleType,
+): string {
+  if (chargeMethod === 'percentage') return `${rate}%`
+  return type === 'hourly' ? `¥${rate.toFixed(2)}/人/工时` : `¥${rate.toFixed(2)}/任务`
+}
+
+export function formatServiceFeeRateValue(
+  rate: number,
+  chargeMethod: 'fixed' | 'percentage',
+  type: ContractBillingRuleType,
+): string {
+  return formatFeeRateValue(rate, chargeMethod, type)
+}
+
+export function formatServiceFeeItem(
+  item: ContractServiceFeeItem,
+  chargeMethod: 'fixed' | 'percentage',
+  type: ContractBillingRuleType,
+): string {
+  const label = contractServiceFeeCategoryMap[item.category].shortLabel
+  return `${label} ${formatFeeRateValue(item.rate, chargeMethod, type)}`
+}
+
 export function formatBillingRuleRate(rule: ContractBillingRule): string {
-  if (rule.type === 'hourly') {
-    return rule.chargeMethod === 'percentage'
-      ? `${rule.baseRate}% /人/工时`
-      : `¥${rule.baseRate.toFixed(2)} /人/工时`
-  }
-  return rule.chargeMethod === 'percentage'
-    ? `${rule.baseRate}% /任务`
-    : `¥${rule.baseRate.toFixed(2)} /任务`
+  const synced = withSyncedServiceFees(rule)
+  const parts = synced.serviceFees!
+    .filter((f) => f.rate > 0)
+    .map((f) => formatServiceFeeItem(f, synced.chargeMethod, synced.type))
+  if (parts.length) return parts.join(' · ')
+  return synced.chargeMethod === 'percentage'
+    ? `0% /${synced.type === 'hourly' ? '人/工时' : '任务'}`
+    : `¥0.00 /${synced.type === 'hourly' ? '人/工时' : '任务'}`
+}
+
+export function formatTaxIncludedLabel(includesTax?: boolean): string {
+  return includesTax ? '含税' : '不含税'
+}
+
+export function unitPriceTaxFieldLabel(type: ContractBillingRuleType): string {
+  return type === 'hourly' ? '工时单价是否含税' : '任务单价是否含税'
 }
 
 export function formatContractBillingSummary(contract: ServiceContract): string {
-  return getContractBillingRules(contract).map(formatBillingRuleRate).join('；') || '—'
+  return getContractBillingRules(contract)
+    .map((rule) => {
+      const typeLabel = rule.type === 'hourly' ? '工时' : '任务'
+      return `${typeLabel}：${formatBillingRuleRate(rule)}`
+    })
+    .join('；') || '—'
 }
 
 export interface ContractBillingListItem {
@@ -151,8 +254,8 @@ export interface ContractBillingListItem {
 }
 
 const billingTypeLabels: Record<ContractBillingRuleType, string> = {
-  hourly: '按工时计费',
-  task: '按任务计费',
+  hourly: '服务费工时',
+  task: '任务服务费',
 }
 
 export function getContractBillingListItems(contract: ServiceContract): ContractBillingListItem[] {
@@ -198,7 +301,19 @@ export function formatBillingRuleTierRange(
 }
 
 export function legacyFeeTypeLabel(feeType: ServiceFeeType): string {
-  if (feeType === 'hourly') return '按工时计费'
-  if (feeType === 'piece') return '按任务计费'
+  if (feeType === 'hourly') return '服务费工时'
+  if (feeType === 'piece') return '任务服务费'
   return '按比例计费'
+}
+
+export function getServiceFeeItem(
+  rule: ContractBillingRule,
+  category: ContractServiceFeeCategory,
+): ContractServiceFeeItem {
+  return (
+    ensureServiceFees(rule).find((f) => f.category === category) ?? {
+      category,
+      rate: 0,
+    }
+  )
 }

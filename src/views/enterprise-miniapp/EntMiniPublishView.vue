@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
+import EntMiniJobStatsCard from '@/components/enterprise-miniapp/EntMiniJobStatsCard.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 
@@ -11,6 +12,16 @@ const store = useAppStore()
 const { enterpriseId } = useEnterpriseMiniAuth()
 
 const enterprise = computed(() => store.enterprises.find((e) => e.id === enterpriseId.value))
+
+const requirements = computed(() =>
+  store.jobRequirements
+    .filter((r) => r.enterpriseId === enterpriseId.value)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+)
+
+const leads = computed(() =>
+  store.recruitmentLeads.filter((l) => l.enterpriseId === enterpriseId.value),
+)
 
 const form = ref({
   title: '',
@@ -62,12 +73,23 @@ function submit(publishNow: boolean) {
   }
   router.replace('/enterprise-miniapp/recruitment')
 }
+
+function scrollToForm() {
+  document.getElementById('publish-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 </script>
 
 <template>
-  <div class="mini-page">
+  <div class="mini-page publish-page">
     <EntMiniNavBar title="发布招聘需求" back-to="/enterprise-miniapp/recruitment" />
-    <div class="form">
+    <div class="stats-wrap">
+      <EntMiniJobStatsCard
+        :jobs="requirements"
+        :leads="leads"
+        @publish="scrollToForm"
+      />
+    </div>
+    <div id="publish-form" class="form">
       <label>岗位名称</label>
       <input v-model="form.title" placeholder="如：加油站营业员">
       <label>部门</label>
@@ -97,26 +119,33 @@ function submit(publishNow: boolean) {
 </template>
 
 <style scoped>
+.publish-page {
+  background: #f5f6f8;
+}
+.stats-wrap {
+  background: linear-gradient(180deg, #5b4fdb 0%, #7c6ff0 100px, #f5f6f8 180px);
+  padding: 12px 12px 4px;
+}
 .form {
-  margin: 8px 16px 28px;
-  background: #fff;
-  border-radius: 14px;
-  padding: 14px;
+  padding: 8px 16px 28px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  box-shadow: var(--mini-shadow);
+  gap: 6px;
 }
-label {
+.form label {
+  margin-top: 8px;
   font-size: 12px;
   color: #6b7280;
 }
-input,
-textarea {
+.form input,
+.form textarea {
+  width: 100%;
+  box-sizing: border-box;
   border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 10px 12px;
   font-size: 14px;
+  background: #fff;
 }
 .inline {
   display: flex;
@@ -127,23 +156,26 @@ textarea {
   flex: 1;
 }
 .actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 8px;
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+.ghost,
+.mini-btn-primary {
+  flex: 1;
+  height: 42px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
 }
 .ghost {
-  height: 42px;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  border: 1px solid #c7c3f5;
   background: #fff;
+  color: #5b4fdb;
 }
 .mini-btn-primary {
-  height: 42px;
   border: none;
-  border-radius: 10px;
-  background: #5b4fdb;
+  background: linear-gradient(90deg, #7c6ff0, #5b4fdb);
   color: #fff;
-  font-weight: 600;
 }
 </style>

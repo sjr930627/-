@@ -11,9 +11,11 @@ import {
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import {
   buildHallTaskRow,
   getWorkerClaimedQuantity,
+  resolvePricingForTask,
 } from '@/services/miniTask'
 import {
   getCategoryLabel,
@@ -27,6 +29,7 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
+const { ensureActionAllowed } = useMiniAppActionGate()
 
 const taskCategory = ref<MiniTaskCategory>('main')
 
@@ -60,10 +63,10 @@ const allTaskRows = computed(() =>
         (!enterpriseNameFilter.value || t.enterpriseName === enterpriseNameFilter.value),
     )
     .map((t) => {
-      const taskType = store.taskTypes.find((tt) => tt.id === t.taskTypeId)
+      const pricing = resolvePricingForTask(t, store.taskTypes)
       const myCount = getWorkerClaimedQuantity(store.taskInstances, t.id, employeeId.value)
       const extra = getTaskHallExtra(t.id)
-      return buildHallTaskRow(t, taskType, myCount, extra)
+      return buildHallTaskRow(t, pricing, myCount, extra)
     }),
 )
 
@@ -79,8 +82,16 @@ function openTaskDetail(taskId: string) {
   router.push(`/miniapp/task-hall/task/${taskId}`)
 }
 
-function openTaskClaim(taskId: string, e: Event) {
+async function openTaskClaim(taskId: string, e: Event) {
   e.stopPropagation()
+  const task = store.tasks.find((t) => t.id === taskId)
+  const allowed = await ensureActionAllowed({
+    requireDepartment: true,
+    enterpriseId: task?.enterpriseId,
+    from: 'claim',
+    redirectAfterFace: `/miniapp/task-hall/task/${taskId}/claim`,
+  })
+  if (!allowed) return
   router.push(`/miniapp/task-hall/task/${taskId}/claim`)
 }
 </script>

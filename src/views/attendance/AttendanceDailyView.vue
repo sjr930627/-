@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
+  buildConfirmHoursWarning,
   buildDailyAttendanceList,
+  canConfirmWorkHours,
   canCorrectWorkHours,
+  filterAssignmentsBySource,
   getStatusLabel,
   getStatusTagType,
   isDailyAttendanceVisible,
 } from '@/services/attendance'
-import { getWeekday } from '@/utils'
+import { getWeekday, getDepartmentName } from '@/utils'
+import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
+import type { AttendanceHoursAudit } from '@/types'
 
 const props = withDefaults(
   defineProps<{
@@ -17,14 +22,17 @@ const props = withDefaults(
     enterpriseId?: string
     initialDate?: string
     initialEmployeeId?: string
+    /** 排班考勤 / 抢班考勤 */
+    assignmentSource?: 'schedule' | 'grab'
   }>(),
-  { embedded: false },
+  { embedded: false, assignmentSource: 'schedule' },
 )
 
 const store = useAppStore()
 const selectedDate = ref(props.initialDate ?? '2026-07-24')
 const filterDept = ref('')
 const filterEmployeeId = ref(props.initialEmployeeId ?? '')
+const selectedKeys = ref<string[]>([])
 
 const scopedEmployees = computed(() => {
   const list = props.enterpriseId
@@ -47,7 +55,21 @@ const correctionTarget = ref<{
 } | null>(null)
 const correctionForm = ref({ workHours: 0, note: '' })
 
+const auditVisible = ref(false)
+const auditTarget = ref<{
+  employeeName: string
+  date: string
+  history: AttendanceHoursAudit[]
+  correctedBy?: string
+  correctedAt?: string
+  note?: string
+} | null>(null)
+
 onMounted(() => store.syncExceptions())
+
+watch(selectedDate, () => {
+  selectedKeys.value = []
+})
 
 const tableData = computed(() => {
   const employees = scopedEmployees.value.filter((e) => {
@@ -58,7 +80,7 @@ const tableData = computed(() => {
   const daily = buildDailyAttendanceList(
     employees.map((e) => e.id),
     [selectedDate.value],
-    store.assignments,
+    filterAssignmentsBySource(store.assignments, props.assignmentSource),
     store.shifts,
     store.punches,
     store.leaveRequests,
@@ -70,14 +92,24 @@ const tableData = computed(() => {
     .map((d) => {
       const emp = store.employees.find((e) => e.id === d.employeeId)
       const shift = d.shiftId ? store.shifts.find((s) => s.id === d.shiftId) : undefined
+      const override = store.manualOverrides[`${d.employeeId}_${d.date}`]
+      const rowKey = `${d.employeeId}_${d.date}`
+      const enterpriseId = resolveEnterpriseIdByEmployee(emp)
       return {
         ...d,
+        rowKey,
+        enterpriseName: store.enterprises.find((e) => e.id === enterpriseId)?.name ?? '—',
+        departmentName: emp
+          ? getDepartmentName(store.departments, emp.departmentId)
+          : '—',
         employeeName: emp?.name ?? '-',
-        employeeNo: emp?.employeeNo ?? '-',
+        phone: emp?.phone || '—',
         shiftName: shift?.name ?? '-',
         statusLabel: getStatusLabel(d.status),
         tagType: getStatusTagType(d.status),
         canCorrect: canCorrectWorkHours(d.status),
+        canConfirm: canConfirmWorkHours(d),
+        hoursHistory: override?.hoursHistory ?? [],
       }
     })
 })
@@ -89,8 +121,26 @@ const summary = computed(() => {
     normal: list.filter((d) => d.status === 'normal').length,
     abnormal: list.filter((d) => !['normal', 'leave'].includes(d.status)).length,
     leave: list.filter((d) => d.status === 'leave').length,
+    pendingConfirm: list.filter((d) => d.canConfirm).length,
   }
 })
+
+const selectedConfirmable = computed(() =>
+  tableData.value.filter((r) => selectedKeys.value.includes(r.rowKey) && r.canConfirm),
+)
+
+function onSelectionChange(rows: { rowKey: string }[]) {
+  selectedKeys.value = rows.map((r) => r.rowKey)
+}
+
+function rowSelectable(row: (typeof tableData.value)[0]) {
+  return row.canConfirm
+}
+
+function formatTime(iso?: string) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('zh-CN')
+}
 
 function openCorrection(row: (typeof tableData.value)[0]) {
   correctionTarget.value = {
@@ -102,7 +152,7 @@ function openCorrection(row: (typeof tableData.value)[0]) {
   }
   correctionForm.value = {
     workHours: row.workHoursCorrected ? row.workHours : row.scheduledHours,
-    note: row.manualNote ?? '',
+    note: '',
   }
   correctionVisible.value = true
 }
@@ -115,7 +165,7 @@ function submitCorrection() {
   }
   const note = correctionForm.value.note.trim()
   if (!note) {
-    ElMessage.warning('工时确认/矫正必须填写具体原因')
+    ElMessage.warning('矫正原因必填')
     return
   }
   try {
@@ -131,6 +181,83 @@ function submitCorrection() {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   }
 }
+
+async function confirmOne(row: (typeof tableData.value)[0]) {
+  const warning = buildConfirmHoursWarning([
+    {
+      name: row.employeeName,
+      workHours: row.workHours,
+      scheduledHours: row.scheduledHours,
+    },
+  ])
+  if (warning) {
+    try {
+      await ElMessageBox.confirm(warning, '工时异常提醒', {
+        type: 'warning',
+        confirmButtonText: '仍按现工时确认',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+  }
+  try {
+    store.confirmWorkHours(row.employeeId, row.date, { workHours: row.workHours })
+    ElMessage.success(`已确认 ${row.employeeName} 工时 ${row.workHours}h`)
+    selectedKeys.value = selectedKeys.value.filter((k) => k !== row.rowKey)
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '确认失败')
+  }
+}
+
+async function batchConfirm() {
+  const rows = selectedConfirmable.value
+  if (!rows.length) {
+    ElMessage.warning('请先勾选待确认工时的记录')
+    return
+  }
+  const warning = buildConfirmHoursWarning(
+    rows.map((r) => ({
+      name: r.employeeName,
+      workHours: r.workHours,
+      scheduledHours: r.scheduledHours,
+    })),
+  )
+  try {
+    await ElMessageBox.confirm(
+      warning || `将确认所选 ${rows.length} 条记录的当前工时，是否继续？`,
+      warning ? '工时异常提醒' : '批量确认工时',
+      {
+        type: 'warning',
+        confirmButtonText: warning ? '仍按现工时确认' : '确定',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+  const count = store.batchConfirmWorkHours(
+    rows.map((r) => ({
+      employeeId: r.employeeId,
+      date: r.date,
+      workHours: r.workHours,
+    })),
+  )
+  selectedKeys.value = []
+  ElMessage.success(`已批量确认 ${count} 条工时`)
+}
+
+function openAudit(row: (typeof tableData.value)[0]) {
+  auditTarget.value = {
+    employeeName: row.employeeName,
+    date: row.date,
+    history: row.hoursHistory,
+    correctedBy: row.hoursCorrectedBy,
+    correctedAt: row.hoursCorrectedAt,
+    note: row.manualNote,
+  }
+  auditVisible.value = true
+}
 </script>
 
 <template>
@@ -139,12 +266,12 @@ function submitCorrection() {
       <div>
         <h2 class="page-title">日考勤数据</h2>
         <p class="text-muted">
-          {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 仅展示有排班人员，迟到/缺卡可矫正工时
+          {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 可确认工时、批量确认；矫正须填原因并可追溯
         </p>
       </div>
     </div>
     <p v-else class="text-muted tab-desc">
-      {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 仅展示有排班人员，迟到/缺卡可矫正工时
+      {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 可确认工时、批量确认；矫正须填原因并可追溯
     </p>
 
     <el-form inline style="margin-bottom: 16px">
@@ -156,18 +283,34 @@ function submitCorrection() {
           <el-option v-for="d in scopedDepartments" :key="d.id" :label="d.name" :value="d.id" />
         </el-select>
       </el-form-item>
+      <el-form-item>
+        <el-button type="primary" :disabled="!selectedConfirmable.length" @click="batchConfirm">
+          批量确认工时
+          <template v-if="selectedConfirmable.length">（{{ selectedConfirmable.length }}）</template>
+        </el-button>
+      </el-form-item>
     </el-form>
 
     <el-row :gutter="12" style="margin-bottom: 16px">
-      <el-col :span="6"><el-statistic title="应出勤" :value="summary.total" /></el-col>
-      <el-col :span="6"><el-statistic title="正常" :value="summary.normal" /></el-col>
-      <el-col :span="6"><el-statistic title="异常" :value="summary.abnormal" /></el-col>
-      <el-col :span="6"><el-statistic title="请假" :value="summary.leave" /></el-col>
+      <el-col :span="5"><el-statistic title="应出勤" :value="summary.total" /></el-col>
+      <el-col :span="5"><el-statistic title="正常" :value="summary.normal" /></el-col>
+      <el-col :span="5"><el-statistic title="异常" :value="summary.abnormal" /></el-col>
+      <el-col :span="4"><el-statistic title="请假" :value="summary.leave" /></el-col>
+      <el-col :span="5"><el-statistic title="待确认工时" :value="summary.pendingConfirm" /></el-col>
     </el-row>
 
-    <el-table :data="tableData" border stripe>
-      <el-table-column prop="employeeNo" label="工号" width="90" />
+    <el-table
+      :data="tableData"
+      border
+      stripe
+      row-key="rowKey"
+      @selection-change="onSelectionChange"
+    >
+      <el-table-column type="selection" width="48" :selectable="rowSelectable" />
+      <el-table-column prop="enterpriseName" label="企业" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="departmentName" label="部门" min-width="110" show-overflow-tooltip />
       <el-table-column prop="employeeName" label="姓名" width="100" />
+      <el-table-column prop="phone" label="手机号" width="130" />
       <el-table-column prop="shiftName" label="排班" width="90" />
       <el-table-column prop="clockIn" label="上班" width="80">
         <template #default="{ row }">{{ row.clockIn ?? '—' }}</template>
@@ -175,11 +318,14 @@ function submitCorrection() {
       <el-table-column prop="clockOut" label="下班" width="80">
         <template #default="{ row }">{{ row.clockOut ?? '—' }}</template>
       </el-table-column>
-      <el-table-column label="工时(h)" width="110">
+      <el-table-column label="工时(h)" width="130">
         <template #default="{ row }">
           {{ row.workHours }}
-          <el-tag v-if="row.workHoursCorrected" size="small" type="info" style="margin-left: 4px">
+          <el-tag v-if="row.workHoursCorrected" size="small" type="warning" class="hour-tag">
             已矫正
+          </el-tag>
+          <el-tag v-else-if="row.hoursConfirmed" size="small" type="success" class="hour-tag">
+            已确认
           </el-tag>
         </template>
       </el-table-column>
@@ -188,14 +334,34 @@ function submitCorrection() {
           <el-tag :type="row.tagType" size="small">{{ row.statusLabel }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="备注" min-width="120">
+      <el-table-column label="校正信息" min-width="180">
         <template #default="{ row }">
-          <span v-if="row.manualNote" class="text-muted">{{ row.manualNote }}</span>
-          <span v-else-if="row.manualStatus" class="text-muted">人工修正</span>
+          <template v-if="row.workHoursCorrected">
+            <div class="audit-line">{{ row.hoursCorrectedBy || '—' }} · {{ formatTime(row.hoursCorrectedAt) }}</div>
+            <div class="audit-reason text-muted" :title="row.manualNote">
+              {{ row.manualNote || '—' }}
+            </div>
+            <el-button link type="primary" @click="openAudit(row)">查看记录</el-button>
+          </template>
+          <span v-else class="text-muted">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="100" fixed="right">
+      <el-table-column label="工时确认" min-width="160">
         <template #default="{ row }">
+          <template v-if="row.hoursConfirmed">
+            <el-tag size="small" type="success">已确认</el-tag>
+            <div class="audit-line">{{ row.hoursConfirmedBy || '—' }}</div>
+            <div class="audit-reason text-muted">{{ formatTime(row.hoursConfirmedAt) }}</div>
+          </template>
+          <el-tag v-else-if="row.canConfirm" size="small" type="warning">待确认</el-tag>
+          <span v-else class="text-muted">—</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="180" fixed="right">
+        <template #default="{ row }">
+          <el-button v-if="row.canConfirm" link type="success" @click="confirmOne(row)">
+            确认工时
+          </el-button>
           <el-button v-if="row.canCorrect" link type="primary" @click="openCorrection(row)">
             工时矫正
           </el-button>
@@ -204,14 +370,14 @@ function submitCorrection() {
     </el-table>
   </div>
 
-  <el-dialog v-model="correctionVisible" title="工时矫正" width="420px" destroy-on-close>
+  <el-dialog v-model="correctionVisible" title="工时矫正" width="460px" destroy-on-close>
     <template v-if="correctionTarget">
       <p class="correction-meta">
         {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} · 排班
-        {{ correctionTarget.scheduledHours }}h
+        {{ correctionTarget.scheduledHours }}h · 当前 {{ correctionTarget.workHours }}h
       </p>
-      <el-form label-width="90px">
-        <el-form-item label="矫正工时">
+      <el-form label-width="100px">
+        <el-form-item label="矫正工时" required>
           <el-input-number
             v-model="correctionForm.workHours"
             :min="0"
@@ -221,14 +387,45 @@ function submitCorrection() {
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="correctionForm.note" type="textarea" :rows="2" placeholder="矫正原因（可选）" />
+        <el-form-item label="矫正原因" required>
+          <el-input
+            v-model="correctionForm.note"
+            type="textarea"
+            :rows="3"
+            maxlength="200"
+            show-word-limit
+            placeholder="必填，如：漏打卡已核实，按实际出勤矫正"
+          />
         </el-form-item>
       </el-form>
     </template>
     <template #footer>
       <el-button @click="correctionVisible = false">取消</el-button>
       <el-button type="primary" @click="submitCorrection">确认矫正</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="auditVisible" title="工时操作记录" width="560px" destroy-on-close>
+    <template v-if="auditTarget">
+      <p class="correction-meta">{{ auditTarget.employeeName }} · {{ auditTarget.date }}</p>
+      <el-descriptions v-if="auditTarget.correctedAt" :column="1" border size="small" class="audit-summary">
+        <el-descriptions-item label="最近矫正人">{{ auditTarget.correctedBy || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="操作时间">{{ formatTime(auditTarget.correctedAt) }}</el-descriptions-item>
+        <el-descriptions-item label="矫正原因">{{ auditTarget.note || '—' }}</el-descriptions-item>
+      </el-descriptions>
+      <el-table :data="auditTarget.history" border size="small" empty-text="暂无操作记录" style="margin-top: 12px">
+        <el-table-column label="操作" width="80">
+          <template #default="{ row }">
+            {{ row.action === 'correct' ? '矫正' : '确认' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="workHours" label="工时" width="70" />
+        <el-table-column prop="operator" label="操作员" width="100" />
+        <el-table-column label="时间" width="160">
+          <template #default="{ row }">{{ formatTime(row.operatedAt) }}</template>
+        </el-table-column>
+        <el-table-column prop="reason" label="原因" min-width="140" show-overflow-tooltip />
+      </el-table>
     </template>
   </el-dialog>
 </template>
@@ -242,5 +439,27 @@ function submitCorrection() {
   margin: 0 0 16px;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+
+.hour-tag {
+  margin-left: 4px;
+}
+
+.audit-line {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.audit-reason {
+  font-size: 12px;
+  margin: 2px 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+
+.audit-summary {
+  margin-bottom: 4px;
 }
 </style>

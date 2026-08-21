@@ -6,7 +6,7 @@ import { ArrowLeft, Check, Search } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { usePortal } from '@/composables/usePortal'
 import { billRemainingInvoiceAmount, formatMoney, formatPeriod } from '@/constants/payrollBill'
-import { getEnterpriseInvoiceCategories } from '@/constants/enterprise'
+import { getEnterpriseInvoiceCategories, formatEnterpriseInvoiceCategoryLabel } from '@/constants/enterprise'
 import {
   allocateAmountToBills,
   billFeePreviewRows,
@@ -15,6 +15,7 @@ import {
   maxInvoiceAmountForBills,
   mergeBillFeePreviewRows,
   normalizeInvoiceType,
+  profilesForEnterprise,
   resolveInvoiceStatusMeta,
 } from '@/constants/invoice'
 import type { InvoiceType } from '@/types'
@@ -44,6 +45,7 @@ const statusMeta = computed(() =>
 const form = ref({
   id: '' as string | undefined,
   billIds: [] as string[],
+  invoiceProfileId: '' as string,
   invoiceType: 'electronic_special' as InvoiceType,
   invoiceCategory: '',
   amount: 0,
@@ -58,19 +60,63 @@ const enterpriseId = computed(() => {
   return isEnterprise.value ? store.currentEnterprise?.id : undefined
 })
 
-const invoiceProfile = computed(() =>
-  defaultInvoiceProfile(store.enterpriseInvoiceProfiles, enterpriseId.value),
+const invoiceProfiles = computed(() =>
+  profilesForEnterprise(store.enterpriseInvoiceProfiles, enterpriseId.value),
 )
+
+const invoiceProfile = computed(() => {
+  if (form.value.invoiceProfileId) {
+    return invoiceProfiles.value.find((item) => item.id === form.value.invoiceProfileId)
+  }
+  return defaultInvoiceProfile(store.enterpriseInvoiceProfiles, enterpriseId.value)
+})
 
 const invoiceCategories = computed(() =>
   getEnterpriseInvoiceCategories(store.enterprises, enterpriseId.value),
 )
 
+const invoiceTypeLockedByCategory = computed(() => invoiceCategories.value.length > 0)
+
+function syncInvoiceTypeFromCategory(categoryName: string) {
+  const matched = invoiceCategories.value.find((item) => item.name === categoryName)
+  if (matched) {
+    form.value.invoiceType = matched.invoiceType
+  }
+}
+
+function ensureInvoiceCategorySelected(categories = invoiceCategories.value) {
+  if (isReadonly.value || !categories.length) return
+  const exists = categories.some((item) => item.name === form.value.invoiceCategory)
+  if (!exists) {
+    form.value.invoiceCategory = categories[0].name
+  }
+  if (form.value.invoiceCategory) {
+    syncInvoiceTypeFromCategory(form.value.invoiceCategory)
+  }
+}
+
+const profileOptions = computed(() =>
+  invoiceProfiles.value.map((item) => ({
+    value: item.id,
+    label: item.isDefault
+      ? `${item.title}${item.remark ? `（${item.remark}）` : ''} · 默认`
+      : `${item.title}${item.remark ? `（${item.remark}）` : ''}`,
+  })),
+)
+
 const displayProfile = computed(() => {
   if (isReadonly.value && application.value) {
-    const profile = store.enterpriseInvoiceProfiles.find(
-      (item) => item.enterpriseId === application.value!.enterpriseId,
-    )
+    const profile =
+      (application.value.invoiceProfileId
+        ? store.enterpriseInvoiceProfiles.find((item) => item.id === application.value!.invoiceProfileId)
+        : undefined) ??
+      store.enterpriseInvoiceProfiles.find(
+        (item) =>
+          item.enterpriseId === application.value!.enterpriseId &&
+          item.title === application.value!.title &&
+          item.taxNo === application.value!.taxNo,
+      ) ??
+      defaultInvoiceProfile(store.enterpriseInvoiceProfiles, application.value.enterpriseId)
     return {
       title: application.value.title,
       taxNo: application.value.taxNo,
@@ -82,6 +128,40 @@ const displayProfile = computed(() => {
   }
   return invoiceProfile.value
 })
+
+function matchProfileByPayer(billIds: string[]) {
+  if (!billIds.length || !invoiceProfiles.value.length) return
+  const firstBill = store.settlementBills.find((bill) => bill.id === billIds[0])
+  if (!firstBill) return
+  const payerName = firstBill.payerEnterpriseName?.trim()
+  const payerCode = firstBill.payerCreditCode?.trim()
+  if (!payerName && !payerCode) return
+  const matched = invoiceProfiles.value.find((profile) => {
+    if (payerCode && profile.taxNo.replace(/\s/g, '') === payerCode.replace(/\s/g, '')) return true
+    if (payerName && profile.title === payerName) return true
+    return false
+  })
+  if (matched) {
+    form.value.invoiceProfileId = matched.id
+    if (!invoiceTypeLockedByCategory.value) {
+      form.value.invoiceType = normalizeInvoiceType(matched.defaultInvoiceType)
+    }
+  }
+}
+
+function ensureDefaultProfileSelected() {
+  if (form.value.invoiceProfileId) {
+    const exists = invoiceProfiles.value.some((item) => item.id === form.value.invoiceProfileId)
+    if (exists) return
+  }
+  const fallback = defaultInvoiceProfile(store.enterpriseInvoiceProfiles, enterpriseId.value)
+  if (fallback) {
+    form.value.invoiceProfileId = fallback.id
+    if (!invoiceTypeLockedByCategory.value) {
+      form.value.invoiceType = normalizeInvoiceType(fallback.defaultInvoiceType)
+    }
+  }
+}
 
 const invoiceableBills = computed(() =>
   store.settlementBills.filter((bill) => {
@@ -136,22 +216,43 @@ watch(
     if (!isReadonly.value && billIds.length) {
       const firstBill = store.settlementBills.find((bill) => bill.id === billIds[0])
       if (firstBill) {
-        const categories = getEnterpriseInvoiceCategories(store.enterprises, firstBill.enterpriseId)
-        if (categories.length && !categories.includes(form.value.invoiceCategory)) {
-          form.value.invoiceCategory = categories[0]
-        }
+        ensureInvoiceCategorySelected(
+          getEnterpriseInvoiceCategories(store.enterprises, firstBill.enterpriseId),
+        )
       }
+      matchProfileByPayer(billIds)
     }
   },
   { deep: true },
 )
 
-watch(invoiceCategories, (categories) => {
-  if (isReadonly.value) return
-  if (categories.length && !categories.includes(form.value.invoiceCategory)) {
-    form.value.invoiceCategory = categories[0]
-  }
+watch(invoiceCategories, () => {
+  ensureInvoiceCategorySelected()
 })
+
+watch(invoiceProfiles, () => {
+  if (isReadonly.value) return
+  ensureDefaultProfileSelected()
+})
+
+watch(
+  () => form.value.invoiceCategory,
+  (category) => {
+    if (isReadonly.value || !category) return
+    syncInvoiceTypeFromCategory(category)
+  },
+)
+
+watch(
+  () => form.value.invoiceProfileId,
+  (profileId) => {
+    if (isReadonly.value || !profileId || invoiceTypeLockedByCategory.value) return
+    const profile = invoiceProfiles.value.find((item) => item.id === profileId)
+    if (profile) {
+      form.value.invoiceType = normalizeInvoiceType(profile.defaultInvoiceType)
+    }
+  },
+)
 
 onMounted(() => {
   if (isReadonly.value) {
@@ -159,10 +260,7 @@ onMounted(() => {
     return
   }
 
-  const profile = invoiceProfile.value
-  if (profile) {
-    form.value.invoiceType = normalizeInvoiceType(profile.defaultInvoiceType)
-  }
+  ensureDefaultProfileSelected()
 
   const draftId = route.query.draftId
   const resubmitId = route.query.resubmitId
@@ -180,6 +278,7 @@ onMounted(() => {
     form.value.billIds = [billId]
     const bill = store.settlementBills.find((item) => item.id === billId)
     if (bill) form.value.amount = billRemainingInvoiceAmount(bill)
+    matchProfileByPayer([billId])
   }
 })
 
@@ -199,6 +298,7 @@ function loadApplicationForView() {
   form.value = {
     id: item.id,
     billIds: item.bills.map((bill) => bill.billId),
+    invoiceProfileId: item.invoiceProfileId ?? '',
     invoiceType: normalizeInvoiceType(item.invoiceType),
     invoiceCategory: item.invoiceCategory ?? '',
     amount: item.amount,
@@ -218,6 +318,10 @@ function loadExistingApplication(id: string, status: 'draft' | 'rejected') {
   form.value = {
     id: applicationItem.id,
     billIds: applicationItem.bills.map((bill) => bill.billId),
+    invoiceProfileId:
+      applicationItem.invoiceProfileId ??
+      defaultInvoiceProfile(store.enterpriseInvoiceProfiles, applicationItem.enterpriseId)?.id ??
+      '',
     invoiceType: normalizeInvoiceType(applicationItem.invoiceType),
     invoiceCategory: applicationItem.invoiceCategory ?? '',
     amount: applicationItem.amount,
@@ -226,12 +330,14 @@ function loadExistingApplication(id: string, status: 'draft' | 'rejected') {
     recipientName: applicationItem.recipientName ?? '',
     email: applicationItem.email ?? '',
   }
+  ensureDefaultProfileSelected()
 }
 
 function buildPayload() {
   const bills = selectedBills.value
   const profile = invoiceProfile.value
   if (!bills.length || !profile) throw new Error('请完善申请信息')
+  if (!form.value.invoiceProfileId) throw new Error('请选择付款主体开票抬头')
   if (!form.value.invoiceContent.trim()) throw new Error('请填写开票内容')
   if (!form.value.invoiceCategory) throw new Error('请选择开票类目')
   if (!form.value.recipientName.trim()) throw new Error('请填写收票人')
@@ -253,6 +359,7 @@ function buildPayload() {
     bills: billRefs,
     enterpriseId: firstBill.enterpriseId,
     enterpriseName: firstBill.enterpriseName,
+    invoiceProfileId: profile.id,
     invoiceType: form.value.invoiceType,
     invoiceContent: form.value.invoiceContent.trim(),
     invoiceCategory: form.value.invoiceCategory,
@@ -372,7 +479,7 @@ function downloadInvoice() {
           {{
             isReadonly
               ? '查看发票申请完整信息，内容与申请页一致'
-              : '选择一张或多张已完结账单，填写开票与收票信息后提交审核'
+              : '选择已完结账单与付款主体抬头，填写开票与收票信息后提交审核'
           }}
         </p>
       </div>
@@ -495,11 +602,46 @@ function downloadInvoice() {
             <el-form-item v-if="isReadonly && application" label="企业">
               <el-input :model-value="application.enterpriseName" disabled />
             </el-form-item>
+            <el-form-item label="付款主体 / 开票抬头" required>
+              <el-input
+                v-if="isReadonly"
+                :model-value="application?.title || displayProfile?.title || '—'"
+                disabled
+              />
+              <template v-else>
+                <el-select
+                  v-model="form.invoiceProfileId"
+                  :disabled="!profileOptions.length"
+                  filterable
+                  placeholder="请选择付款主体对应的开票抬头"
+                  style="width: 100%"
+                >
+                  <el-option
+                    v-for="item in profileOptions"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value"
+                  />
+                </el-select>
+                <p v-if="!profileOptions.length" class="field-tip">
+                  尚未维护开票抬头，请先在发票管理中新增付款主体抬头
+                </p>
+                <p v-else class="field-tip">
+                  可按账单付款企业自动匹配；也可手动切换其他已维护抬头
+                </p>
+              </template>
+            </el-form-item>
             <el-form-item label="发票类型" required>
-              <el-radio-group v-model="form.invoiceType" :disabled="isReadonly">
+              <el-radio-group
+                v-model="form.invoiceType"
+                :disabled="isReadonly || invoiceTypeLockedByCategory"
+              >
                 <el-radio value="electronic_special">{{ invoiceTypeMap.electronic_special }}</el-radio>
                 <el-radio value="electronic_normal">{{ invoiceTypeMap.electronic_normal }}</el-radio>
               </el-radio-group>
+              <p v-if="!isReadonly && invoiceTypeLockedByCategory" class="field-tip">
+                发票类型与开票类目一一对应，选择类目后自动带出
+              </p>
             </el-form-item>
             <el-form-item label="开票金额" required>
               <el-input-number
@@ -532,9 +674,9 @@ function downloadInvoice() {
                 >
                   <el-option
                     v-for="item in invoiceCategories"
-                    :key="item"
-                    :label="item"
-                    :value="item"
+                    :key="`${item.name}-${item.invoiceType}`"
+                    :label="formatEnterpriseInvoiceCategoryLabel(item)"
+                    :value="item.name"
                   />
                 </el-select>
                 <p v-if="!invoiceCategories.length" class="field-tip">
@@ -584,25 +726,34 @@ function downloadInvoice() {
         <section class="side-card">
           <div class="side-card-header">
             <span>开票抬头</span>
+            <el-tag v-if="!isReadonly && invoiceProfile?.isDefault" size="small" type="success">默认</el-tag>
           </div>
           <template v-if="displayProfile">
             <dl class="profile-list">
               <div><dt>企业名称</dt><dd>{{ displayProfile.title }}</dd></div>
               <div><dt>纳税人识别号</dt><dd>{{ displayProfile.taxNo }}</dd></div>
-              <div><dt>注册地址</dt><dd>{{ displayProfile.address }}</dd></div>
-              <div><dt>联系电话</dt><dd>{{ displayProfile.phone }}</dd></div>
-              <div><dt>开户银行</dt><dd>{{ displayProfile.bankName }}</dd></div>
-              <div><dt>银行账号</dt><dd>{{ displayProfile.bankAccount }}</dd></div>
+              <div><dt>注册地址</dt><dd>{{ displayProfile.address || '—' }}</dd></div>
+              <div><dt>联系电话</dt><dd>{{ displayProfile.phone || '—' }}</dd></div>
+              <div><dt>开户银行</dt><dd>{{ displayProfile.bankName || '—' }}</dd></div>
+              <div><dt>银行账号</dt><dd>{{ displayProfile.bankAccount || '—' }}</dd></div>
             </dl>
           </template>
+          <el-empty v-else description="请选择付款主体抬头" :image-size="64" />
         </section>
 
         <section class="side-card">
           <div class="side-card-header"><span>费用明细预览</span></div>
           <div v-if="selectedBills.length" class="fee-preview">
-            <div v-for="row in feePreviewRows" :key="row.label" class="fee-row" :class="{ highlight: row.highlight }">
+            <div
+              v-for="row in feePreviewRows"
+              :key="row.label"
+              class="fee-row"
+              :class="{ highlight: row.highlight, danger: row.danger || row.amount < 0 }"
+            >
               <span>{{ row.label }}</span>
-              <strong>{{ formatMoney(Math.abs(row.amount)) }}</strong>
+              <strong>
+                {{ row.amount < 0 ? '-' : '' }}{{ formatMoney(Math.abs(row.amount)) }}
+              </strong>
             </div>
           </div>
           <el-empty v-else description="请先选择关联账单" :image-size="64" />
@@ -631,7 +782,7 @@ function downloadInvoice() {
           <div class="side-card-header"><span>申请须知</span></div>
           <ol>
             <li>仅已完结（已付款）账单可申请开票，支持多账单合并。</li>
-            <li>请确保开票金额不超过所选账单可开票上限合计。</li>
+            <li>请选择付款主体对应的开票抬头，金额不超过所选账单可开票上限。</li>
             <li>提交后将进入财务审核，审核通过后开具电子发票。</li>
             <li>电子发票将发送至您填写的邮箱，请注意查收。</li>
           </ol>
@@ -778,6 +929,10 @@ function downloadInvoice() {
 .fee-row.highlight {
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.fee-row.danger strong {
+  color: var(--el-color-danger);
 }
 
 .notice-card ol {

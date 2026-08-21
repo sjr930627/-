@@ -9,6 +9,7 @@ import {
   formatPeriod,
   resolveBillStatusMeta,
 } from '@/constants/payrollBill'
+import { isUnassignedDepartment } from '@/constants/department'
 import type { SettlementBill, SettlementBillSourceType } from '@/types'
 import {
   billingRulesForEnterprise,
@@ -39,8 +40,22 @@ const saving = ref(false)
 const uploadRef = ref<UploadInstance>()
 const importFile = ref<File | null>(null)
 
+const confirmVisible = ref(false)
+const confirming = ref(false)
+const confirmingBill = ref<SettlementBill | null>(null)
+const confirmForm = ref({
+  payerEnterpriseName: '',
+  payerCreditCode: '',
+})
+
+/** 部门选择：all = 全公司，其它为部门 id */
+const BILL_DEPT_ALL = 'all'
+
 const form = ref({
   enterpriseId: '',
+  departmentKey: BILL_DEPT_ALL,
+  payerEnterpriseName: '',
+  payerCreditCode: '',
   periodRange: defaultPeriodRange() as [string, string],
   sourceType: 'rule' as SettlementBillSourceType,
   billingRuleId: '',
@@ -60,13 +75,52 @@ const availableImportTemplates = computed(() =>
     : store.billImportTemplates,
 )
 
+const departmentOptions = computed(() => {
+  if (!form.value.enterpriseId) return []
+  return store.departments
+    .filter(
+      (d) =>
+        d.enterpriseId === form.value.enterpriseId &&
+        !isUnassignedDepartment(d.id) &&
+        d.orgType !== 'enterprise',
+    )
+    .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-CN'))
+})
+
+function resolveDepartmentPayload() {
+  if (form.value.departmentKey === BILL_DEPT_ALL) {
+    return {
+      departmentScope: 'all' as const,
+      departmentId: undefined,
+      departmentName: '全公司',
+    }
+  }
+  const dept = store.departments.find((d) => d.id === form.value.departmentKey)
+  if (!dept) throw new Error('请选择部门')
+  return {
+    departmentScope: 'department' as const,
+    departmentId: dept.id,
+    departmentName: dept.name,
+  }
+}
+
 watch(
   () => form.value.enterpriseId,
-  () => {
+  (enterpriseId) => {
+    form.value.departmentKey = BILL_DEPT_ALL
     const rules = availableRules.value
     form.value.billingRuleId = rules.find((r) => r.isDefault)?.id ?? rules[0]?.id ?? ''
     const templates = availableImportTemplates.value
     form.value.importTemplateId = templates[0]?.id ?? ''
+    const enterprise = store.enterprises.find((e) => e.id === enterpriseId)
+    if (enterprise) {
+      if (!form.value.payerEnterpriseName.trim()) {
+        form.value.payerEnterpriseName = enterprise.name
+      }
+      if (!form.value.payerCreditCode.trim()) {
+        form.value.payerCreditCode = enterprise.creditCode ?? ''
+      }
+    }
   },
 )
 
@@ -116,11 +170,28 @@ function openDetail(row: SettlementBill) {
 }
 
 function confirmBill(row: SettlementBill) {
+  confirmingBill.value = row
+  confirmForm.value = {
+    payerEnterpriseName: row.payerEnterpriseName ?? row.enterpriseName,
+    payerCreditCode: row.payerCreditCode ?? '',
+  }
+  confirmVisible.value = true
+}
+
+async function submitConfirmBill() {
+  if (!confirmingBill.value) return
+  confirming.value = true
   try {
-    store.confirmSettlementBill(row.id)
+    store.confirmSettlementBill(confirmingBill.value.id, {
+      payerEnterpriseName: confirmForm.value.payerEnterpriseName,
+      payerCreditCode: confirmForm.value.payerCreditCode,
+    })
+    confirmVisible.value = false
     ElMessage.success('账单已确认，状态已更新为待付款')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  } finally {
+    confirming.value = false
   }
 }
 
@@ -139,8 +210,13 @@ async function voidBill(row: SettlementBill) {
 }
 
 function resetForm() {
+  const enterpriseId = store.enterprises[0]?.id ?? ''
+  const enterprise = store.enterprises.find((e) => e.id === enterpriseId)
   form.value = {
-    enterpriseId: store.enterprises[0]?.id ?? '',
+    enterpriseId,
+    departmentKey: BILL_DEPT_ALL,
+    payerEnterpriseName: enterprise?.name ?? '',
+    payerCreditCode: enterprise?.creditCode ?? '',
     periodRange: defaultPeriodRange(),
     sourceType: 'rule',
     billingRuleId: '',
@@ -167,11 +243,13 @@ function handleFileChange(file: UploadFile) {
 
 async function buildBillPayload() {
   if (!form.value.enterpriseId) throw new Error('请选择企业')
+  if (!form.value.departmentKey) throw new Error('请选择部门')
   if (!form.value.periodRange?.[0] || !form.value.periodRange?.[1]) {
     throw new Error('请选择结算周期')
   }
   const [periodStart, periodEnd] = form.value.periodRange
   if (periodStart > periodEnd) throw new Error('结算周期起始日不能晚于结束日')
+  const department = resolveDepartmentPayload()
 
   if (form.value.sourceType === 'rule') {
     if (!form.value.billingRuleId) throw new Error('请选择计费规则')
@@ -180,6 +258,9 @@ async function buildBillPayload() {
     const generated = generateBillFromBillingRule(rule, form.value.enterpriseId)
     return {
       enterpriseId: form.value.enterpriseId,
+      ...department,
+      payerEnterpriseName: form.value.payerEnterpriseName,
+      payerCreditCode: form.value.payerCreditCode,
       periodStart,
       periodEnd,
       sourceType: 'rule' as const,
@@ -210,6 +291,9 @@ async function buildBillPayload() {
   })
   return {
     enterpriseId: form.value.enterpriseId,
+    ...department,
+    payerEnterpriseName: form.value.payerEnterpriseName,
+    payerCreditCode: form.value.payerCreditCode,
     periodStart,
     periodEnd,
     sourceType: 'excel' as const,
@@ -291,6 +375,12 @@ function applyInvoice(row: SettlementBill) {
         </template>
       </el-table-column>
       <el-table-column v-if="!isEnterprise" prop="enterpriseName" label="企业" min-width="160" />
+      <el-table-column prop="departmentName" label="部门" width="120">
+        <template #default="{ row }">{{ row.departmentName || '全公司' }}</template>
+      </el-table-column>
+      <el-table-column prop="payerEnterpriseName" label="付款企业" min-width="160">
+        <template #default="{ row }">{{ row.payerEnterpriseName || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="providerLabel" label="服务商" min-width="180" />
       <el-table-column prop="periodLabel" label="结算周期" min-width="200" />
       <el-table-column prop="payrollLabel" label="结算金额" width="130" align="right" />
@@ -360,11 +450,11 @@ function applyInvoice(row: SettlementBill) {
     <el-dialog
       v-model="dialogVisible"
       title="新增账单"
-      width="560px"
+      width="600px"
       destroy-on-close
       @closed="resetForm"
     >
-      <el-form label-width="96px">
+      <el-form label-width="120px">
         <el-form-item label="企业" required>
           <el-select v-model="form.enterpriseId" placeholder="选择企业" filterable style="width: 100%">
             <el-option
@@ -374,6 +464,39 @@ function applyInvoice(row: SettlementBill) {
               :value="ent.id"
             />
           </el-select>
+        </el-form-item>
+        <el-form-item label="部门" required>
+          <el-select
+            v-model="form.departmentKey"
+            placeholder="选择全公司或部门"
+            filterable
+            :disabled="!form.enterpriseId"
+            style="width: 100%"
+          >
+            <el-option label="全公司" :value="BILL_DEPT_ALL" />
+            <el-option
+              v-for="dept in departmentOptions"
+              :key="dept.id"
+              :label="dept.name"
+              :value="dept.id"
+            />
+          </el-select>
+          <p class="field-hint">必选：可选择全公司，或指定其中一个部门</p>
+        </el-form-item>
+        <el-form-item label="付款企业">
+          <el-input
+            v-model="form.payerEnterpriseName"
+            placeholder="非必填，默认可用企业名称"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item label="统一信用代码">
+          <el-input
+            v-model="form.payerCreditCode"
+            placeholder="非必填，付款企业统一社会信用代码"
+            clearable
+            maxlength="18"
+          />
         </el-form-item>
         <el-form-item label="结算周期" required>
           <el-date-picker
@@ -476,6 +599,34 @@ function applyInvoice(row: SettlementBill) {
         <el-button type="primary" :loading="saving" @click="saveBill">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="confirmVisible"
+      title="确认账单"
+      width="480px"
+      destroy-on-close
+    >
+      <p class="confirm-tip">确认前可修改付款企业与统一信用代码（非必填）</p>
+      <el-form label-width="120px">
+        <el-form-item label="付款企业">
+          <el-input v-model="confirmForm.payerEnterpriseName" clearable placeholder="付款企业名称" />
+        </el-form-item>
+        <el-form-item label="统一信用代码">
+          <el-input
+            v-model="confirmForm.payerCreditCode"
+            clearable
+            maxlength="18"
+            placeholder="统一社会信用代码"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="confirmVisible = false">取消</el-button>
+        <el-button type="primary" :loading="confirming" @click="submitConfirmBill">
+          确认账单
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -485,6 +636,12 @@ function applyInvoice(row: SettlementBill) {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   line-height: 1.5;
+}
+
+.confirm-tip {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 
 .upload-block {

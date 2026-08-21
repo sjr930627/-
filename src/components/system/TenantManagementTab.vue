@@ -134,13 +134,20 @@ function saveTenant() {
       if (ent && adminAccount) store.ensureEnterpriseAdminAccount(ent)
       ElMessage.success('租户信息已更新')
     } else {
+      const shortName =
+        tenantForm.value.shortName.trim() || tenantForm.value.name.trim().slice(0, 6)
+      const logoLabel = shortName.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').slice(0, 2) || '企'
+      const logoUrl = `data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" rx="28" fill="#5b4fdb"/><text x="80" y="96" text-anchor="middle" fill="#fff" font-size="48" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-weight="700">${logoLabel}</text></svg>`,
+      )}`
       const ent = store.addEnterprise({
         name: tenantForm.value.name.trim(),
-        shortName: tenantForm.value.shortName.trim() || tenantForm.value.name.trim(),
+        shortName,
         contactPerson: tenantForm.value.contactPerson.trim(),
         contactPhone: tenantForm.value.contactPhone.trim(),
         creditCode: tenantForm.value.creditCode.trim() || '91330000MA0000000X',
         address: tenantForm.value.address.trim() || undefined,
+        logoUrl,
         enterpriseOwnerIds: tenantForm.value.enterpriseOwnerIds,
         serviceModules: normalizeEnterpriseModules(tenantForm.value.serviceModules),
         adminAccount,

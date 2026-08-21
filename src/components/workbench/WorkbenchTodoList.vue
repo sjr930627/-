@@ -18,10 +18,6 @@ const filteredTodos = computed(() => {
   return props.todos
 })
 
-function levelLabel(level: keyof typeof workbenchReminderLevelMap) {
-  return workbenchReminderLevelMap[level].label
-}
-
 function deadlineClass(level: keyof typeof workbenchReminderLevelMap) {
   if (level === 'urgent') return 'deadline-urgent'
   if (level === 'important') return 'deadline-important'
@@ -36,10 +32,7 @@ function goTodo(path: string) {
 <template>
   <section class="wb-card">
     <div class="card-head">
-      <div>
-        <h3 class="card-title">待办事项</h3>
-        <p class="card-sub">共 {{ todos.length }} 项</p>
-      </div>
+      <h3 class="card-title">待办事项</h3>
       <el-radio-group v-model="tab" size="small">
         <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="urgent">紧急</el-radio-button>
@@ -58,13 +51,10 @@ function goTodo(path: string) {
         @click="goTodo(item.path)"
       >
         <el-checkbox v-model="checked[item.id]" @click.stop />
+        <span class="deadline-tag" :class="deadlineClass(item.level)">{{ item.deadlineLabel }}</span>
         <div class="todo-content">
           <div class="todo-title">{{ item.actionLabel }} · {{ item.groupTitle }}</div>
           <div class="todo-sub">{{ item.subtitle }}</div>
-        </div>
-        <div class="todo-tags">
-          <span class="level-tag" :class="item.level">{{ levelLabel(item.level) }}</span>
-          <span class="deadline-tag" :class="deadlineClass(item.level)">{{ item.deadlineLabel }}</span>
         </div>
       </div>
     </div>
@@ -74,17 +64,18 @@ function goTodo(path: string) {
 <style scoped>
 .wb-card {
   background: #fff;
-  border-radius: 16px;
-  padding: 20px 22px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.04);
+  border: 1px solid #eef2f7;
 }
 
 .card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .card-title {
@@ -92,28 +83,30 @@ function goTodo(path: string) {
   font-size: 16px;
   font-weight: 700;
   color: #0f172a;
-}
-
-.card-sub {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: #94a3b8;
+  padding-left: 10px;
+  border-left: 3px solid #2563eb;
+  line-height: 1.2;
 }
 
 .todo-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .todo-item {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 10px;
+  padding: 12px 14px;
   border: 1px solid #f1f5f9;
-  border-radius: 12px;
+  border-radius: 10px;
   cursor: pointer;
+  background: #fff;
+}
+
+.todo-item:hover {
+  background: #f8fafc;
 }
 
 .todo-item.done {
@@ -128,7 +121,6 @@ function goTodo(path: string) {
 .todo-content {
   flex: 1;
   min-width: 0;
-  cursor: pointer;
 }
 
 .todo-title {
@@ -143,35 +135,13 @@ function goTodo(path: string) {
   color: #94a3b8;
 }
 
-.todo-tags {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.level-tag,
 .deadline-tag {
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: 6px;
   font-size: 11px;
   font-weight: 600;
-}
-
-.level-tag.urgent {
-  background: #fef2f2;
-  color: #dc2626;
-}
-
-.level-tag.important {
-  background: #fff7ed;
-  color: #ea580c;
-}
-
-.level-tag.normal {
-  background: #f8fafc;
-  color: #64748b;
+  flex-shrink: 0;
+  margin-top: 2px;
 }
 
 .deadline-tag.deadline-urgent {

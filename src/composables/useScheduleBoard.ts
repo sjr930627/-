@@ -337,6 +337,7 @@ export function useScheduleBoard(options: {
             a.teamId === options.teamId.value &&
             a.published,
         )
+        if (isAssignmentConfirmedLocked(pub)) return
         const draft = store.assignments.find(
           (a) =>
             a.employeeId === employeeId &&
@@ -345,8 +346,9 @@ export function useScheduleBoard(options: {
             !a.published,
         )
         if (draft && !pub) added += 1
-        else if (draft && pub && draft.shiftId !== pub.shiftId) modified += 1
-        else if (!draft && pub) removed += 1
+        else if (draft && pub && (draft.shiftId !== pub.shiftId || (draft.note ?? '') !== (pub.note ?? ''))) {
+          modified += 1
+        } else if (!draft && pub) removed += 1
       })
     })
     return { added, modified, removed }
@@ -404,13 +406,6 @@ export function useScheduleBoard(options: {
       (a) => a.teamId === teamId && dates.includes(a.date) && members.includes(a.employeeId),
     )
     if (hasAny) return
-    const defaultTpl = store.scheduleTemplates.find(
-      (t) => t.teamId === teamId && t.isDefault,
-    )
-    if (defaultTpl) {
-      store.applyScheduleTemplate(defaultTpl.id, teamId, dates, members)
-      return
-    }
     if (dates.length >= 7) {
       const prevDates = dates.map((d) => addDays(d, -7))
       store.cloneAssignmentsFromDates(teamId, prevDates, dates, members)

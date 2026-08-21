@@ -2,7 +2,6 @@
 import { onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useWorkbenchTodos } from '@/composables/useWorkbenchTodos'
-import { usePortal } from '@/composables/usePortal'
 import WorkbenchMetricRow from '@/components/workbench/WorkbenchMetricRow.vue'
 import WorkbenchRecruitmentProgress from '@/components/workbench/WorkbenchRecruitmentProgress.vue'
 import WorkbenchTodoList from '@/components/workbench/WorkbenchTodoList.vue'
@@ -10,7 +9,6 @@ import WorkbenchAttendanceAlerts from '@/components/workbench/WorkbenchAttendanc
 import WorkbenchRecruitmentOverview from '@/components/workbench/WorkbenchRecruitmentOverview.vue'
 
 const store = useAppStore()
-const { isEnterprise } = usePortal()
 const {
   flatTodos,
   metrics,
@@ -26,10 +24,7 @@ onMounted(() => store.syncExceptions())
 <template>
   <div class="workbench-page">
     <div class="page-header">
-      <div>
-        <h2 class="page-title">工作台</h2>
-        <p class="page-subtitle">{{ isEnterprise ? '企业端' : '平台端' }} · HR 与招聘运营概览</p>
-      </div>
+      <h2 class="page-title">工作台</h2>
     </div>
 
     <WorkbenchMetricRow :metrics="metrics" />
@@ -62,20 +57,14 @@ onMounted(() => store.syncExceptions())
 
 .page-title {
   margin: 0;
-  font-size: 24px;
+  font-size: 22px;
   font-weight: 700;
   color: #0f172a;
 }
 
-.page-subtitle {
-  margin: 6px 0 0;
-  font-size: 14px;
-  color: #94a3b8;
-}
-
 .workbench-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.9fr);
   gap: 16px;
   align-items: start;
 }

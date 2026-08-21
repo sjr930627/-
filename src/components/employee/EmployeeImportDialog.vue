@@ -138,7 +138,7 @@ async function handleImport() {
         <span class="step">1</span>
         <span>下载导入模板</span>
       </div>
-      <p class="section-desc">请按模板格式填写人员信息。部门留空或填写「待分配人员」将导入至待分配池。</p>
+      <p class="section-desc">请按模板格式填写人员信息。部门留空或填写「待入驻人员」将导入至待入驻池。</p>
       <el-button type="primary" class="download-template-btn" @click="handleDownloadTemplate">
         <el-icon><Download /></el-icon>
         下载模板

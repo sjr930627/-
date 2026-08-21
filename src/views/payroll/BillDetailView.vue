@@ -10,9 +10,16 @@ import {
   formatMoney,
   formatPeriod,
   billRemainingInvoiceAmount,
+  BILL_SERVICE_TAX_RATE,
+  calcBillTotalTaxInclusive,
+  formatBillTaxInclusiveTip,
+  getBillServiceFeeWaiver,
+  isBillTaxExclusiveMode,
+  toBillTaxInclusiveAmount,
 } from '@/constants/payrollBill'
 import type { SettlementBillSummary } from '@/types'
 import { formatBillingFormulaDisplay } from '@/constants/billingRule'
+import { resolveBillTaxFlagsFromContract } from '@/services/billSettlement'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,6 +28,18 @@ const { isEnterprise, pathPrefix } = usePortal()
 
 const paymentVisible = ref(false)
 const voucherFile = ref('')
+const confirmVisible = ref(false)
+const confirming = ref(false)
+const confirmForm = ref({
+  payerEnterpriseName: '',
+  payerCreditCode: '',
+})
+const waiverVisible = ref(false)
+const waiverSaving = ref(false)
+const waiverForm = ref({
+  amount: 0,
+  note: '',
+})
 
 const bill = computed(() =>
   store.settlementBills.find((b) => b.id === route.params.id as string),
@@ -34,6 +53,70 @@ const billingRule = computed(() =>
   bill.value?.billingRuleId
     ? store.billingRules.find((r) => r.id === bill.value!.billingRuleId)
     : null,
+)
+
+const taxFlags = computed(() => {
+  if (!bill.value) {
+    return { serviceFeeIncludesTax: false, unitPriceIncludesTax: false }
+  }
+  if (
+    bill.value.serviceFeeIncludesTax != null ||
+    bill.value.unitPriceIncludesTax != null
+  ) {
+    return {
+      serviceFeeIncludesTax: bill.value.serviceFeeIncludesTax ?? false,
+      unitPriceIncludesTax: bill.value.unitPriceIncludesTax ?? false,
+    }
+  }
+  return resolveBillTaxFlagsFromContract(
+    bill.value.enterpriseId,
+    bill.value.serviceProviderId,
+    store.serviceContracts,
+  )
+})
+
+const taxExclusiveMode = computed(() => isBillTaxExclusiveMode(taxFlags.value))
+
+const waiverAmount = computed(() => (bill.value ? getBillServiceFeeWaiver(bill.value) : 0))
+
+const payrollTaxInclusive = computed(() =>
+  bill.value
+    ? toBillTaxInclusiveAmount(bill.value.payrollTotal, taxFlags.value.unitPriceIncludesTax)
+    : 0,
+)
+
+const serviceFeeTaxInclusive = computed(() =>
+  bill.value
+    ? toBillTaxInclusiveAmount(bill.value.serviceFee, taxFlags.value.serviceFeeIncludesTax)
+    : 0,
+)
+
+const waiverTaxInclusive = computed(() =>
+  bill.value
+    ? toBillTaxInclusiveAmount(waiverAmount.value, taxFlags.value.serviceFeeIncludesTax)
+    : 0,
+)
+
+const totalTaxInclusive = computed(() =>
+  bill.value
+    ? calcBillTotalTaxInclusive({
+        ...bill.value,
+        serviceFeeIncludesTax: taxFlags.value.serviceFeeIncludesTax,
+        unitPriceIncludesTax: taxFlags.value.unitPriceIncludesTax,
+      })
+    : 0,
+)
+
+const payableAmount = computed(() => totalTaxInclusive.value)
+
+const taxInclusiveTip = formatBillTaxInclusiveTip()
+
+const serviceFeeTaxLabel = computed(() =>
+  taxFlags.value.serviceFeeIncludesTax ? '含税' : '不含税',
+)
+
+const currentServiceFeeTotalLabel = computed(() =>
+  `目前服务费总计金额（${serviceFeeTaxLabel.value}）`,
 )
 
 const summary = computed((): SettlementBillSummary => {
@@ -52,15 +135,97 @@ const feeRows = computed(() => {
   if (!bill.value) return []
   const rate = bill.value.serviceFeeRate
   const rateLabel = rate != null ? `${(rate * 100).toFixed(2)}%` : '—'
-  return [
+  const exclusive = taxExclusiveMode.value
+  const serviceTaxLabel = taxFlags.value.serviceFeeIncludesTax ? '含税' : '不含税'
+  type FeeRow = {
+    label: string
+    amount: number
+    note: string
+    danger?: boolean
+    bold?: boolean
+    highlight?: boolean
+    tag?: string
+  }
+  const rows: FeeRow[] = [
     { label: '考勤薪酬', amount: summary.value.attendancePay, note: '按考勤天数/工时计薪' },
     { label: '任务薪酬', amount: summary.value.taskPay, note: '按完成任务数计薪' },
-    { label: '加班薪酬', amount: summary.value.overtimePay, note: '加班工时 × 加班单价' },
-    { label: '扣款', amount: -summary.value.deductions, note: '考勤/违规等扣款', danger: true },
-    { label: '结算金额', amount: bill.value.payrollTotal, note: `${summary.value.workerCount} 名灵工`, bold: true },
-    { label: '服务费', amount: bill.value.serviceFee, note: `费率 ${rateLabel}`, bold: true },
-    { label: '总计金额', amount: bill.value.totalPayable, note: '结算金额 + 服务费', highlight: true },
+    {
+      label: '结算金额',
+      amount: bill.value.payrollTotal,
+      note: `${summary.value.workerCount} 名灵工`,
+      bold: true,
+      tag: exclusive ? '不含税' : undefined,
+    },
+    {
+      label: '服务费',
+      amount: bill.value.serviceFee,
+      note: `费率 ${rateLabel}`,
+      bold: true,
+      tag: exclusive ? '不含税' : serviceTaxLabel,
+    },
+    {
+      label: '减免金额',
+      amount: -waiverAmount.value,
+      note: bill.value.serviceFeeWaiverMeta?.note
+        ? bill.value.serviceFeeWaiverMeta.note
+        : bill.value.serviceFeeWaiverMeta?.mode === 'by_quantity'
+          ? `按人时：${bill.value.serviceFeeWaiverMeta.workerCount ?? 0} 人 × ${bill.value.serviceFeeWaiverMeta.workHours ?? 0} 工时`
+          : waiverAmount.value > 0
+            ? '减免服务费'
+            : '未减免',
+      danger: true,
+      bold: true,
+      tag: serviceTaxLabel,
+    },
   ]
+  if (exclusive || !taxFlags.value.serviceFeeIncludesTax || !taxFlags.value.unitPriceIncludesTax) {
+    rows.push(
+      {
+        label: '结算金额含税总计',
+        amount: payrollTaxInclusive.value,
+        note: taxFlags.value.unitPriceIncludesTax
+          ? '结算金额已含税'
+          : `结算金额 / (1 − ${BILL_SERVICE_TAX_RATE})`,
+        bold: true,
+        tag: '含税',
+      },
+      {
+        label: '服务费含税总计',
+        amount: serviceFeeTaxInclusive.value,
+        note: taxFlags.value.serviceFeeIncludesTax
+          ? '服务费已含税'
+          : `服务费 / (1 − ${BILL_SERVICE_TAX_RATE})`,
+        bold: true,
+        tag: '含税',
+      },
+      {
+        label: '减免金额含税',
+        amount: -waiverTaxInclusive.value,
+        note: taxFlags.value.serviceFeeIncludesTax
+          ? '与服务费同口径（含税）'
+          : `减免金额 / (1 − ${BILL_SERVICE_TAX_RATE})`,
+        danger: true,
+        bold: true,
+        tag: '含税',
+      },
+      {
+        label: '总计金额（含税）',
+        amount: totalTaxInclusive.value,
+        note: taxInclusiveTip,
+        highlight: true,
+        tag: '含税',
+      },
+    )
+  } else {
+    rows.push({
+      label: '总计金额（含税）',
+      amount: totalTaxInclusive.value,
+      note: '结算金额 + 服务费 − 减免金额',
+      highlight: true,
+      tag: '含税',
+    })
+  }
+  return rows
 })
 
 const timelineSteps = computed(() => {
@@ -83,13 +248,29 @@ function goBack() {
   router.push(`${pathPrefix.value}/payroll/bills`)
 }
 
+function openConfirmBill() {
+  if (!bill.value) return
+  confirmForm.value = {
+    payerEnterpriseName: bill.value.payerEnterpriseName ?? bill.value.enterpriseName,
+    payerCreditCode: bill.value.payerCreditCode ?? '',
+  }
+  confirmVisible.value = true
+}
+
 function confirmBill() {
   if (!bill.value) return
+  confirming.value = true
   try {
-    store.confirmSettlementBill(bill.value.id)
+    store.confirmSettlementBill(bill.value.id, {
+      payerEnterpriseName: confirmForm.value.payerEnterpriseName,
+      payerCreditCode: confirmForm.value.payerCreditCode,
+    })
+    confirmVisible.value = false
     ElMessage.success('账单已确认，状态已更新为待付款')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  } finally {
+    confirming.value = false
   }
 }
 
@@ -124,6 +305,49 @@ function submitBill() {
     ElMessage.success('账单已提交，等待企业确认')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
+function openWaiverDialog() {
+  if (!bill.value) return
+  const meta = bill.value.serviceFeeWaiverMeta
+  waiverForm.value = {
+    amount: bill.value.serviceFeeWaiver ?? 0,
+    note: meta?.note ?? '',
+  }
+  waiverVisible.value = true
+}
+
+function saveWaiver() {
+  if (!bill.value) return
+  waiverSaving.value = true
+  try {
+    store.applySettlementBillServiceFeeWaiver(bill.value.id, {
+      mode: 'by_amount',
+      amount: waiverForm.value.amount,
+      note: waiverForm.value.note,
+    })
+    waiverVisible.value = false
+    ElMessage.success('已更新减免服务费')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  } finally {
+    waiverSaving.value = false
+  }
+}
+
+async function clearWaiver() {
+  if (!bill.value || !waiverAmount.value) return
+  try {
+    await ElMessageBox.confirm('确认清除本账单的服务费减免？', '清除减免', {
+      type: 'warning',
+      confirmButtonText: '清除',
+      cancelButtonText: '取消',
+    })
+    store.clearSettlementBillServiceFeeWaiver(bill.value.id)
+    ElMessage.success('已清除减免')
+  } catch {
+    // cancelled
   }
 }
 
@@ -164,6 +388,21 @@ function viewBillingRule() {
       <div class="header-actions">
         <el-button
           v-if="!isEnterprise && bill.status === 'pending_submit'"
+          type="warning"
+          plain
+          @click="openWaiverDialog"
+        >
+          减免服务费
+        </el-button>
+        <el-button
+          v-if="!isEnterprise && bill.status === 'pending_submit' && waiverAmount > 0"
+          plain
+          @click="clearWaiver"
+        >
+          清除减免
+        </el-button>
+        <el-button
+          v-if="!isEnterprise && bill.status === 'pending_submit'"
           type="primary"
           @click="submitBill"
         >
@@ -180,7 +419,7 @@ function viewBillingRule() {
         <el-button
           v-if="isEnterprise && bill.status === 'pending_confirm'"
           type="primary"
-          @click="confirmBill"
+          @click="openConfirmBill"
         >
           确认账单
         </el-button>
@@ -208,25 +447,56 @@ function viewBillingRule() {
     </div>
 
     <el-row :gutter="16" class="stat-row">
-      <el-col :xs="12" :sm="6">
+      <el-col :xs="12" :sm="8" :md="4">
         <div class="stat-card">
-          <span class="stat-label">结算金额</span>
+          <span class="stat-label">
+            结算金额
+            <el-tag v-if="!taxFlags.unitPriceIncludesTax" size="small" type="info" class="tax-tag">不含税</el-tag>
+            <el-tag v-else size="small" type="warning" class="tax-tag">含税</el-tag>
+          </span>
           <span class="stat-value">{{ formatMoney(bill.payrollTotal) }}</span>
         </div>
       </el-col>
-      <el-col :xs="12" :sm="6">
+      <el-col :xs="12" :sm="8" :md="4">
         <div class="stat-card">
-          <span class="stat-label">服务费</span>
+          <span class="stat-label">
+            服务费
+            <el-tag
+              size="small"
+              :type="taxFlags.serviceFeeIncludesTax ? 'warning' : 'info'"
+              class="tax-tag"
+            >
+              {{ taxFlags.serviceFeeIncludesTax ? '含税' : '不含税' }}
+            </el-tag>
+          </span>
           <span class="stat-value">{{ formatMoney(bill.serviceFee) }}</span>
         </div>
       </el-col>
-      <el-col :xs="12" :sm="6">
-        <div class="stat-card highlight">
-          <span class="stat-label">总计金额</span>
-          <span class="stat-value">{{ formatMoney(bill.totalPayable) }}</span>
+      <el-col :xs="12" :sm="8" :md="4">
+        <div class="stat-card">
+          <span class="stat-label">
+            减免金额
+            <el-tag
+              size="small"
+              :type="taxFlags.serviceFeeIncludesTax ? 'warning' : 'info'"
+              class="tax-tag"
+            >
+              {{ taxFlags.serviceFeeIncludesTax ? '含税' : '不含税' }}
+            </el-tag>
+          </span>
+          <span class="stat-value danger">{{ formatMoney(waiverAmount) }}</span>
         </div>
       </el-col>
-      <el-col :xs="12" :sm="6">
+      <el-col :xs="12" :sm="8" :md="6">
+        <div class="stat-card highlight">
+          <span class="stat-label">
+            总计金额（含税）
+            <el-tag size="small" type="warning" class="tax-tag">含税</el-tag>
+          </span>
+          <span class="stat-value">{{ formatMoney(payableAmount) }}</span>
+        </div>
+      </el-col>
+      <el-col :xs="12" :sm="8" :md="6">
         <div class="stat-card">
           <span class="stat-label">灵工人数</span>
           <span class="stat-value">{{ summary.workerCount }} 人</span>
@@ -238,6 +508,13 @@ function viewBillingRule() {
       <h3 class="section-title">基本信息</h3>
       <el-descriptions :column="3" border>
         <el-descriptions-item label="企业">{{ bill.enterpriseName }}</el-descriptions-item>
+        <el-descriptions-item label="部门">{{ bill.departmentName || '全公司' }}</el-descriptions-item>
+        <el-descriptions-item label="付款企业">
+          {{ bill.payerEnterpriseName || '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="统一信用代码">
+          {{ bill.payerCreditCode || '—' }}
+        </el-descriptions-item>
         <el-descriptions-item label="服务商">{{ bill.serviceProviderName ?? '—' }}</el-descriptions-item>
         <el-descriptions-item label="结算周期">
           {{ formatPeriod(bill.periodStart, bill.periodEnd) }}
@@ -284,8 +561,29 @@ function viewBillingRule() {
       <el-col :xs="24" :lg="16">
         <div class="page-card section">
           <h3 class="section-title">费用汇总</h3>
+          <el-alert
+            v-if="taxExclusiveMode"
+            type="info"
+            :closable="false"
+            show-icon
+            class="tax-tip"
+            :title="taxInclusiveTip"
+            :description="`结算含税 ${formatMoney(payrollTaxInclusive)} + 服务费含税 ${formatMoney(serviceFeeTaxInclusive)} − 减免含税 ${formatMoney(waiverTaxInclusive)} = ${formatMoney(totalTaxInclusive)}`"
+          />
           <el-table :data="feeRows" border stripe>
-            <el-table-column prop="label" label="项目" width="140" />
+            <el-table-column prop="label" label="项目" width="180">
+              <template #default="{ row }">
+                <span>{{ row.label }}</span>
+                <el-tag
+                  v-if="row.tag"
+                  size="small"
+                  :type="row.tag === '不含税' ? 'info' : 'warning'"
+                  class="tax-tag"
+                >
+                  {{ row.tag }}
+                </el-tag>
+              </template>
+            </el-table-column>
             <el-table-column label="金额" width="160" align="right">
               <template #default="{ row }">
                 <span
@@ -381,23 +679,32 @@ function viewBillingRule() {
             {{ row.taskPay != null ? formatMoney(row.taskPay) : '—' }}
           </template>
         </el-table-column>
-        <el-table-column label="加班薪酬" width="110" align="right">
-          <template #default="{ row }">
-            {{ row.overtimePay != null ? formatMoney(row.overtimePay) : '—' }}
+        <el-table-column width="150" align="right" fixed="right">
+          <template #header>
+            <span>灵工薪酬</span>
+            <el-tag
+              size="small"
+              :type="taxFlags.unitPriceIncludesTax ? 'warning' : 'info'"
+              class="tax-tag"
+            >
+              {{ taxFlags.unitPriceIncludesTax ? '含税' : '不含税' }}
+            </el-tag>
           </template>
-        </el-table-column>
-        <el-table-column label="扣款" width="90" align="right">
-          <template #default="{ row }">
-            <span v-if="row.deductions" class="text-danger">-{{ formatMoney(row.deductions) }}</span>
-            <span v-else>—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="灵工薪酬" width="120" align="right" fixed="right">
           <template #default="{ row }">
             <strong>{{ formatMoney(row.payrollAmount) }}</strong>
           </template>
         </el-table-column>
-        <el-table-column label="服务费" width="100" align="right" fixed="right">
+        <el-table-column width="130" align="right" fixed="right">
+          <template #header>
+            <span>服务费</span>
+            <el-tag
+              size="small"
+              :type="taxFlags.serviceFeeIncludesTax ? 'warning' : 'info'"
+              class="tax-tag"
+            >
+              {{ taxFlags.serviceFeeIncludesTax ? '含税' : '不含税' }}
+            </el-tag>
+          </template>
           <template #default="{ row }">{{ formatMoney(row.serviceFee) }}</template>
         </el-table-column>
       </el-table>
@@ -411,12 +718,79 @@ function viewBillingRule() {
     </el-empty>
   </div>
 
+  <el-dialog v-model="confirmVisible" title="确认账单" width="480px" destroy-on-close>
+    <p class="confirm-tip">确认前可修改付款企业与统一信用代码（非必填）</p>
+    <el-form label-width="120px">
+      <el-form-item label="付款企业">
+        <el-input v-model="confirmForm.payerEnterpriseName" clearable placeholder="付款企业名称" />
+      </el-form-item>
+      <el-form-item label="统一信用代码">
+        <el-input
+          v-model="confirmForm.payerCreditCode"
+          clearable
+          maxlength="18"
+          placeholder="统一社会信用代码"
+        />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="confirmVisible = false">取消</el-button>
+      <el-button type="primary" :loading="confirming" @click="confirmBill">确认账单</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="waiverVisible" title="减免服务费" width="520px" destroy-on-close>
+    <template v-if="bill">
+      <el-alert
+        type="info"
+        :closable="false"
+        :title="`${currentServiceFeeTotalLabel}：${formatMoney(bill.serviceFee)}`"
+        :description="
+          taxFlags.serviceFeeIncludesTax
+            ? '服务费按合同配置为含税口径，减免录入金额同为含税。'
+            : '服务费按合同配置为不含税口径，减免录入金额同为不含税。'
+        "
+        style="margin-bottom: 16px"
+      />
+      <el-form label-width="130px">
+        <el-form-item label="减免方式" required>
+          <el-tag type="warning">减免服务费</el-tag>
+        </el-form-item>
+        <el-form-item :label="`总计金额（${serviceFeeTaxLabel}）`" required>
+          <el-input-number
+            v-model="waiverForm.amount"
+            :min="0.01"
+            :max="bill.serviceFee"
+            :precision="2"
+            :step="100"
+            style="width: 220px"
+          />
+          <span class="field-suffix">不超过服务费总计</span>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="waiverForm.note"
+            type="textarea"
+            :rows="2"
+            maxlength="200"
+            show-word-limit
+            placeholder="选填减免说明"
+          />
+        </el-form-item>
+      </el-form>
+    </template>
+    <template #footer>
+      <el-button @click="waiverVisible = false">取消</el-button>
+      <el-button type="primary" :loading="waiverSaving" @click="saveWaiver">确认减免</el-button>
+    </template>
+  </el-dialog>
+
   <el-dialog v-model="paymentVisible" title="确认付款" width="520px" destroy-on-close>
     <template v-if="bill">
       <el-alert
         type="info"
         :closable="false"
-        :title="`请向平台账户支付 ${formatMoney(bill.totalPayable)}`"
+        :title="`请向平台账户支付 ${formatMoney(payableAmount)}`"
         style="margin-bottom: 16px"
       />
       <el-descriptions :column="1" border>
@@ -456,6 +830,12 @@ function viewBillingRule() {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.confirm-tip {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
 
 .detail-header {
@@ -505,12 +885,42 @@ function viewBillingRule() {
 .stat-label {
   font-size: 13px;
   color: var(--el-text-color-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tax-tag {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.tax-tip {
+  margin-bottom: 12px;
 }
 
 .stat-value {
   font-size: 22px;
   font-weight: 600;
   color: var(--el-text-color-primary);
+}
+
+.stat-value.danger {
+  color: var(--el-color-danger);
+}
+
+.field-suffix {
+  margin-left: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.field-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 
 .section {

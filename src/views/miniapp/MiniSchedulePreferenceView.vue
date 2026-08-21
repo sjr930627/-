@@ -27,8 +27,8 @@ function calcHours(start: string, end: string) {
 <template>
   <div class="list-page">
     <div class="mini-nav-bar">
-      <MiniNavBack fallback="/miniapp/worker-archive" />
-      <div class="mini-nav-title">排班偏好</div>
+      <MiniNavBack fallback="/miniapp/part-time-pref" />
+      <div class="mini-nav-title">兼职时间段</div>
       <button
         type="button"
         class="nav-action"
@@ -39,7 +39,7 @@ function calcHours(start: string, end: string) {
     </div>
 
     <div class="list-content">
-      <p class="tip">设置您方便的工作日与时段，系统将优先推荐匹配的排班。</p>
+      <p class="tip">设置您方便兼职的工作日与时段，系统将优先推荐匹配的排班。</p>
       <div v-if="schedulePreferences.length" class="pref-list">
         <div
           v-for="pref in schedulePreferences"
@@ -64,13 +64,13 @@ function calcHours(start: string, end: string) {
         </div>
       </div>
       <div v-else class="empty">
-        <p>暂未设置排班偏好</p>
+        <p>暂未设置兼职时间段</p>
         <button
           class="mini-btn-primary"
           type="button"
           @click="router.push('/miniapp/worker-archive/schedule-pref/new')"
         >
-          添加第一条偏好
+          添加第一条时间段
         </button>
       </div>
     </div>

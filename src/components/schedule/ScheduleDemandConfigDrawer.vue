@@ -123,7 +123,7 @@ function saveWeeklyPlan(status: 'draft' | 'confirmed') {
     cells: weekCells.value.map((c) => ({ ...c })),
     status,
   })
-  ElMessage.success(status === 'confirmed' ? '本周班次需求已确认' : '本周班次需求已保存草稿')
+  ElMessage.success(status === 'confirmed' ? '本周班次需求已发布' : '本周班次需求已保存草稿')
   emit('saved')
   if (status === 'confirmed') close()
 }

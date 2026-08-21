@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  ArrowDown,
-  MagicStick,
   RefreshLeft,
   RefreshRight,
 } from '@element-plus/icons-vue'
@@ -15,20 +13,15 @@ import { resolveEnterpriseIdByTeamDepartment } from '@/utils/enterpriseScope'
 import ScheduleTeamBoard from '@/components/schedule/ScheduleTeamBoard.vue'
 import ScheduleShiftGrid from '@/components/schedule/ScheduleShiftGrid.vue'
 import ScheduleLinePanel from '@/components/schedule/ScheduleLinePanel.vue'
-import ScheduleTemplateManager from '@/components/schedule/ScheduleTemplateManager.vue'
-import ScheduleDemandConfigDrawer from '@/components/schedule/ScheduleDemandConfigDrawer.vue'
 import { useScheduleBoard, filterEmployees } from '@/composables/useScheduleBoard'
-import { confirmStatusMap, normalizeConfirmStatus, isAssignmentConfirmedLocked } from '@/constants/schedule'
-import { generateSmartSchedule } from '@/services/smartSchedule'
-import { resolveShiftIdForTemplate } from '@/services/scheduleGroup'
+import { confirmStatusMap, normalizeConfirmStatus, isAssignmentConfirmedLocked, SCHEDULE_DEMO_TODAY, filterDatesByScheduleScope, type ScheduleScope } from '@/constants/schedule'
 import {
-  createShiftDemandHeadcountResolver,
-  hasShiftDemandInRange,
-  needsNextWeekDemandPlan,
-  resolveShiftTemplateDemand,
-  summarizeConfiguredShiftDemands,
-  teamHasEnabledCycleRule,
-} from '@/services/shiftDemandPlan'
+  CANCEL_SHIFT_REASON_OPTIONS,
+  buildCancelShiftReasonText,
+  type CancelShiftReasonCode,
+} from '@/constants/cancelShift'
+import { getShiftDemandHeadcount } from '@/services/schedule'
+import { resolveShiftIdForTemplate } from '@/services/scheduleGroup'
 import {
   addDays,
   getMonthDays,
@@ -40,6 +33,7 @@ import type { SchedulePublishRecord } from '@/types'
 
 const store = useAppStore()
 const route = useRoute()
+const router = useRouter()
 const { enterpriseFilter, activeEnterpriseId, showEnterpriseControl, matchesEnterprise } =
   useEnterpriseScope('switch')
 
@@ -50,17 +44,17 @@ const scopedTeams = computed(() =>
 )
 
 const selectedTeamId = ref('team_a')
+const scheduleScope = ref<ScheduleScope>('future')
 const scheduleMode = ref<'shift' | 'custom'>('shift')
 /** 排班列表视图：按人员 / 按班次 */
 const shiftListView = ref<'team' | 'grid'>('team')
-/** 按班次排班：当前选中的需求班次 */
+/** 按班次排班：当前选中的考勤组班次 */
 const selectedLineShiftId = ref<string | null>(null)
 const viewType = ref<'month' | 'week'>('week')
 const selectedMonth = ref('2026-07')
-const weekStart = ref(getWeekStart('2026-07-28'))
+const weekStart = ref(getWeekStart(SCHEDULE_DEMO_TODAY))
 const keyword = ref('')
-const lineSelectedDate = ref('2026-07-28')
-const templateManagerVisible = ref(false)
+const lineSelectedDate = ref(SCHEDULE_DEMO_TODAY)
 
 const shiftPickerVisible = ref(false)
 const shiftPickerPos = ref({ x: 0, y: 0 })
@@ -70,23 +64,21 @@ const detailDrawerVisible = ref(false)
 const detailCell = ref<{ employeeId: string; date: string } | null>(null)
 const detailNote = ref('')
 
-const smartDialogVisible = ref(false)
 const swapDialogVisible = ref(false)
 const swapForm = ref({ targetEmployeeId: '', reason: '' })
+const cancelDialogVisible = ref(false)
+const cancelForm = ref<{
+  reasonCode: CancelShiftReasonCode
+  reasonOther: string
+}>({
+  reasonCode: 'business_change',
+  reasonOther: '',
+})
+const cancelSubmitting = ref(false)
 const publishDialogVisible = ref(false)
 const publishLogVisible = ref(false)
 const versionDetailVisible = ref(false)
 const selectedPublishRecord = ref<SchedulePublishRecord | null>(null)
-const demandDrawerVisible = ref(false)
-const saveTemplateName = ref('')
-
-const smartForm = ref({
-  dateRange: ['', ''] as [string, string],
-  employeeIds: [] as string[],
-  preferEmployeePreference: true,
-  balanceHours: true,
-  respectLeave: true,
-})
 
 const batchMenuVisible = ref(false)
 const batchMenuPos = ref({ x: 0, y: 0 })
@@ -114,38 +106,12 @@ const displayDates = computed(() =>
   viewType.value === 'month' ? monthDates.value : weekDates.value,
 )
 
-const demandConfigWeekStart = computed(() =>
-  getWeekStart(displayDates.value[0] ?? getWeekStart()),
+/** 按历史/未来范围过滤看板日期 */
+const boardDates = computed(() =>
+  filterDatesByScheduleScope(displayDates.value, scheduleScope.value, SCHEDULE_DEMO_TODAY),
 )
 
-const hasTeamCycleRule = computed(() =>
-  teamHasEnabledCycleRule(store.teamCycleScheduleRules, selectedTeamId.value),
-)
-
-const needNextWeekDemand = computed(() =>
-  needsNextWeekDemandPlan(
-    store.teamCycleScheduleRules,
-    store.weeklyShiftDemandPlans,
-    selectedTeamId.value,
-  ),
-)
-
-function getWeeklyPlanForDate(date: string) {
-  return store.getWeeklyShiftDemandPlan(selectedTeamId.value, getWeekStart(date))
-}
-
-function resolveNeededForDate(date: string, shiftTemplateId: string) {
-  const templates = selectedGroup.value?.shiftTemplates ?? []
-  const tpl = templates.find((t) => t.id === shiftTemplateId)
-  if (!tpl) return 0
-  return resolveShiftTemplateDemand(
-    date,
-    shiftTemplateId,
-    templates,
-    store.holidays,
-    getWeeklyPlanForDate(date),
-  )
-}
+const isHistoryScope = computed(() => scheduleScope.value === 'history')
 
 const employees = computed(() => {
   const list = store.activeEmployees.filter((e) => memberIds.value.includes(e.id))
@@ -171,54 +137,38 @@ const groupCompliance = computed(() => {
 
 const board = useScheduleBoard({
   teamId: selectedTeamId,
-  dates: displayDates,
+  dates: boardDates,
   compliance: groupCompliance,
   memberIds,
 })
 
-const teamTemplates = computed(() =>
-  store.scheduleTemplates.filter((t) => t.teamId === selectedTeamId.value),
-)
-
-const smartEmployeeOptions = computed(() =>
-  store.activeEmployees.filter((e) => memberIds.value.includes(e.id)),
-)
-
-const smartDemandRange = computed(() => {
-  const [startDate, endDate] = smartForm.value.dateRange
-  if (startDate && endDate) return { startDate, endDate }
-  const dates = displayDates.value
-  return {
-    startDate: dates[0] ?? '',
-    endDate: dates[dates.length - 1] ?? '',
+watch(scheduleScope, (scope) => {
+  board.exitEditMode()
+  selectedLineShiftId.value = null
+  if (scope === 'history') {
+    const prevDay = addDays(SCHEDULE_DEMO_TODAY, -1)
+    if (viewType.value === 'week') {
+      const ws = getWeekStart(SCHEDULE_DEMO_TODAY)
+      // 若当前周没有历史日，切到上一周
+      if (!getWeekDates(weekStart.value).some((d) => d < SCHEDULE_DEMO_TODAY)) {
+        weekStart.value = addDays(ws, -7)
+      }
+    } else if (selectedMonth.value >= SCHEDULE_DEMO_TODAY.slice(0, 7)) {
+      selectedMonth.value = prevDay.slice(0, 7)
+    }
+  } else {
+    weekStart.value = getWeekStart(SCHEDULE_DEMO_TODAY)
+    selectedMonth.value = SCHEDULE_DEMO_TODAY.slice(0, 7)
+    lineSelectedDate.value = SCHEDULE_DEMO_TODAY
   }
 })
 
-const resolveShiftIdByTemplateName = (name: string) =>
-  resolveShiftIdForTemplate(name, store.shifts) ?? undefined
-
-const smartShiftDemands = computed(() =>
-  summarizeConfiguredShiftDemands(
-    smartDemandRange.value.startDate,
-    smartDemandRange.value.endDate,
-    selectedTeamId.value,
-    selectedGroup.value?.shiftTemplates ?? [],
-    store.shifts,
-    store.holidays,
-    store.weeklyShiftDemandPlans,
-    resolveShiftIdByTemplateName,
-  ),
-)
-
-const smartDemandHeadcountResolver = computed(() =>
-  createShiftDemandHeadcountResolver({
-    teamId: selectedTeamId.value,
-    templates: selectedGroup.value?.shiftTemplates ?? [],
-    holidays: store.holidays,
-    plans: store.weeklyShiftDemandPlans,
-    resolveShiftId: resolveShiftIdByTemplateName,
-  }),
-)
+watch(boardDates, (dates) => {
+  if (!dates.length) return
+  if (!dates.includes(lineSelectedDate.value)) {
+    lineSelectedDate.value = dates[0]
+  }
+})
 
 function countShiftScheduled(shiftId: string, date: string) {
   let count = 0
@@ -229,84 +179,49 @@ function countShiftScheduled(shiftId: string, date: string) {
   return count
 }
 
-function resolveSmartDateHeadcount(date: string, shiftId: string) {
-  return smartDemandHeadcountResolver.value(date, shiftId)
-}
-
-function hasConfiguredShiftDemand(startDate: string, endDate: string) {
-  return hasShiftDemandInRange(
-    startDate,
-    endDate,
-    selectedTeamId.value,
-    selectedGroup.value?.shiftTemplates ?? [],
-    store.holidays,
-    store.weeklyShiftDemandPlans,
-    resolveShiftIdByTemplateName,
-  )
-}
-
-const shiftDemand = computed(() => {
+/** 考勤组班次列表（左侧选择后到右侧排班） */
+const groupShifts = computed(() => {
   const templates = selectedGroup.value?.shiftTemplates ?? []
-  const dates = displayDates.value
-  return templates.map((tpl) => {
-    const shiftId = resolveShiftIdForTemplate(tpl.name, store.shifts)
-    const shift = shiftId ? store.shifts.find((s) => s.id === shiftId) ?? null : null
-    const weekdayNeeded = tpl.requiredHeadcount ?? 0
-    const weekendNeeded = tpl.weekendRequiredHeadcount ?? weekdayNeeded
-    const holidayNeeded = tpl.holidayRequiredHeadcount ?? weekdayNeeded
-    let neededPersonDays = 0
-    let scheduledPersonDays = 0
-    dates.forEach((date) => {
-      const needed = resolveNeededForDate(date, tpl.id)
-      const scheduled = shiftId ? countShiftScheduled(shiftId, date) : 0
-      neededPersonDays += needed
-      scheduledPersonDays += scheduled
+  const dates = boardDates.value
+  return templates
+    .map((tpl) => {
+      const shiftId = resolveShiftIdForTemplate(tpl.name, store.shifts)
+      const shift = shiftId ? store.shifts.find((s) => s.id === shiftId) ?? null : null
+      const weekdayNeeded = tpl.requiredHeadcount ?? 0
+      const weekendNeeded = tpl.weekendRequiredHeadcount ?? weekdayNeeded
+      const holidayNeeded = tpl.holidayRequiredHeadcount ?? weekdayNeeded
+      let scheduledPersonDays = 0
+      dates.forEach((date) => {
+        if (shiftId) scheduledPersonDays += countShiftScheduled(shiftId, date)
+      })
+      return {
+        template: tpl,
+        shift,
+        weekdayNeeded,
+        weekendNeeded,
+        holidayNeeded,
+        scheduledPersonDays,
+      }
     })
-    const gapPersonDays = Math.max(0, neededPersonDays - scheduledPersonDays)
-    const fillRate = neededPersonDays
-      ? Math.min(100, Math.round((scheduledPersonDays / neededPersonDays) * 100))
-      : 0
-    return {
-      template: tpl,
-      shift,
-      weekdayNeeded,
-      weekendNeeded,
-      holidayNeeded,
-      neededPersonDays,
-      scheduledPersonDays,
-      gapPersonDays,
-      fillRate,
-    }
-  })
+    .filter((d) => d.shift)
 })
 
 const shiftRows = computed(() =>
-  shiftDemand.value
-    .filter((d) => d.shift)
-    .map((d) => ({
-      shiftId: d.shift!.id,
-      shiftName: d.template.name,
-      color: d.shift!.color,
-      weekdayNeeded: d.weekdayNeeded,
-      weekendNeeded: d.weekendNeeded,
-      holidayNeeded: d.holidayNeeded,
-      startTime: d.template.startTime,
-      endTime: d.template.endTime,
-    })),
+  groupShifts.value.map((d) => ({
+    shiftId: d.shift!.id,
+    shiftName: d.template.name,
+    color: d.shift!.color,
+    weekdayNeeded: d.weekdayNeeded,
+    weekendNeeded: d.weekendNeeded,
+    holidayNeeded: d.holidayNeeded,
+    startTime: d.template.startTime,
+    endTime: d.template.endTime,
+  })),
 )
-
-const smartAllSelected = computed({
-  get: () =>
-    smartEmployeeOptions.value.length > 0 &&
-    smartEmployeeOptions.value.every((e) => smartForm.value.employeeIds.includes(e.id)),
-  set: (val: boolean) => {
-    smartForm.value.employeeIds = val ? smartEmployeeOptions.value.map((e) => e.id) : []
-  },
-})
 
 const selectedLineShiftContext = computed(() => {
   if (!selectedLineShiftId.value) return null
-  const d = shiftDemand.value.find((x) => x.shift?.id === selectedLineShiftId.value)
+  const d = groupShifts.value.find((x) => x.shift?.id === selectedLineShiftId.value)
   if (!d?.shift) return null
   return {
     shiftId: d.shift.id,
@@ -317,20 +232,20 @@ const selectedLineShiftContext = computed(() => {
   }
 })
 
-watch(displayDates, (dates) => {
-  if (dates.length) lineSelectedDate.value = dates[0]
-}, { immediate: true })
-
 watch(scheduleMode, () => {
   selectedLineShiftId.value = null
 })
 
-function selectDemandShift(d: (typeof shiftDemand.value)[number]) {
+function selectGroupShift(d: (typeof groupShifts.value)[number]) {
   if (!d.shift) return
+  if (isHistoryScope.value) {
+    ElMessage.warning('历史排班仅可查看，不可编辑')
+    return
+  }
   handleEnterEditMode()
   selectedLineShiftId.value = d.shift.id
-  lineSelectedDate.value = displayDates.value[0] ?? lineSelectedDate.value
-  ElMessage.info(`已选择「${d.template.name}」，请按周拖拽为员工排班`)
+  lineSelectedDate.value = boardDates.value[0] ?? lineSelectedDate.value
+  ElMessage.info(`已选择「${d.template.name}」，可在右侧列表直接排班`)
 }
 
 function getShiftCellEmployees(shiftId: string, date: string) {
@@ -341,9 +256,9 @@ function getShiftCellEmployees(shiftId: string, date: string) {
 }
 
 function getShiftCellNeeded(shiftId: string, date: string) {
-  const row = shiftDemand.value.find((d) => d.shift?.id === shiftId)
+  const row = groupShifts.value.find((d) => d.shift?.id === shiftId)
   if (!row) return 0
-  return resolveNeededForDate(date, row.template.id)
+  return getShiftDemandHeadcount(row.template, date, store.holidays)
 }
 
 function getShiftCellGap(shiftId: string, date: string) {
@@ -358,6 +273,10 @@ function getShiftCellClass(shiftId: string, date: string) {
 }
 
 function onShiftCellClick(shiftId: string, date: string) {
+  if (isHistoryScope.value) {
+    ElMessage.warning('历史排班仅可查看，不可编辑')
+    return
+  }
   if (board.editMode.value !== 'editing') {
     handleEnterEditMode()
   }
@@ -369,7 +288,12 @@ function onShiftCellClick(shiftId: string, date: string) {
 function confirmShiftAssign() {
   if (!shiftAssignTarget.value) return
   const { shiftId, date } = shiftAssignTarget.value
+  let skippedLocked = 0
   employees.value.forEach((emp) => {
+    if (board.isCellLocked(emp.id, date)) {
+      skippedLocked += 1
+      return
+    }
     const assigned = shiftAssignEmployeeIds.value.includes(emp.id)
     const current = board.getVisibleAssignment(emp.id, date)
     if (assigned) {
@@ -381,14 +305,12 @@ function confirmShiftAssign() {
     }
   })
   shiftAssignVisible.value = false
-  ElMessage.success('班次人员已更新')
+  ElMessage.success(
+    skippedLocked
+      ? `班次人员已更新（跳过 ${skippedLocked} 个已确认）`
+      : '班次人员已更新',
+  )
 }
-
-const demandSummary = computed(() => {
-  const totalGap = shiftDemand.value.reduce((sum, d) => sum + d.gapPersonDays, 0)
-  const shortageShifts = shiftDemand.value.filter((d) => d.gapPersonDays > 0).length
-  return { totalGap, shortageShifts }
-})
 
 const showLinePanel = computed(
   () =>
@@ -399,11 +321,19 @@ const showLinePanel = computed(
 
 function ensureLineShiftSelected() {
   if (scheduleMode.value !== 'shift' || selectedLineShiftId.value) return
-  const first = shiftDemand.value.find((d) => d.shift)
+  const first = groupShifts.value.find((d) => d.shift)
   if (first?.shift) selectedLineShiftId.value = first.shift.id
 }
 
 function handleEnterEditMode() {
+  if (isHistoryScope.value) {
+    ElMessage.warning('历史排班仅可查看，不可编辑')
+    return
+  }
+  if (!boardDates.value.length) {
+    ElMessage.warning('当前周期没有可编辑的未来日期')
+    return
+  }
   board.enterEditMode()
   ensureLineShiftSelected()
 }
@@ -437,20 +367,27 @@ const periodLabel = computed(() => {
 })
 
 const statusBar = computed(() => {
+  if (isHistoryScope.value) {
+    return {
+      type: 'info' as const,
+      label: '历史排班',
+      desc: '仅可查看，不可编辑；如需调整已发生排班请走考勤/审批流程',
+    }
+  }
   const s = board.pageStatus.value
   if (s === 'published' && board.publishRecord.value) {
     const t = new Date(board.publishRecord.value.publishedAt).toLocaleString('zh-CN')
     return {
       type: 'success' as const,
       label: '已发布',
-      desc: `已于 ${t} 发布，已通知员工确认班次（待确认 / 已确认 / 已拒绝）`,
+      desc: `已于 ${t} 发布；待确认班次可修改后重新发布通知灵工，已确认班次置灰不可改（需取消班次）`,
     }
   }
   if (s === 'editing') {
     return {
       type: 'warning' as const,
       label: '编辑中',
-      desc: '改动尚未保存或发布，员工不可见；已拒绝班次可重新编辑',
+      desc: '待确认班次可修改；已确认班次置灰锁定。修改发布后将通知灵工重新确认',
     }
   }
   if (s === 'saved') {
@@ -466,11 +403,6 @@ const statusBar = computed(() => {
     desc: '当前排班尚未发布，仅管理员可见',
   }
 })
-
-function handleSaveDraft() {
-  board.saveDraft()
-  ElMessage.success('排班已保存，尚未发布')
-}
 
 const publishDiff = computed(() => board.getPublishDiff())
 
@@ -508,6 +440,10 @@ watch([activeEnterpriseId, scopedTeams], () => {
   }
 }, { immediate: true })
 
+watch(selectedTeamId, () => {
+  selectedLineShiftId.value = null
+})
+
 function prevPeriod() {
   if (viewType.value === 'month') {
     const [y, m] = selectedMonth.value.split('-').map(Number)
@@ -534,16 +470,24 @@ function goToday() {
   selectedMonth.value = today.slice(0, 7)
 }
 
+function goCancelShiftRecords() {
+  const base = route.path.startsWith('/enterprise')
+    ? '/enterprise/cancel-shift-records'
+    : '/cancel-shift-records'
+  router.push(base)
+}
+
 function onCellClick(employeeId: string, date: string, event: MouseEvent) {
   if (event.shiftKey) {
-    board.toggleSelect(employeeId, date, true)
+    if (!isHistoryScope.value) board.toggleSelect(employeeId, date, true)
     return
   }
   if (board.isCellLocked(employeeId, date)) {
     openDetail(employeeId, date)
+    ElMessage.info('该班次已确认，不可在看板编辑，请走取消班次流程')
     return
   }
-  if (board.editMode.value !== 'editing') {
+  if (isHistoryScope.value || board.editMode.value !== 'editing') {
     openDetail(employeeId, date)
     return
   }
@@ -638,21 +582,36 @@ async function submitSwapRequest() {
   swapDialogVisible.value = false
 }
 
+function openCancelShiftDialog() {
+  if (!detailCell.value || !detailAssignment.value) return
+  cancelForm.value = { reasonCode: 'business_change', reasonOther: '' }
+  cancelDialogVisible.value = true
+}
+
 async function submitCancelShift() {
   if (!detailCell.value || !detailAssignment.value) return
   try {
-    const { value } = await ElMessageBox.prompt('请输入取消原因', '发起取消班次', {
-      inputPlaceholder: '请说明取消原因',
-      inputValidator: (v) => (v?.trim() ? true : '请填写原因'),
-    })
+    const reason = buildCancelShiftReasonText(
+      cancelForm.value.reasonCode,
+      cancelForm.value.reasonOther,
+    )
+    cancelSubmitting.value = true
     const req = store.submitCancelShiftRequest({
       employeeId: detailCell.value.employeeId,
       date: detailCell.value.date,
       shiftId: detailAssignment.value.shiftId,
       teamId: detailAssignment.value.teamId ?? selectedTeamId.value,
-      reason: value.trim(),
+      reason,
+      reasonCode: cancelForm.value.reasonCode,
+      reasonOther:
+        cancelForm.value.reasonCode === 'other'
+          ? cancelForm.value.reasonOther.trim()
+          : undefined,
       initiatedBy: 'admin',
+      source: 'schedule',
+      cancelScope: 'person',
     })
+    cancelDialogVisible.value = false
     try {
       await ElMessageBox.confirm('取消班次申请已创建，是否立即审批通过？', '发起取消班次', {
         type: 'warning',
@@ -663,118 +622,53 @@ async function submitCancelShift() {
       ElMessage.success('班次已取消')
       detailDrawerVisible.value = false
     } catch {
-      ElMessage.success('取消班次申请已提交，请前往审批中心处理')
+      ElMessage.success('取消班次申请已提交，可在「取消班次记录」查看')
     }
   } catch (e) {
-    if (e instanceof Error && e.message.includes('已有待审批')) {
-      ElMessage.warning(e.message)
-    }
+    ElMessage.warning(e instanceof Error ? e.message : '提交失败')
+  } finally {
+    cancelSubmitting.value = false
   }
 }
 
 function onDragStart(employeeId: string, date: string) {
-  if (board.editMode.value !== 'editing') return
+  if (board.editMode.value !== 'editing' || isHistoryScope.value) return
+  if (board.isCellLocked(employeeId, date)) return
   board.dragSource.value = { employeeId, date }
 }
 
 function onDrop(employeeId: string, date: string) {
   if (!board.dragSource.value) return
+  if (board.isCellLocked(employeeId, date)) {
+    board.dragSource.value = null
+    ElMessage.info('目标班次已确认，不可覆盖')
+    return
+  }
   board.swapCells(board.dragSource.value, { employeeId, date })
   board.dragSource.value = null
 }
 
 async function handleCopyLastWeek() {
-  if (board.editMode.value !== 'editing') board.enterEditMode()
-  const source = displayDates.value.map((d) => addDays(d, viewType.value === 'month' ? -31 : -7))
+  if (isHistoryScope.value) {
+    ElMessage.warning('历史排班不可编辑')
+    return
+  }
+  if (board.editMode.value !== 'editing') handleEnterEditMode()
+  if (!boardDates.value.length) {
+    ElMessage.warning('当前周期没有可编辑的未来日期')
+    return
+  }
+  const offset = viewType.value === 'month' ? -31 : -7
+  const source = boardDates.value.map((d) => addDays(d, offset))
   const count = board.copyLastPeriod(source)
-  ElMessage.success(`已复制 ${count} 条排班`)
-}
-
-function openSmartDialog() {
-  if (board.editMode.value !== 'editing') board.enterEditMode()
-  smartForm.value.dateRange = [displayDates.value[0], displayDates.value[displayDates.value.length - 1]]
-  smartForm.value.employeeIds = [...memberIds.value]
-  smartDialogVisible.value = true
-}
-
-async function runSmartSchedule() {
-  const t = team.value
-  if (!t) return
-  if (!smartForm.value.employeeIds.length) {
-    ElMessage.warning('请选择参与排班的人员')
-    return
-  }
-  const [startDate, endDate] = smartForm.value.dateRange
-  if (!hasConfiguredShiftDemand(startDate, endDate)) {
-    ElMessage.warning('请先配置班次需求')
-    return
-  }
-  const result = generateSmartSchedule(
-    t,
-    store.employees,
-    store.shifts,
-    store.holidays,
-    store.leaveRequests,
-    store.assignments,
-    groupCompliance.value!,
-    {
-      teamId: t.id,
-      startDate,
-      endDate,
-      employeeIds: smartForm.value.employeeIds,
-      shiftDemands: smartShiftDemands.value.map((d) => ({
-        shiftId: d.shiftId,
-        templateName: d.templateName,
-        requiredHeadcount: Math.ceil(d.avgNeeded),
-      })),
-      getDateHeadcount: resolveSmartDateHeadcount,
-      preferEmployeePreference: smartForm.value.preferEmployeePreference,
-      balanceHours: smartForm.value.balanceHours,
-      respectLeave: smartForm.value.respectLeave,
-    },
-  )
-  if (!result.assignments.length) {
-    ElMessage.warning(result.message)
-    return
-  }
-  store.applySmartSchedule(result.assignments)
-  smartDialogVisible.value = false
-  ElMessage.success(result.message)
-}
-
-async function applyTemplate(templateId: string) {
-  if (board.editMode.value !== 'editing') board.enterEditMode()
-  await ElMessageBox.confirm('套用模板将覆盖当前周期草稿排班，是否继续？', '套用模板', {
-    type: 'warning',
-  })
-  const count = store.applyScheduleTemplate(
-    templateId,
-    selectedTeamId.value,
-    displayDates.value,
-    memberIds.value,
-  )
-  ElMessage.success(`已套用模板，填充 ${count} 条`)
-}
-
-async function applyTemplateFromManager(templateId: string) {
-  await applyTemplate(templateId)
-  templateManagerVisible.value = false
-}
-
-function openDemandDrawer() {
-  demandDrawerVisible.value = true
-}
-
-function onDemandSaved() {
-  /* 刷新由 store 响应式驱动 */
-}
-
-function onCycleAppliedFromDemand(count: number) {
-  if (board.editMode.value !== 'editing') board.enterEditMode()
-  if (count > 0) ElMessage.success('周期规则排班已写入草稿')
+  ElMessage.success(`已复制 ${count} 条排班（已确认班次保持不变）`)
 }
 
 async function clearDraft() {
+  if (isHistoryScope.value) {
+    ElMessage.warning('历史排班不可编辑')
+    return
+  }
   await ElMessageBox.confirm('将清空当前周期未发布草稿并恢复至上次发布版本', '清空草稿', {
     type: 'warning',
   })
@@ -783,13 +677,17 @@ async function clearDraft() {
 }
 
 function openPublishDialog() {
+  if (isHistoryScope.value) {
+    ElMessage.warning('历史排班不可发布')
+    return
+  }
   publishDialogVisible.value = true
 }
 
 async function confirmPublish() {
   board.publish()
   publishDialogVisible.value = false
-  ElMessage.success('排班已发布')
+  ElMessage.success('排班已发布；变更的待确认班次已通知灵工')
 }
 
 function openPublishLog() {
@@ -821,24 +719,6 @@ function formatPublishTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN')
 }
 
-async function saveAsTemplate() {
-  const { value } = await ElMessageBox.prompt('请输入模板名称', '保存为模板', {
-    inputValue: saveTemplateName.value || '自定义排班模板',
-  })
-  const pattern = displayDates.value.slice(0, 7).map((date) => {
-    const asn = board.getVisibleAssignment(memberIds.value[0], date)
-    return asn?.shiftId ?? store.shifts.find((s) => s.code === 'REST')?.id ?? 'shift_rest'
-  })
-  while (pattern.length < 7) pattern.push(pattern[pattern.length % Math.max(pattern.length, 1)] ?? 'shift_rest')
-  store.saveScheduleTemplate({
-    name: value,
-    teamId: selectedTeamId.value,
-    attendanceGroupId: team.value?.attendanceGroupId ?? '',
-    pattern: pattern.slice(0, 7),
-  })
-  ElMessage.success('模板已保存')
-}
-
 function onKeydown(e: KeyboardEvent) {
   if (!(e.target instanceof HTMLElement) || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
     return
@@ -862,11 +742,12 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function tryAutoGenerateForTeam() {
-  if (!selectedTeamId.value || !memberIds.value.length || !displayDates.value.length) return
+  if (isHistoryScope.value) return
+  if (!selectedTeamId.value || !memberIds.value.length || !boardDates.value.length) return
   const count = store.tryAutoGenerateCycleRules(
     selectedTeamId.value,
     memberIds.value,
-    displayDates.value,
+    boardDates.value,
   )
   if (count > 0 && board.editMode.value !== 'editing') {
     board.enterEditMode()
@@ -874,7 +755,7 @@ function tryAutoGenerateForTeam() {
   }
 }
 
-watch([selectedTeamId, displayDates], tryAutoGenerateForTeam, { immediate: true })
+watch([selectedTeamId, boardDates, scheduleScope], tryAutoGenerateForTeam, { immediate: true })
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
@@ -921,51 +802,48 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         size="small"
         style="width: 140px"
       />
+      <el-button size="small" @click="goCancelShiftRecords">取消班次记录</el-button>
     </header>
 
     <div class="mode-bar page-card">
-      <el-radio-group v-model="scheduleMode" size="small">
+      <el-radio-group v-model="scheduleScope" size="small">
+        <el-radio-button value="future">未来排班</el-radio-button>
+        <el-radio-button value="history">历史排班</el-radio-button>
+      </el-radio-group>
+      <el-radio-group v-if="!isHistoryScope" v-model="scheduleMode" size="small">
         <el-radio-button value="shift">按班次排班</el-radio-button>
         <el-radio-button value="custom">自定义排班</el-radio-button>
       </el-radio-group>
-      <el-button size="small" type="primary" @click="templateManagerVisible = true">排班模版管理</el-button>
+      <span class="text-muted scope-tip">
+        {{
+          isHistoryScope
+            ? `仅展示 ${SCHEDULE_DEMO_TODAY} 之前的排班，只读`
+            : `仅展示 ${SCHEDULE_DEMO_TODAY} 及之后的排班；已确认班次置灰不可改`
+        }}
+      </span>
     </div>
 
     <div class="status-bar" :class="statusBar.type">
       <span class="status-tag">📋 状态：[{{ statusBar.label }}]</span>
       <span class="status-desc">{{ statusBar.desc }}</span>
       <div class="status-actions">
-        <template v-if="board.editMode.value === 'readonly'">
-          <el-button type="primary" size="small" @click="handleEnterEditMode">编辑排班</el-button>
-        </template>
-        <template v-else>
-          <el-button size="small" @click="board.exitEditMode()">退出编辑</el-button>
-        </template>
-        <el-button size="small" :disabled="!board.canUndo.value" :icon="RefreshLeft" @click="board.undo()">
-          撤销
-        </el-button>
-        <el-button size="small" :disabled="!board.canRedo.value" :icon="RefreshRight" @click="board.redo()">
-          重做
-        </el-button>
-        <el-button size="small" @click="handleCopyLastWeek">复制上{{ viewType === 'month' ? '月' : '周' }}</el-button>
-        <el-button size="small" type="primary" :icon="MagicStick" @click="openSmartDialog">智能排班</el-button>
-        <el-dropdown trigger="click" @command="applyTemplate">
-          <el-button size="small">
-            套用模板 <el-icon><ArrowDown /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item v-for="tpl in teamTemplates" :key="tpl.id" :command="tpl.id">
-                {{ tpl.name }}{{ tpl.isDefault ? '（默认）' : '' }}
-              </el-dropdown-item>
-              <el-dropdown-item v-if="!teamTemplates.length" disabled>暂无模板</el-dropdown-item>
-            </el-dropdown-menu>
+        <template v-if="!isHistoryScope">
+          <template v-if="board.editMode.value === 'readonly'">
+            <el-button type="primary" size="small" @click="handleEnterEditMode">编辑排班</el-button>
           </template>
-        </el-dropdown>
-        <el-button size="small" @click="saveAsTemplate">存为模板</el-button>
-        <el-button size="small" @click="clearDraft">清空草稿</el-button>
-        <el-button size="small" type="primary" @click="handleSaveDraft">保存</el-button>
-        <el-button type="success" size="small" @click="openPublishDialog">发布</el-button>
+          <template v-else>
+            <el-button size="small" @click="board.exitEditMode()">退出编辑</el-button>
+          </template>
+          <el-button size="small" :disabled="!board.canUndo.value" :icon="RefreshLeft" @click="board.undo()">
+            撤销
+          </el-button>
+          <el-button size="small" :disabled="!board.canRedo.value" :icon="RefreshRight" @click="board.redo()">
+            重做
+          </el-button>
+          <el-button size="small" @click="handleCopyLastWeek">复制上{{ viewType === 'month' ? '月' : '周' }}</el-button>
+          <el-button size="small" @click="clearDraft">清空草稿</el-button>
+          <el-button type="success" size="small" @click="openPublishDialog">发布</el-button>
+        </template>
         <el-button size="small" type="primary" @click="openPublishLog">
           发布日志
           <el-tag v-if="currentPublishVersion" size="small" type="info" style="margin-left: 4px">
@@ -979,51 +857,44 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <aside class="left-panel page-card">
         <div class="panel-section">
           <div class="panel-head">
-            <span>班次需求概览</span>
-            <el-button link type="primary" size="small" @click="openDemandDrawer">配置需求</el-button>
+            <span>考勤组班次</span>
           </div>
           <p v-if="selectedGroup" class="panel-sub text-muted">
-            {{ selectedGroup.name }} · 按日需求
-            <template v-if="hasTeamCycleRule"> · 已启用周期规则</template>
+            {{
+              isHistoryScope
+                ? `${selectedGroup.name} · 历史只读`
+                : `${selectedGroup.name} · 点击班次到右侧排班`
+            }}
           </p>
-          <el-alert
-            v-if="!hasTeamCycleRule && needNextWeekDemand"
-            type="warning"
-            :closable="false"
-            title="请于每周日前配置下一周各日班次需求"
-            style="margin-bottom: 8px"
-          />
+          <p v-else class="panel-sub text-muted">当前团队未绑定考勤组</p>
           <div class="demand-cards">
             <div
-              v-for="d in shiftDemand"
+              v-for="d in groupShifts"
               :key="d.template.id"
               class="demand-card"
               :class="{
-                clickable: scheduleMode === 'shift' && d.shift,
-                active: scheduleMode === 'shift' && selectedLineShiftId === d.shift?.id,
+                clickable: !isHistoryScope && scheduleMode === 'shift',
+                active: !isHistoryScope && scheduleMode === 'shift' && selectedLineShiftId === d.shift?.id,
               }"
-              @click="d.shift && scheduleMode === 'shift' ? selectDemandShift(d) : undefined"
+              @click="!isHistoryScope && scheduleMode === 'shift' ? selectGroupShift(d) : undefined"
             >
               <div class="demand-head">
                 <i v-if="d.shift" class="shift-dot" :style="{ background: d.shift.color }" />
                 <span class="demand-name">{{ d.template.name }}</span>
               </div>
-              <div class="demand-num">周期需求 {{ d.neededPersonDays }} 人·次</div>
-              <div class="demand-sub">已排 {{ d.scheduledPersonDays }} · 缺 {{ d.gapPersonDays }} 人·次</div>
-              <el-progress
-                :percentage="d.fillRate"
-                :stroke-width="6"
-                :color="d.gapPersonDays > 0 ? '#e6a23c' : '#67c23a'"
-                :show-text="false"
-              />
+              <div class="demand-num">
+                {{ d.template.startTime.slice(0, 5) }}-{{ d.template.endTime.slice(0, 5) }}
+              </div>
+              <div class="demand-sub">
+                平{{ d.weekdayNeeded }} · 末{{ d.weekendNeeded }} · 节{{ d.holidayNeeded }}
+                · 已排 {{ d.scheduledPersonDays }} 人·次
+              </div>
             </div>
-            <el-empty v-if="!shiftDemand.length" description="请配置班次需求" :image-size="48" />
-          </div>
-          <div v-if="shiftDemand.length" class="demand-footer">
-            <span v-if="demandSummary.shortageShifts" class="gap-hint">
-              {{ demandSummary.shortageShifts }} 个班次存在缺口
-            </span>
-            <span v-else class="ok-hint">当前周期需求已满足</span>
+            <el-empty
+              v-if="!groupShifts.length"
+              description="考勤组暂无班次，请先在考勤组中配置班次"
+              :image-size="48"
+            />
           </div>
         </div>
       </aside>
@@ -1036,11 +907,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           'line-edit-only': board.editMode.value === 'editing',
         }"
       >
-      <div v-if="scheduleMode === 'shift' && !selectedLineShiftContext" class="line-select-hint">
+      <div
+        v-if="!isHistoryScope && scheduleMode === 'shift' && !selectedLineShiftContext"
+        class="line-select-hint"
+      >
         <el-alert
           type="info"
           :closable="false"
-          title="请从左侧「班次需求概览」选择班次，进入编辑后按周拖拽为员工排班"
+          title="请从左侧「考勤组班次」选择班次，进入编辑后可在右侧列表直接排班"
         />
       </div>
       <ScheduleLinePanel
@@ -1048,11 +922,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         v-model:selected-date="lineSelectedDate"
         :team-id="selectedTeamId"
         :member-ids="memberIds"
-        :week-dates="displayDates"
+        :week-dates="boardDates"
         :edit-mode="board.editMode.value === 'editing'"
         :shift-context="selectedLineShiftContext"
         mode="shift"
         :conflict-map="board.conflictMap.value"
+        :is-cell-locked="board.isCellLocked"
         class="inline-line-panel"
         @enter-edit="handleEnterEditMode()"
       />
@@ -1061,32 +936,38 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         v-model:selected-date="lineSelectedDate"
         :team-id="selectedTeamId"
         :member-ids="memberIds"
-        :week-dates="weekDates"
+        :week-dates="boardDates"
         :edit-mode="board.editMode.value === 'editing'"
         :shift-context="null"
         mode="custom"
         :conflict-map="board.conflictMap.value"
+        :is-cell-locked="board.isCellLocked"
         class="inline-line-panel"
         @enter-edit="handleEnterEditMode()"
       />
 
       <div class="schedule-list-section">
-      <div v-if="scheduleMode === 'shift'" class="list-view-bar">
+      <div v-if="!isHistoryScope && scheduleMode === 'shift'" class="list-view-bar">
         <span class="list-view-label">列表视图</span>
         <el-radio-group v-model="shiftListView" size="small">
           <el-radio-button value="team">按人员</el-radio-button>
           <el-radio-button value="grid">按班次</el-radio-button>
         </el-radio-group>
       </div>
-      <div class="list-section-title">排班列表</div>
+      <div class="list-section-title">
+        {{ isHistoryScope ? '历史排班列表' : '未来排班列表' }}
+        <el-tag v-if="!boardDates.length" size="small" type="info" style="margin-left: 8px">
+          当前周期无{{ isHistoryScope ? '历史' : '未来' }}日期
+        </el-tag>
+      </div>
 
       <ScheduleTeamBoard
-        v-if="scheduleMode !== 'shift' || shiftListView === 'team'"
+        v-if="(isHistoryScope || scheduleMode !== 'shift' || shiftListView === 'team') && boardDates.length"
         class="schedule-list-board"
-        :dates="displayDates"
+        :dates="boardDates"
         :groups="teamBoardGroups"
         :shifts="store.shifts"
-        :edit-mode="board.editMode.value"
+        :edit-mode="isHistoryScope ? 'readonly' : board.editMode.value"
         :selected-cells="board.selectedCells.value"
         :conflict-map="board.conflictMap.value"
         :max-weekly-hours="groupCompliance.maxWeeklyHours"
@@ -1100,9 +981,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         @drop="onDrop"
       />
       <ScheduleShiftGrid
-        v-else
+        v-else-if="!isHistoryScope && boardDates.length"
         class="schedule-list-board"
-        :dates="displayDates"
+        :dates="boardDates"
         :shift-rows="shiftRows"
         :compact="viewType === 'month'"
         :get-cell-employees="getShiftCellEmployees"
@@ -1110,6 +991,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         :get-cell-gap="getShiftCellGap"
         :get-cell-class="getShiftCellClass"
         @cell-click="onShiftCellClick"
+      />
+      <el-empty
+        v-else
+        :description="isHistoryScope ? '当前周期没有历史排班日期，请切换到更早的周/月' : '当前周期没有未来排班日期'"
+        :image-size="72"
       />
       </div>
       </div>
@@ -1123,28 +1009,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <i :style="{ background: cfg.bg, border: `1px solid ${cfg.color}` }" />{{ cfg.label }}
         </span>
         <span class="legend-item"><i class="dot-conflict" />工时红线冲突</span>
-        <span class="legend-item"><i class="dot-locked" />已确认（不可编辑）</span>
+        <span class="legend-item"><i class="dot-locked" />已确认（置灰不可编辑）</span>
         <span class="text-muted tip-inline">
           {{
-            board.editMode.value === 'editing'
-              ? scheduleMode === 'custom'
-                ? '自定义划线排班，冲突会在面板内标红提醒'
-                : '选择左侧班次后按周拖拽排班，冲突会在面板内标红提醒'
-              : scheduleMode === 'custom'
-                ? '查看排班列表，点击编辑排班进行自定义划线'
-                : '查看排班列表，点击编辑排班进行按班次划线'
+            isHistoryScope
+              ? '历史排班只读查看'
+              : board.editMode.value === 'editing'
+                ? scheduleMode === 'custom'
+                  ? '自定义划线排班；已确认班次置灰不可操作'
+                  : '待确认班次可改，发布后通知灵工；已确认班次置灰不可操作'
+                : '查看未来排班，点击编辑排班进行修改'
           }}
         </span>
       </div>
       </div>
     </div>
-
-    <ScheduleTemplateManager
-      v-model:visible="templateManagerVisible"
-      :team-id="selectedTeamId"
-      :attendance-group-id="team?.attendanceGroupId ?? ''"
-      @apply="applyTemplateFromManager"
-    />
 
     <el-dialog v-model="shiftAssignVisible" title="分配班次人员" width="420px" destroy-on-close>
       <p v-if="shiftAssignTarget" class="text-muted assign-hint">
@@ -1161,17 +1040,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <el-button type="primary" @click="confirmShiftAssign">确定</el-button>
       </template>
     </el-dialog>
-
-    <ScheduleDemandConfigDrawer
-      v-model:visible="demandDrawerVisible"
-      :team-id="selectedTeamId"
-      :member-ids="memberIds"
-      :templates="selectedGroup?.shiftTemplates ?? []"
-      :default-week-start="demandConfigWeekStart"
-      :display-dates="displayDates"
-      @saved="onDemandSaved"
-      @cycle-applied="onCycleAppliedFromDemand"
-    />
 
     <Teleport to="body">
       <div
@@ -1249,7 +1117,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <el-button type="primary" plain style="width: 100%; margin-bottom: 8px" @click="openSwapDialog">
             发起换班
           </el-button>
-          <el-button type="danger" plain style="width: 100%" @click="submitCancelShift">
+          <el-button type="danger" plain style="width: 100%" @click="openCancelShiftDialog">
             发起取消班次
           </el-button>
         </div>
@@ -1293,61 +1161,48 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       </template>
     </el-dialog>
 
-    <el-dialog v-model="smartDialogVisible" title="智能排班" width="560px">
-      <el-form label-width="100px">
-        <el-form-item label="排班区间">
-          <el-date-picker v-model="smartForm.dateRange" type="daterange" value-format="YYYY-MM-DD" style="width: 100%" />
-        </el-form-item>
-        <el-form-item label="选择人员">
-          <div class="smart-emp-picker">
-            <el-checkbox v-model="smartAllSelected">全选</el-checkbox>
-            <el-select
-              v-model="smartForm.employeeIds"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              placeholder="选择参与排班的人员"
-              style="width: 100%"
+    <el-dialog v-model="cancelDialogVisible" title="发起取消班次" width="480px">
+      <el-alert
+        type="warning"
+        :closable="false"
+        title="已确认班次取消后将进入审批/记录明细，通过后灵工排班会被移除"
+        style="margin-bottom: 16px"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="取消原因" required>
+          <el-radio-group v-model="cancelForm.reasonCode" class="cancel-reason-group">
+            <el-radio
+              v-for="opt in CANCEL_SHIFT_REASON_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
             >
-              <el-option
-                v-for="emp in smartEmployeeOptions"
-                :key="emp.id"
-                :label="`${emp.name}（${emp.employeeNo}）`"
-                :value="emp.id"
-              />
-            </el-select>
-          </div>
+              {{ opt.label }}
+            </el-radio>
+          </el-radio-group>
         </el-form-item>
-        <el-form-item label="班次需求">
-          <div v-if="smartShiftDemands.some((d) => d.hasDemand)" class="smart-demand-list">
-            <div v-for="d in smartShiftDemands.filter((x) => x.hasDemand)" :key="d.shiftId" class="smart-demand-item">
-              <i v-if="d.shift" class="shift-dot" :style="{ background: d.shift.color }" />
-              <span>{{ d.templateName }}</span>
-              <span class="text-muted">{{ d.startTime }}-{{ d.endTime }}</span>
-              <span class="demand-count">
-                区间 {{ d.totalNeeded }} 人·次（{{ d.dayCount }} 天，均 {{ d.avgNeeded }} 人/日）
-              </span>
-            </div>
-          </div>
-          <el-empty v-else description="请先在班次需求配置中设置当前区间人数" :image-size="48" />
-          <p v-if="smartShiftDemands.some((d) => d.hasDemand)" class="field-hint text-muted">
-            读取当前班次需求配置（含本周按日需求），从所选人员中智能匹配排班
-          </p>
-        </el-form-item>
-        <el-form-item label="规则">
-          <el-checkbox v-model="smartForm.preferEmployeePreference">偏好匹配</el-checkbox>
-          <el-checkbox v-model="smartForm.balanceHours">工时均衡</el-checkbox>
-          <el-checkbox v-model="smartForm.respectLeave">避开请假</el-checkbox>
+        <el-form-item v-if="cancelForm.reasonCode === 'other'" label="其他说明" required>
+          <el-input
+            v-model="cancelForm.reasonOther"
+            type="textarea"
+            :rows="3"
+            maxlength="200"
+            show-word-limit
+            placeholder="请填写其他取消原因"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="smartDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="runSmartSchedule">开始排班</el-button>
+        <el-button @click="cancelDialogVisible = false">取消</el-button>
+        <el-button type="danger" :loading="cancelSubmitting" @click="submitCancelShift">
+          提交申请
+        </el-button>
       </template>
     </el-dialog>
 
     <el-dialog v-model="publishDialogVisible" title="发布排班" width="440px">
-      <p>确认发布当前周期排班？发布后将通知相关员工确认班次，未发布前不会发送通知。</p>
+      <p>
+        确认发布当前未来排班？变更的待确认班次将通知灵工重新确认；已确认班次保持不变，不会被覆盖。
+      </p>
       <ul class="diff-list">
         <li>新增 {{ publishDiff.added }} 个班次</li>
         <li>修改 {{ publishDiff.modified }} 个班次</li>
@@ -1454,8 +1309,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 .mode-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 16px;
   padding: 10px 16px;
+}
+
+.scope-tip {
+  font-size: 12px;
+  margin-left: auto;
 }
 
 .person-picker {
@@ -1617,6 +1478,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 8px;
+}
+
+.panel-head-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
 }
 
 .panel-sub {
@@ -1892,8 +1759,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 }
 
 .dot-locked {
-  background: #f0fdf4;
-  border: 2px solid #67c23a !important;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1 !important;
+  filter: grayscale(0.35);
 }
 
 .dot-conflict {
@@ -1953,5 +1821,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   margin: 12px 0 0;
   padding-left: 20px;
   color: #606266;
+}
+
+.cancel-reason-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 </style>

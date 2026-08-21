@@ -24,6 +24,8 @@ const props = defineProps<{
   mode?: 'shift' | 'custom'
   /** 合规冲突（与下方排班列表同源） */
   conflictMap?: Map<string, string[]>
+  /** 已确认班次：置灰不可划线/清除 */
+  isCellLocked?: (employeeId: string, date: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -201,7 +203,12 @@ function isDayInWeekSelection(employeeId: string, dayIdx: number) {
   return dayIdx >= lo && dayIdx <= hi
 }
 
+function isLocked(employeeId: string, date: string) {
+  return Boolean(props.isCellLocked?.(employeeId, date))
+}
+
 function upsertLineAssignment(employeeId: string, date: string, startTime: string, endTime: string) {
+  if (isLocked(employeeId, date)) return
   if (props.shiftContext) {
     const st = props.shiftContext.startTime.slice(0, 5)
     const et = props.shiftContext.endTime.slice(0, 5)
@@ -230,6 +237,10 @@ function upsertLineAssignment(employeeId: string, date: string, startTime: strin
 function onHourDown(employeeId: string, hour: number) {
   if (!props.editMode) {
     emit('enterEdit')
+    return
+  }
+  if (isLocked(employeeId, props.selectedDate)) {
+    ElMessage.info('该班次已确认，不可编辑，请走取消班次流程')
     return
   }
   draggingEmployeeId.value = employeeId
@@ -275,6 +286,11 @@ function onWeekDayDown(employeeId: string, dayIdx: number) {
     emit('enterEdit')
     return
   }
+  const date = props.weekDates[dayIdx]
+  if (date && isLocked(employeeId, date)) {
+    ElMessage.info('该班次已确认，不可编辑，请走取消班次流程')
+    return
+  }
   weekDraggingEmployeeId.value = employeeId
   weekDragStartIdx.value = dayIdx
   weekDragEndIdx.value = dayIdx
@@ -304,13 +320,23 @@ function onWeekDayUp(employeeId: string) {
   const end = weekDragEndIdx.value ?? weekDragStartIdx.value
   const lo = Math.min(weekDragStartIdx.value, end)
   const hi = Math.max(weekDragStartIdx.value, end)
-  const dates = props.weekDates.slice(lo, hi + 1)
+  const dates = props.weekDates.slice(lo, hi + 1).filter((date) => !isLocked(employeeId, date))
+  const skipped = hi - lo + 1 - dates.length
+  if (!dates.length) {
+    ElMessage.warning('所选日期均为已确认班次，不可编辑')
+    resetWeekDrag()
+    return
+  }
   dates.forEach((date) => upsertLineAssignment(employeeId, date, startTime, endTime))
   const empName = store.employees.find((e) => e.id === employeeId)?.name
   const label = props.shiftContext
     ? props.shiftContext.shiftName
     : `${startTime}-${endTime}`
-  ElMessage.success(`${empName} 已为 ${dates.length} 天排 ${label}`)
+  ElMessage.success(
+    skipped
+      ? `${empName} 已为 ${dates.length} 天排 ${label}（跳过 ${skipped} 个已确认）`
+      : `${empName} 已为 ${dates.length} 天排 ${label}`,
+  )
   void notifyAssignmentConflicts(employeeId, dates)
   resetWeekDrag()
 }
@@ -328,17 +354,32 @@ function resetDayDrag() {
 }
 
 function clearLineDay(employeeId: string) {
+  if (isLocked(employeeId, props.selectedDate)) {
+    ElMessage.info('该班次已确认，不可清除，请走取消班次流程')
+    return
+  }
   store.removeAssignment(employeeId, props.selectedDate, false)
-  store.removeAssignment(employeeId, props.selectedDate, true)
   ElMessage.success('已清除该员工当日排班')
 }
 
 function clearLineWeek(employeeId: string) {
+  let cleared = 0
+  let skipped = 0
   props.weekDates.forEach((date) => {
+    if (isLocked(employeeId, date)) {
+      skipped += 1
+      return
+    }
     store.removeAssignment(employeeId, date, false)
-    store.removeAssignment(employeeId, date, true)
+    cleared += 1
   })
-  ElMessage.success('已清除该员工本周划线排班')
+  if (!cleared && skipped) {
+    ElMessage.info('均为已确认班次，不可清除，请走取消班次流程')
+    return
+  }
+  ElMessage.success(
+    skipped ? `已清除 ${cleared} 天（跳过 ${skipped} 个已确认）` : '已清除该员工本周划线排班',
+  )
 }
 
 watch(
@@ -456,7 +497,10 @@ watch(
           </div>
           <div class="text-muted">{{ emp.employeeNo }}</div>
         </div>
-        <div class="track-col hour-track">
+        <div
+          class="track-col hour-track"
+          :class="{ locked: isLocked(emp.id, selectedDate) }"
+        >
           <div
             v-for="h in hours"
             :key="h"
@@ -478,8 +522,9 @@ watch(
           </div>
         </div>
         <div class="act-col">
+          <el-tag v-if="isLocked(emp.id, selectedDate)" size="small" type="info">已确认</el-tag>
           <el-button
-            v-if="editMode && getAssignment(emp.id, selectedDate)"
+            v-else-if="editMode && getAssignment(emp.id, selectedDate)"
             link
             type="danger"
             size="small"
@@ -530,8 +575,13 @@ watch(
             selecting: isDayInWeekSelection(emp.id, dayIdx),
             filled: getAssignment(emp.id, date),
             conflict: hasCellConflict(emp.id, date),
+            locked: isLocked(emp.id, date),
           }"
-          :title="getCellConflictMessages(emp.id, date).join('；')"
+          :title="
+            isLocked(emp.id, date)
+              ? '已确认，不可编辑'
+              : getCellConflictMessages(emp.id, date).join('；')
+          "
           @mousedown.prevent="onWeekDayDown(emp.id, dayIdx)"
           @mouseenter="onWeekDayEnter(emp.id, dayIdx)"
         >
@@ -726,6 +776,18 @@ watch(
 .day-cell.conflict {
   background: #fef0f0;
   box-shadow: inset 0 0 0 1px #fbc4c4;
+}
+
+.day-cell.locked,
+.hour-track.locked {
+  background: #f1f5f9 !important;
+  opacity: 0.72;
+  filter: grayscale(0.35);
+  cursor: not-allowed;
+}
+
+.day-cell.locked:hover {
+  background: #f1f5f9 !important;
 }
 
 .conflict-block {

@@ -1,5 +1,6 @@
-import type { Task, TaskInstance, TaskType, TaskWorkflow, WorkflowAction } from '@/types'
+import type { PricingMode, Task, TaskInstance, TaskPricingUnit, TaskType, TaskWorkflow, TieredPrice, WorkflowAction } from '@/types'
 import type { MiniTaskCategory } from '@/mock/miniTaskHallSeed'
+import { resolveTaskPricing, resolveTaskSettlementUnitPrice } from '@/constants/task'
 import { resolveTransitionTarget } from '@/services/task'
 
 export const TASK_PREVIEW_LIMIT = 5
@@ -9,28 +10,39 @@ export const taskPricingUnitMap = {
   time: '次',
 } as const
 
-export function getTaskPricingUnit(taskType: TaskType | undefined): 'piece' | 'time' {
-  return taskType?.pricingUnit ?? 'piece'
+export type TaskPricingLike = {
+  pricingMode: PricingMode
+  fixedPrice?: number
+  tieredPrices?: TieredPrice[]
+  pricingUnit?: TaskPricingUnit
 }
 
-export function formatTaskUnitPrice(taskType: TaskType | undefined): string {
-  if (!taskType) return '-'
-  const unit = taskPricingUnitMap[getTaskPricingUnit(taskType)]
-  if (taskType.pricingMode === 'fixed') {
-    return taskType.fixedPrice != null ? `¥${taskType.fixedPrice}/${unit}` : '-'
+export function getTaskPricingUnit(pricing: TaskPricingLike | undefined): 'piece' | 'time' {
+  return pricing?.pricingUnit ?? 'piece'
+}
+
+export function formatTaskUnitPrice(pricing: TaskPricingLike | undefined): string {
+  if (!pricing) return '-'
+  const unit = taskPricingUnitMap[getTaskPricingUnit(pricing)]
+  if (pricing.pricingMode === 'fixed') {
+    return pricing.fixedPrice != null ? `¥${pricing.fixedPrice}/${unit}` : '-'
   }
-  const first = taskType.tieredPrices?.[0]
+  const first = pricing.tieredPrices?.[0]
   return first ? `¥${first.unitPrice}/${unit}起` : '-'
 }
 
-export function calcTaskClaimAmount(taskType: TaskType, quantity: number): number {
+export function calcTaskClaimAmount(pricing: TaskPricingLike, quantity: number): number {
   const q = Math.max(1, quantity)
-  if (taskType.pricingMode === 'fixed') {
-    return Math.round((taskType.fixedPrice ?? 0) * q * 100) / 100
+  if (pricing.pricingMode === 'fixed') {
+    return Math.round((pricing.fixedPrice ?? 0) * q * 100) / 100
   }
-  const tier = taskType.tieredPrices?.find((t) => q >= t.minCount && q <= t.maxCount)
-  const unit = tier?.unitPrice ?? taskType.tieredPrices?.[0]?.unitPrice ?? 0
+  const tier = pricing.tieredPrices?.find((t) => q >= t.minCount && q <= t.maxCount)
+  const unit = tier?.unitPrice ?? pricing.tieredPrices?.[0]?.unitPrice ?? 0
   return Math.round(unit * q * 100) / 100
+}
+
+export function resolvePricingForTask(task: Task, taskTypes: TaskType[]): TaskPricingLike | undefined {
+  return resolveTaskPricing(task, taskTypes) as TaskPricingLike | undefined
 }
 
 export function getWorkerClaimedQuantity(
@@ -144,7 +156,7 @@ export interface TaskEnterpriseGroup {
 
 export function buildHallTaskRow(
   task: Task,
-  taskType: TaskType | undefined,
+  pricing: TaskPricingLike | undefined,
   myCount: number,
   extra?: {
     tags?: string[]
@@ -157,12 +169,14 @@ export function buildHallTaskRow(
     isMobile?: boolean
   },
 ): HallTaskRow {
-  const pricingUnit = getTaskPricingUnit(taskType)
+  const pricingUnit = getTaskPricingUnit(pricing)
   const unit = taskPricingUnitMap[pricingUnit]
-  const priceValue =
-    taskType?.pricingMode === 'fixed'
-      ? (taskType.fixedPrice ?? 0)
-      : (taskType?.tieredPrices?.[0]?.unitPrice ?? 0)
+  const priceValue = resolveTaskSettlementUnitPrice({
+    settlementUnitPrice: task.settlementUnitPrice,
+    pricingMode: pricing?.pricingMode,
+    fixedPrice: pricing?.fixedPrice,
+    tieredPrices: pricing?.tieredPrices,
+  })
   const remain =
     extra?.remain ??
     (task.plannedTotal != null ? Math.max(0, task.plannedTotal - task.acceptedCount) : undefined)

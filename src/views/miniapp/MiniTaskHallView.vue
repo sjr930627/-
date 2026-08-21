@@ -4,17 +4,20 @@ import { useRouter } from 'vue-router'
 import { ArrowRight, Odometer, User } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import { useMiniWorkerTasks } from '@/composables/useMiniWorkerTasks'
 import { getEnterpriseHallLabel, getTaskHallExtra } from '@/mock/miniTaskHallSeed'
 import {
   buildHallTaskRow,
   getWorkerClaimedQuantity,
   groupHallTasksByEnterprise,
+  resolvePricingForTask,
 } from '@/services/miniTask'
 
 const store = useAppStore()
 const router = useRouter()
 const { employeeId } = useMiniAppWorker()
+const { ensureActionAllowed } = useMiniAppActionGate()
 const { pendingMyActionCount } = useMiniWorkerTasks()
 
 const tagToneMap: Record<string, string> = {
@@ -33,10 +36,10 @@ const hallTaskRows = computed(() =>
   store.tasks
     .filter((t) => t.status === 'active' && t.dispatchMode === 'hall')
     .map((t) => {
-      const taskType = store.taskTypes.find((tt) => tt.id === t.taskTypeId)
+      const pricing = resolvePricingForTask(t, store.taskTypes)
       const myCount = getWorkerClaimedQuantity(store.taskInstances, t.id, employeeId.value)
       const extra = getTaskHallExtra(t.id)
-      return buildHallTaskRow(t, taskType, myCount, extra)
+      return buildHallTaskRow(t, pricing, myCount, extra)
     }),
 )
 
@@ -82,8 +85,16 @@ function openTaskEnterprise(enterpriseId: string, enterpriseName: string) {
   })
 }
 
-function openTaskClaim(taskId: string, e: Event) {
+async function openTaskClaim(taskId: string, e: Event) {
   e.stopPropagation()
+  const task = store.tasks.find((t) => t.id === taskId)
+  const allowed = await ensureActionAllowed({
+    requireDepartment: true,
+    enterpriseId: task?.enterpriseId,
+    from: 'claim',
+    redirectAfterFace: `/miniapp/task-hall/task/${taskId}/claim`,
+  })
+  if (!allowed) return
   router.push(`/miniapp/task-hall/task/${taskId}/claim`)
 }
 

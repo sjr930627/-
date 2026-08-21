@@ -12,7 +12,7 @@ export const EMPLOYEE_IMPORT_HEADERS = [
   '工号',
   '年龄',
   '邮箱',
-  '入职日期',
+  '入驻日期',
   '居住地址',
   '岗位',
   '部门',
@@ -31,7 +31,7 @@ const TEMPLATE_EXAMPLE = [
   '2026-07-30',
   '浙江省杭州市西湖区',
   '',
-  '待分配人员',
+  '待入驻人员',
   '',
   '待入职',
   '',
@@ -231,7 +231,7 @@ export function parseEmployeeImportFile(
       return
     }
     if (!hireDate.trim()) {
-      failures.push({ row: rowNo, name: displayName, reason: '入职日期为空' })
+      failures.push({ row: rowNo, name: displayName, reason: '入驻日期为空' })
       return
     }
 

@@ -35,7 +35,7 @@ GitHub Pages 演示地址：
 | 运营后台 | https://sjr930627.github.io/-/dashboard |
 | 企业端 | https://sjr930627.github.io/-/enterprise/dashboard |
 | 灵工小程序 | https://sjr930627.github.io/-/miniapp/login |
-| 企业小程序 | https://sjr930627.github.io/-/enterprise-miniapp/login |
+| 企业小程序 | https://sjr930627.github.io/-/enterprise-miniapp/recruitment |
 
 详细演示脚本见 [`docs/DEMO.md`](docs/DEMO.md)。`main` 分支推送后自动重新部署。
 

@@ -1,12 +1,22 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { buildDailyAttendanceList, buildMonthlySummary, getMonthDateRange } from '@/services/attendance'
+import {
+  buildDailyAttendanceList,
+  buildMonthlySummary,
+  filterAssignmentsBySource,
+  getMonthDateRange,
+} from '@/services/attendance'
 import { getDepartmentName } from '@/utils'
+import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 
 const props = withDefaults(
-  defineProps<{ embedded?: boolean; enterpriseId?: string }>(),
-  { embedded: false },
+  defineProps<{
+    embedded?: boolean
+    enterpriseId?: string
+    assignmentSource?: 'schedule' | 'grab'
+  }>(),
+  { embedded: false, assignmentSource: 'schedule' },
 )
 
 const store = useAppStore()
@@ -32,7 +42,7 @@ const tableData = computed(() => {
   const daily = buildDailyAttendanceList(
     employees.map((e) => e.id),
     getMonthDateRange(selectedMonth.value),
-    store.assignments,
+    filterAssignmentsBySource(store.assignments, props.assignmentSource),
     store.shifts,
     store.punches,
     store.leaveRequests,
@@ -43,11 +53,13 @@ const tableData = computed(() => {
   return employees.map((emp) => {
     const empDaily = daily.filter((d) => d.employeeId === emp.id)
     const summary = buildMonthlySummary(emp.id, selectedMonth.value, empDaily)
+    const enterpriseId = resolveEnterpriseIdByEmployee(emp)
     return {
       ...summary,
+      enterpriseName: store.enterprises.find((e) => e.id === enterpriseId)?.name ?? '—',
       name: emp.name,
-      employeeNo: emp.employeeNo,
-      departmentName: getDepartmentName(scopedDepartments.value, emp.departmentId),
+      phone: emp.phone || '—',
+      departmentName: getDepartmentName(store.departments, emp.departmentId),
     }
   })
 })
@@ -96,9 +108,10 @@ const totals = computed(() => ({
     </el-row>
 
     <el-table :data="tableData" border stripe show-summary>
-      <el-table-column prop="employeeNo" label="工号" width="90" fixed />
+      <el-table-column prop="enterpriseName" label="企业" min-width="140" show-overflow-tooltip fixed />
+      <el-table-column prop="departmentName" label="部门" min-width="120" show-overflow-tooltip fixed />
       <el-table-column prop="name" label="姓名" width="100" fixed />
-      <el-table-column prop="departmentName" label="部门" min-width="120" />
+      <el-table-column prop="phone" label="手机号" width="130" fixed />
       <el-table-column prop="scheduledDays" label="应出勤" width="90" />
       <el-table-column prop="actualDays" label="实际出勤" width="90" />
       <el-table-column prop="lateCount" label="迟到" width="70" />

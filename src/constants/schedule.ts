@@ -4,6 +4,30 @@ export const confirmStatusMap = {
   rejected: { label: '已拒绝', short: '拒', color: '#f56c6c', bg: '#fef0f0' },
 } as const
 
+/** 演示锚定「今天」，用于历史/未来排班分界（对齐种子数据） */
+export const SCHEDULE_DEMO_TODAY = '2026-07-28'
+
+export type ScheduleScope = 'history' | 'future'
+
+/** 历史排班：严格早于今天；未来排班：今天及以后 */
+export function isScheduleHistoryDate(date: string, today = SCHEDULE_DEMO_TODAY) {
+  return date < today
+}
+
+export function isScheduleFutureDate(date: string, today = SCHEDULE_DEMO_TODAY) {
+  return date >= today
+}
+
+export function filterDatesByScheduleScope(
+  dates: string[],
+  scope: ScheduleScope,
+  today = SCHEDULE_DEMO_TODAY,
+) {
+  return dates.filter((d) =>
+    scope === 'history' ? isScheduleHistoryDate(d, today) : isScheduleFutureDate(d, today),
+  )
+}
+
 /** 旧数据「确认中」归并展示为待确认 */
 export function normalizeConfirmStatus(
   status?: keyof typeof confirmStatusMap | 'confirming',
@@ -13,12 +37,21 @@ export function normalizeConfirmStatus(
   return status in confirmStatusMap ? status : undefined
 }
 
-/** 已发布且灵工已确认的排班不可直接编辑 */
+/** 已发布且灵工已确认的排班不可直接编辑（需走取消班次） */
 export function isAssignmentConfirmedLocked(
   asn: { published?: boolean; confirmStatus?: keyof typeof confirmStatusMap | 'confirming' } | null | undefined,
 ): boolean {
   if (!asn?.published) return false
   return normalizeConfirmStatus(asn.confirmStatus) === 'confirmed'
+}
+
+/** 已发布待确认：允许在未来排班中改草稿后重新发布 */
+export function isAssignmentPendingEditable(
+  asn: { published?: boolean; confirmStatus?: keyof typeof confirmStatusMap | 'confirming' } | null | undefined,
+): boolean {
+  if (!asn?.published) return true
+  const status = normalizeConfirmStatus(asn.confirmStatus)
+  return status === 'pending' || status === 'rejected' || !status
 }
 
 export function parseScheduleTimeNote(note?: string) {

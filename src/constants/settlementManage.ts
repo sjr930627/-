@@ -16,7 +16,11 @@ export const settlementManageStatusMap: Record<
 export const settlementManageTypeMap: Record<SettlementManageType, string> = {
   hourly: '工时',
   task: '任务',
+  import: '导入发薪',
 }
+
+/** 待结算可切换的类型（导入发薪直接生成结算单，无待结算池） */
+export const pendingSettlementTypes: Exclude<SettlementManageType, 'import'>[] = ['hourly', 'task']
 
 export function settlementLineKey(orderId: string, lineId: string): string {
   return `${orderId}:${lineId}`
@@ -36,6 +40,8 @@ export interface PendingSettlementLineRow {
   orderNo: string
   orderName: string
   orderLabel: string
+  /** 明细日期（单笔班次/任务发生日） */
+  date: string
   periodStart: string
   periodEnd: string
   periodLabel: string
@@ -82,6 +88,7 @@ export function collectPendingLines(
     if (order.type !== type) continue
     for (const line of order.workerLines) {
       if (line.status !== 'pending_settlement') continue
+      const date = order.periodStart
       rows.push({
         key: settlementLineKey(order.id, line.id),
         orderId: order.id,
@@ -90,7 +97,8 @@ export function collectPendingLines(
         enterpriseName: order.enterpriseName,
         orderNo: order.orderNo,
         orderName: order.orderName,
-        orderLabel: `${order.orderName}（${order.orderNo}）`,
+        orderLabel: order.orderName,
+        date,
         periodStart: order.periodStart,
         periodEnd: order.periodEnd,
         periodLabel: formatSettlementPeriod(order.periodStart, order.periodEnd),
@@ -105,11 +113,16 @@ export function collectPendingLines(
       })
     }
   }
-  return rows
+  return rows.sort(
+    (a, b) =>
+      b.date.localeCompare(a.date) ||
+      a.employeeName.localeCompare(b.employeeName, 'zh-CN') ||
+      a.orderName.localeCompare(b.orderName, 'zh-CN'),
+  )
 }
 
 export function groupPendingByEnterprise(lines: PendingSettlementLineRow[]): PendingEnterpriseGroup[] {
-  const map = new Map<string, PendingEnterpriseGroup>()
+  const map = new Map<string, PendingEnterpriseGroup & { employeeIds: Set<string> }>()
   for (const line of lines) {
     let group = map.get(line.enterpriseId)
     if (!group) {
@@ -119,14 +132,20 @@ export function groupPendingByEnterprise(lines: PendingSettlementLineRow[]): Pen
         lines: [],
         workerCount: 0,
         totalAmount: 0,
+        employeeIds: new Set(),
       }
       map.set(line.enterpriseId, group)
     }
     group.lines.push(line)
-    group.workerCount += 1
+    group.employeeIds.add(line.employeeId)
     group.totalAmount += line.amount
   }
-  return [...map.values()].sort((a, b) => a.enterpriseName.localeCompare(b.enterpriseName, 'zh-CN'))
+  return [...map.values()]
+    .map(({ employeeIds, ...group }) => ({
+      ...group,
+      workerCount: employeeIds.size,
+    }))
+    .sort((a, b) => a.enterpriseName.localeCompare(b.enterpriseName, 'zh-CN'))
 }
 
 export function slipEnterpriseLabel(slip: SettlementSlip): string {
@@ -136,11 +155,15 @@ export function slipEnterpriseLabel(slip: SettlementSlip): string {
 }
 
 export function formatSettlementQuantity(type: SettlementManageType, quantity: number): string {
-  return type === 'hourly' ? `${quantity} 小时` : `${quantity} 次`
+  if (type === 'hourly') return `${quantity} 小时`
+  if (type === 'task') return `${quantity} 次`
+  return `${quantity} 人`
 }
 
 export function formatSettlementUnitPrice(type: SettlementManageType, unitPrice: number): string {
-  return type === 'hourly' ? `¥${unitPrice}/小时` : `¥${unitPrice}/次`
+  if (type === 'hourly') return `¥${unitPrice}/小时`
+  if (type === 'task') return `¥${unitPrice}/次`
+  return '—'
 }
 
 export function formatSettlementPeriod(start: string, end: string): string {

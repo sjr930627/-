@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { Component } from 'vue'
 import {
   AlarmClock,
@@ -21,6 +21,7 @@ import {
   Tickets,
   Timer,
   Wallet,
+  FullScreen,
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
@@ -346,6 +347,34 @@ function openTodo(path: string) {
   todoDrawerVisible.value = false
   router.push(path)
 }
+
+async function openScanJoin() {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '演示：粘贴部门入驻二维码内容（JOIN|企业ID|部门ID），或选择下方常用部门后确认',
+      '扫码入驻',
+      {
+        confirmButtonText: '申请入驻',
+        cancelButtonText: '取消',
+        inputPlaceholder: 'JOIN|ent_xxx|dept_xxx',
+        inputValue: 'JOIN|ent_stars_telecom|dept_prod_a',
+      },
+    )
+    const payload = String(value || '').trim()
+    if (!payload) {
+      ElMessage.warning('请填写二维码内容')
+      return
+    }
+    store.applyJoinDepartmentByQr(payload, {
+      name: employee.value?.name || '灵工申请人',
+      phone: employee.value?.phone,
+      employeeId: employeeId.value,
+    })
+    ElMessage.success('已提交入驻申请，请等待企业审批')
+  } catch {
+    /* cancel */
+  }
+}
 </script>
 
 <template>
@@ -357,11 +386,14 @@ function openTodo(path: string) {
         <div class="wb-profile-info">
           <div class="wb-name">{{ employee?.name ?? '—' }}</div>
           <div class="wb-meta">
-            <span>工号 {{ employee?.employeeNo ?? '—' }}</span>
+            <span>人员ID {{ employee?.employeeNo ?? '—' }}</span>
             <span v-if="profileExt?.level" class="wb-level-badge">{{ profileExt.level }}</span>
           </div>
         </div>
         <div class="wb-profile-actions">
+          <button class="wb-todo-btn" type="button" aria-label="扫码入驻" @click="openScanJoin">
+            <el-icon :size="18"><FullScreen /></el-icon>
+          </button>
           <button class="wb-todo-btn" type="button" aria-label="待办事项" @click="todoDrawerVisible = true">
             <el-icon :size="18"><Bell /></el-icon>
             <span v-if="todoCount" class="wb-todo-badge">{{ todoCount > 9 ? '9+' : todoCount }}</span>

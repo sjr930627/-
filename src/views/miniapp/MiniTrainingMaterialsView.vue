@@ -2,7 +2,7 @@
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { trainingMaterialCategoryOptions } from '@/constants/training'
+import { getMaterialCategoryLabel } from '@/constants/training'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniWorkerTraining } from '@/composables/useMiniWorkerTraining'
 import { useAppStore } from '@/stores/app'
@@ -12,8 +12,9 @@ const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const { myCourses, materialTypeIcon } = useMiniWorkerTraining()
 
-function categoryLabel(cat: string) {
-  return trainingMaterialCategoryOptions.find((o) => o.value === cat)?.label ?? cat
+function categoryLabel(cat?: string) {
+  if (!cat) return '未分类'
+  return getMaterialCategoryLabel(cat, store.trainingMaterialCategories)
 }
 
 function openMaterial(courseId: string, materialId: string, accessible: boolean) {

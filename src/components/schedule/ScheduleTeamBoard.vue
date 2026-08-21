@@ -142,7 +142,10 @@ const flatEmployees = computed(() =>
                 >
                   {{ emp.name.slice(0, 1) }}
                 </span>
-                <span class="person-name">{{ emp.name }}</span>
+                <div class="person-text">
+                  <span class="person-name">{{ emp.name }}</span>
+                  <span class="person-phone">{{ emp.phone || '—' }}</span>
+                </div>
                 <el-icon v-if="rowHasConflict(emp.id)" class="warn-icon" color="#F56C6C">
                   <WarningFilled />
                 </el-icon>
@@ -153,7 +156,13 @@ const flatEmployees = computed(() =>
               :key="date"
               :class="cellClasses(emp.id, date, getAssignment(emp.id, date))"
               :title="conflictMap.get(cellKey(emp.id, date))?.join('；')"
-              draggable="true"
+              :draggable="
+                editMode === 'editing' &&
+                !(
+                  isAssignmentConfirmedLocked(getPublishedAssignment?.(emp.id, date) ?? getAssignment(emp.id, date)) ||
+                  isCellLocked?.(emp.id, date)
+                )
+              "
               @click="emit('cellClick', emp.id, date, $event)"
               @contextmenu.prevent="emit('cellContext', emp.id, date, $event)"
               @dragstart="emit('dragStart', emp.id, date)"
@@ -239,7 +248,7 @@ const flatEmployees = computed(() =>
   left: 0;
   background: #fff;
   z-index: 2;
-  min-width: 120px;
+  min-width: 148px;
   text-align: left;
   padding-left: 12px !important;
 }
@@ -297,6 +306,27 @@ const flatEmployees = computed(() =>
   gap: 8px;
 }
 
+.person-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.person-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  line-height: 1.2;
+}
+
+.person-phone {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
 .avatar {
   width: 28px;
   height: 28px;
@@ -308,11 +338,6 @@ const flatEmployees = computed(() =>
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-}
-
-.person-name {
-  font-weight: 600;
-  font-size: 13px;
 }
 
 .warn-icon {
@@ -350,9 +375,19 @@ const flatEmployees = computed(() =>
 }
 
 .team-cell.locked {
-  background: #f0fdf4 !important;
-  box-shadow: inset 0 0 0 2px #67c23a;
-  cursor: default;
+  background: #f1f5f9 !important;
+  box-shadow: inset 0 0 0 1px #cbd5e1;
+  cursor: not-allowed;
+  opacity: 0.72;
+  filter: grayscale(0.35);
+}
+
+.team-cell.locked:hover {
+  background: #f1f5f9 !important;
+}
+
+.team-cell.locked .shift-pill {
+  opacity: 0.85;
 }
 
 .shift-pill {

@@ -7,7 +7,7 @@ const portals = [
   {
     key: 'platform',
     title: '运营后台',
-    desc: '企业管理、合同管理、任务流程配置、全企业数据汇总、发起账单与结算个税',
+    desc: '企业管理、人员管理、合约管理、任务流程配置、全企业数据汇总、发起账单与结算个税',
     path: '/dashboard',
     color: '#2563eb',
     icon: 'Monitor',
@@ -15,7 +15,7 @@ const portals = [
   {
     key: 'enterprise',
     title: '企业端',
-    desc: '本企业招聘考勤、发起任务类型审批与任务、确认账单、计薪规则',
+    desc: '本企业招聘考勤、发布任务、确认账单、计薪规则',
     path: '/enterprise/dashboard',
     color: '#5b4fdb',
     icon: 'OfficeBuilding',
@@ -32,8 +32,8 @@ const portals = [
     key: 'enterprise-miniapp',
     title: '企业小程序',
     desc: '企业侧招聘发布与进度、资质审核、排班抢班、考勤异常与工时确认',
-    path: '/enterprise-miniapp/workbench',
-    color: '#7c3aed',
+    path: '/enterprise-miniapp/recruitment',
+    color: '#5b4fdb',
     icon: 'Cellphone',
   },
 ]

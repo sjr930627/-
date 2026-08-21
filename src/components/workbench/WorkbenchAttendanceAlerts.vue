@@ -7,35 +7,18 @@ defineProps<{
 }>()
 
 const router = useRouter()
-
-const severityIcon: Record<AttendanceAlertItem['severity'], string> = {
-  severe: '✕',
-  warning: '⏰',
-  info: '⏰',
-  pending: '🌙',
-}
-
-const severityClass: Record<AttendanceAlertItem['severity'], string> = {
-  severe: 'severe',
-  warning: 'warning',
-  info: 'info',
-  pending: 'pending',
-}
 </script>
 
 <template>
   <section class="wb-card">
     <div class="card-head">
-      <div>
-        <h3 class="card-title">考勤异常提醒</h3>
-        <p class="card-sub">今日 {{ items.length }} 条异常记录</p>
-      </div>
+      <h3 class="card-title">考勤异常提醒</h3>
       <el-button
         link
         type="primary"
         @click="router.push(items[0]?.path ?? '/attendance-exceptions')"
       >
-        查看全部 →
+        查看全部
       </el-button>
     </div>
 
@@ -48,8 +31,8 @@ const severityClass: Record<AttendanceAlertItem['severity'], string> = {
         class="alert-item"
         @click="router.push(item.path)"
       >
-        <div class="alert-icon" :class="severityClass[item.severity]">
-          {{ severityIcon[item.severity] }}
+        <div class="alert-icon">
+          <el-icon :size="16"><Clock /></el-icon>
         </div>
         <div class="alert-body">
           <div class="alert-title">{{ item.title }}</div>
@@ -64,17 +47,18 @@ const severityClass: Record<AttendanceAlertItem['severity'], string> = {
 <style scoped>
 .wb-card {
   background: #fff;
-  border-radius: 16px;
-  padding: 20px 22px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.04);
+  border: 1px solid #eef2f7;
 }
 
 .card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .card-title {
@@ -82,65 +66,42 @@ const severityClass: Record<AttendanceAlertItem['severity'], string> = {
   font-size: 16px;
   font-weight: 700;
   color: #0f172a;
-}
-
-.card-sub {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: #94a3b8;
+  padding-left: 10px;
+  border-left: 3px solid #2563eb;
+  line-height: 1.2;
 }
 
 .alert-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .alert-item {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border: 1px solid #f1f5f9;
-  border-radius: 12px;
+  border-radius: 10px;
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
 .alert-item:hover {
-  background: #f8fafc;
+  background: #fffbeb;
 }
 
 .alert-icon {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.alert-icon.severe {
-  background: #fef2f2;
-  color: #dc2626;
-}
-
-.alert-icon.warning {
   background: #fff7ed;
   color: #ea580c;
-}
-
-.alert-icon.info {
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-.alert-icon.pending {
-  background: #f8fafc;
-  color: #475569;
+  flex-shrink: 0;
 }
 
 .alert-body {
@@ -149,7 +110,7 @@ const severityClass: Record<AttendanceAlertItem['severity'], string> = {
 }
 
 .alert-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #0f172a;
 }

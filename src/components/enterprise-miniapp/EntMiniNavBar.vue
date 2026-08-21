@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
+import EntMiniMessageEntry from '@/components/enterprise-miniapp/EntMiniMessageEntry.vue'
 
 const props = withDefaults(
   defineProps<{
     title: string
     backTo?: string
+    /** 消息页等可不显示右上角消息入口 */
+    showMessage?: boolean
   }>(),
   {
-    backTo: '/enterprise-miniapp/workbench',
+    backTo: '/enterprise-miniapp/attendance',
+    showMessage: true,
   },
 )
 
@@ -29,7 +33,10 @@ function goBack() {
       <el-icon :size="18"><ArrowLeft /></el-icon>
     </button>
     <h1>{{ title }}</h1>
-    <span class="spacer" />
+    <div class="right">
+      <EntMiniMessageEntry v-if="showMessage" tone="dark" />
+      <span v-else class="spacer" />
+    </div>
   </header>
 </template>
 
@@ -42,7 +49,7 @@ function goBack() {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: var(--mini-bg, #f3f4f6);
+  background: var(--mini-bg, #f5f6f8);
 }
 .back {
   width: 34px;
@@ -55,6 +62,7 @@ function goBack() {
   align-items: center;
   justify-content: center;
   box-shadow: var(--mini-shadow);
+  flex-shrink: 0;
 }
 h1 {
   flex: 1;
@@ -62,6 +70,12 @@ h1 {
   font-size: 17px;
   text-align: center;
   color: #111827;
+}
+.right {
+  width: 36px;
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
 }
 .spacer {
   width: 34px;

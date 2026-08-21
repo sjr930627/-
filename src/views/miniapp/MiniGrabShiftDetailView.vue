@@ -5,11 +5,15 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import { getGrabShiftPostExtra, getGrabShiftSlotExtra } from '@/mock/miniappDetailSeed'
+import { isGrabShiftOpenForWorkers } from '@/services/grabShift'
+import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
 const route = useRoute()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
+const { ensureActionAllowed } = useMiniAppActionGate()
 
 const teamId = computed(() => route.params.teamId as string)
 const subscribed = ref(false)
@@ -18,7 +22,7 @@ const reqExpanded = ref(true)
 
 const slots = computed(() =>
   store.grabShiftSlots
-    .filter((s) => s.teamId === teamId.value && (s.status === 'open' || s.status === 'partial'))
+    .filter((s) => s.teamId === teamId.value && isGrabShiftOpenForWorkers(s))
     .map((s) => {
       const extra = getGrabShiftSlotExtra(s.id, s.date)
       const applied = store.grabShiftApplications.some(
@@ -40,7 +44,11 @@ const slots = computed(() =>
 const post = computed(() => {
   const first = slots.value[0]
   if (!first) return null
-  return getGrabShiftPostExtra(teamId.value, first.teamName)
+  const extra = getGrabShiftPostExtra(teamId.value, first.teamName)
+  return {
+    ...extra,
+    title: first.positionName?.trim() || extra.title,
+  }
 })
 
 const attendanceGroupId = computed(() => slots.value[0]?.attendanceGroupId ?? '')
@@ -95,11 +103,26 @@ function toggleSlot(slotId: string, disabled: boolean) {
   }
 }
 
-function applySelected() {
+async function applySelected() {
   if (selectedSlotIds.value.length === 0) {
     ElMessage.warning('请先选择班次')
     return
   }
+  const firstSlot = store.grabShiftSlots.find((s) => s.id === selectedSlotIds.value[0])
+  const enterpriseId = firstSlot
+    ? resolveEnterpriseIdByAttendanceGroupId(
+        firstSlot.attendanceGroupId,
+        store.attendanceGroups,
+        store.departments,
+      )
+    : undefined
+  const allowed = await ensureActionAllowed({
+    requireDepartment: true,
+    enterpriseId,
+    from: 'grab',
+  })
+  if (!allowed) return
+
   let ok = 0
   let auto = 0
   for (const slotId of selectedSlotIds.value) {

@@ -3,11 +3,11 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
+  Calendar,
   CreditCard,
   Document,
   EditPen,
   List,
-  Medal,
   Reading,
   SwitchButton,
   Tickets,
@@ -20,7 +20,6 @@ import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppAuth } from '@/composables/useMiniAppAuth'
 import { useMiniInsuranceStatus } from '@/composables/useMiniInsuranceStatus'
 import { useMiniFaceVerifyStatus } from '@/composables/useMiniFaceVerifyStatus'
-import { workerLevelColors } from '@/constants/miniapp'
 
 const router = useRouter()
 const store = useAppStore()
@@ -59,7 +58,7 @@ const iconItems: {
   { path: '/miniapp/payment', icon: CreditCard, label: '收款绑定', bg: '#fff7ed', color: '#f97316' },
   { path: '/miniapp/agreements', icon: Document, label: '协议管理', bg: '#faf5ff', color: '#a855f7' },
   { path: '/miniapp/worker-archive', icon: User, label: '我的资料', bg: '#eff6ff', color: '#3b82f6' },
-  { path: '/miniapp/credit', icon: Medal, label: '等级信用', bg: '#f3f4f6', color: '#6b7280' },
+  { path: '/miniapp/part-time-pref', icon: Calendar, label: '兼职偏好', bg: '#f5f3ff', color: '#8b5cf6' },
 ]
 
 async function handleLogout() {
@@ -90,16 +89,6 @@ async function handleLogout() {
           <div class="profile-name">{{ employee?.name ?? '-' }}</div>
           <div class="profile-sub">{{ department?.name }} · {{ employee?.employeeNo }}</div>
           <div v-if="profileExt" class="profile-tags">
-            <span
-              class="mini-tag"
-              :style="{
-                background: (workerLevelColors[profileExt.level] ?? '#999') + '22',
-                color: workerLevelColors[profileExt.level],
-              }"
-            >
-              {{ profileExt.level }}
-            </span>
-            <span class="mini-tag green">信用 {{ profileExt.creditScore }}</span>
             <span
               class="mini-tag insurance-status"
               :class="isInsuredToday ? 'insured' : 'uninsured'"

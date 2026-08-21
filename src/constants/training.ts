@@ -50,18 +50,27 @@ export const courseGateOptions = [
 export const courseStatusMap: Record<CourseStatus, string> = {
   draft: '草稿',
   published: '已发布',
+  offline: '已下架',
   closed: '已关闭',
 }
 
-export const courseStatusTagType: Record<CourseStatus, 'info' | 'success' | 'danger'> = {
+export const courseStatusTagType: Record<CourseStatus, 'info' | 'success' | 'danger' | 'warning'> = {
   draft: 'info',
   published: 'success',
+  offline: 'warning',
   closed: 'danger',
 }
 
 export const examStatusMap: Record<ExamStatus, string> = {
   draft: '草稿',
   published: '已发布',
+  offline: '已下架',
+}
+
+export const examStatusTagType: Record<ExamStatus, 'info' | 'success' | 'warning'> = {
+  draft: 'info',
+  published: 'success',
+  offline: 'warning',
 }
 
 export const examQuestionTypeMap: Record<ExamQuestionType, string> = {
@@ -99,7 +108,13 @@ export function getMaterialTypeLabel(type: TrainingMaterialType) {
   return trainingMaterialTypeOptions.find((o) => o.value === type)?.label ?? type
 }
 
-export function getMaterialCategoryLabel(cat: TrainingMaterialCategory) {
+export function getMaterialCategoryLabel(
+  cat: string | undefined,
+  categories?: { id: string; name: string }[],
+) {
+  if (!cat) return '—'
+  const custom = categories?.find((c) => c.id === cat || c.name === cat)
+  if (custom) return custom.name
   return trainingMaterialCategoryOptions.find((o) => o.value === cat)?.label ?? cat
 }
 

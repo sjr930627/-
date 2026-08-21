@@ -100,7 +100,7 @@ const rawAttendanceGroups: AttendanceGroupSeed[] = [
       forbidNightShiftForFemale: true,
     }),
     departmentBindings: [
-      { departmentId: 'dept_prod_a', departmentName: '中石化朝阳加油站', headcount: 7, managerName: '李娜' },
+      { departmentId: 'dept_prod_a', departmentName: '中石化朝阳加油站', headcount: 20, managerName: '李娜' },
     ],
     payRule: {
       baseHourlyRate: 38,

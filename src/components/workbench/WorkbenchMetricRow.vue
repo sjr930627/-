@@ -5,34 +5,57 @@ defineProps<{
   metrics: WorkbenchMetricCard[]
 }>()
 
-const iconMap = {
-  users: '👥',
-  hire: '➕',
-  leave: '➖',
-  approval: '⏰',
+function sparkPath(points: number[]) {
+  if (!points.length) return ''
+  const max = Math.max(...points, 1)
+  const min = Math.min(...points, 0)
+  const span = Math.max(max - min, 1)
+  const w = 72
+  const h = 28
+  return points
+    .map((v, i) => {
+      const x = (i / Math.max(points.length - 1, 1)) * w
+      const y = h - ((v - min) / span) * (h - 4) - 2
+      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`
+    })
+    .join(' ')
+}
+
+function trendClass(item: WorkbenchMetricCard) {
+  if (!item.trend) return ''
+  const positive = item.trend.positive ?? item.trend.direction === 'up'
+  return positive ? 'up' : 'down'
 }
 </script>
 
 <template>
   <div class="metric-row">
     <div v-for="item in metrics" :key="item.key" class="metric-card">
-      <div class="metric-icon" :class="item.tone">{{ iconMap[item.icon] }}</div>
-      <div class="metric-body">
-        <div class="metric-label">{{ item.label }}</div>
-        <div class="metric-value-row">
-          <span class="metric-value">{{ item.value }}</span>
-          <span
-            v-if="item.trend"
-            class="metric-trend"
-            :class="{
-              up: item.trend.direction === 'up',
-              down: item.trend.direction === 'down',
-            }"
-          >
-            {{ item.trend.direction === 'up' ? '↑' : '↓' }} {{ item.trend.text }}
-          </span>
+      <div class="metric-top">
+        <div class="metric-icon">
+          <el-icon :size="18"><FolderOpened /></el-icon>
         </div>
-        <div v-if="item.subLabel" class="metric-sub urgent">{{ item.subLabel }}</div>
+        <div class="metric-label">{{ item.label }}</div>
+      </div>
+
+      <div class="metric-mid">
+        <div class="metric-value">{{ item.value }}</div>
+        <svg
+          v-if="item.sparkline?.length"
+          class="metric-spark"
+          viewBox="0 0 72 28"
+          preserveAspectRatio="none"
+        >
+          <path :d="sparkPath(item.sparkline)" fill="none" stroke="#3b82f6" stroke-width="2" />
+        </svg>
+      </div>
+
+      <div class="metric-foot">
+        <span v-if="item.compareLabel" class="metric-compare">{{ item.compareLabel }}</span>
+        <span v-if="item.subLabel" class="metric-sub urgent">{{ item.subLabel }}</span>
+        <span v-if="item.trend" class="metric-trend" :class="trendClass(item)">
+          较上月 {{ item.trend.direction === 'up' ? '+' : '-' }}{{ item.trend.text }}
+        </span>
       </div>
     </div>
   </div>
@@ -47,78 +70,81 @@ const iconMap = {
 }
 
 .metric-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
   background: #fff;
-  border-radius: 16px;
-  padding: 20px 22px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.04);
+  border: 1px solid #eef2f7;
+}
+
+.metric-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 
 .metric-icon {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  display: flex;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #2563eb;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
   flex-shrink: 0;
-}
-
-.metric-icon.purple {
-  background: #f3e8ff;
-}
-
-.metric-icon.green {
-  background: #ecfdf5;
-}
-
-.metric-icon.red {
-  background: #fef2f2;
-}
-
-.metric-icon.orange {
-  background: #fff7ed;
 }
 
 .metric-label {
   font-size: 13px;
   color: #64748b;
-  margin-bottom: 6px;
 }
 
-.metric-value-row {
+.metric-mid {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .metric-value {
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
   color: #0f172a;
   line-height: 1;
 }
 
-.metric-trend {
+.metric-spark {
+  width: 72px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.metric-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 12px;
-  font-weight: 600;
+  color: #94a3b8;
+  padding-top: 10px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.metric-compare {
+  color: #64748b;
 }
 
 .metric-trend.up {
   color: #16a34a;
+  font-weight: 600;
 }
 
 .metric-trend.down {
   color: #dc2626;
-}
-
-.metric-sub {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #64748b;
+  font-weight: 600;
 }
 
 .metric-sub.urgent {

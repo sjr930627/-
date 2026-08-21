@@ -104,7 +104,14 @@ export function invoiceStats(
   }
 }
 
-export function billFeePreviewRows(bill?: SettlementBill) {
+export type BillFeePreviewRow = {
+  label: string
+  amount: number
+  highlight?: boolean
+  danger?: boolean
+}
+
+export function billFeePreviewRows(bill?: SettlementBill): BillFeePreviewRow[] {
   if (!bill) return []
   const summary = bill.summary ?? {
     attendancePay: bill.lines.reduce((sum, line) => sum + (line.attendancePay ?? 0), 0),
@@ -120,13 +127,23 @@ export function billFeePreviewRows(bill?: SettlementBill) {
     { label: '扣款', amount: -summary.deductions },
     { label: '结算金额', amount: bill.payrollTotal, highlight: true },
     { label: '服务费', amount: bill.serviceFee },
+    { label: '减免金额', amount: -(bill.serviceFeeWaiver ?? 0), danger: true },
     { label: '总计金额', amount: bill.totalPayable, highlight: true },
   ]
 }
 
+export function profilesForEnterprise(
+  profiles: EnterpriseInvoiceProfile[],
+  enterpriseId?: string,
+) {
+  if (!enterpriseId) return profiles
+  return profiles.filter((item) => item.enterpriseId === enterpriseId)
+}
+
 export function defaultInvoiceProfile(profiles: EnterpriseInvoiceProfile[], enterpriseId?: string) {
-  if (!enterpriseId) return profiles[0]
-  return profiles.find((item) => item.enterpriseId === enterpriseId) ?? profiles[0]
+  const scoped = profilesForEnterprise(profiles, enterpriseId)
+  if (!scoped.length) return undefined
+  return scoped.find((item) => item.isDefault) ?? scoped[0]
 }
 
 export function maxInvoiceAmountForBills(billIds: string[], bills: SettlementBill[]) {
@@ -160,7 +177,7 @@ export function allocateAmountToBills(
   return refs
 }
 
-export function mergeBillFeePreviewRows(bills: SettlementBill[]) {
+export function mergeBillFeePreviewRows(bills: SettlementBill[]): BillFeePreviewRow[] {
   if (!bills.length) return []
   const merged = {
     attendancePay: 0,
@@ -169,6 +186,7 @@ export function mergeBillFeePreviewRows(bills: SettlementBill[]) {
     deductions: 0,
     payrollTotal: 0,
     serviceFee: 0,
+    serviceFeeWaiver: 0,
     totalPayable: 0,
   }
   for (const bill of bills) {
@@ -179,6 +197,7 @@ export function mergeBillFeePreviewRows(bills: SettlementBill[]) {
     merged.deductions += Math.abs(rows.find((row) => row.label === '扣款')?.amount ?? 0)
     merged.payrollTotal += bill.payrollTotal
     merged.serviceFee += bill.serviceFee
+    merged.serviceFeeWaiver += bill.serviceFeeWaiver ?? 0
     merged.totalPayable += bill.totalPayable
   }
   return [
@@ -188,6 +207,7 @@ export function mergeBillFeePreviewRows(bills: SettlementBill[]) {
     { label: '扣款', amount: -merged.deductions },
     { label: '结算金额', amount: merged.payrollTotal, highlight: true },
     { label: '服务费', amount: merged.serviceFee },
+    { label: '减免金额', amount: -merged.serviceFeeWaiver, danger: true },
     { label: '总计金额', amount: merged.totalPayable, highlight: true },
   ]
 }

@@ -44,6 +44,16 @@ function taskItem(
   }
 }
 
+/** 每个任务一行（任务数量固定为 1） */
+function singleTaskItem(
+  id: string,
+  title: string,
+  date: string,
+  unitPrice: number,
+): WorkerIncomeDetailItem {
+  return taskItem(id, title, date, 1, unitPrice)
+}
+
 function sumItems(items: WorkerIncomeDetailItem[]) {
   return items.reduce((s, i) => s + i.amount, 0)
 }
@@ -180,10 +190,15 @@ export const seedMiniAppMessages: MiniAppMessage[] = [
 
 export const seedWorkerIncomeRecords: WorkerIncomeRecord[] = (() => {
   const inc001Items = [
-    taskItem('inc_001_d1', '非油促销任务', '2026-07-24', 5, 50),
+    singleTaskItem('inc_001_d1', '非油促销任务', '2026-07-20', 50),
+    singleTaskItem('inc_001_d2', '非油促销任务', '2026-07-21', 50),
+    singleTaskItem('inc_001_d3', '非油促销任务', '2026-07-22', 50),
+    singleTaskItem('inc_001_d4', '非油促销任务', '2026-07-23', 50),
+    singleTaskItem('inc_001_d5', '非油促销任务', '2026-07-24', 50),
   ]
   const inc002Items = [
-    taskItem('inc_002_d1', '会员拉新任务', '2026-07-23', 2, 35),
+    singleTaskItem('inc_002_d1', '会员拉新任务', '2026-07-22', 35),
+    singleTaskItem('inc_002_d2', '会员拉新任务', '2026-07-23', 35),
   ]
   const inc003Items = [
     hourlyItem('inc_003_d1', '中石化朝阳站 白班', '2026-07-22', 8, 25),
@@ -196,9 +211,11 @@ export const seedWorkerIncomeRecords: WorkerIncomeRecord[] = (() => {
     hourlyItem('inc_003_d8', '中石化朝阳站 夜班', '2026-07-29', 8, 30),
   ]
   const inc006Items = [
-    taskItem('inc_006_d1', '便利店理货任务', '2026-07-20', 6, 45),
-    taskItem('inc_006_d2', '加油引导任务', '2026-07-21', 4, 55),
-    taskItem('inc_006_d3', '会员拉新任务', '2026-07-22', 1, 50),
+    singleTaskItem('inc_006_d1', '便利店理货任务', '2026-07-20', 45),
+    singleTaskItem('inc_006_d2', '便利店理货任务', '2026-07-20', 45),
+    singleTaskItem('inc_006_d3', '加油引导任务', '2026-07-21', 55),
+    singleTaskItem('inc_006_d4', '加油引导任务', '2026-07-21', 55),
+    singleTaskItem('inc_006_d5', '会员拉新任务', '2026-07-22', 50),
   ]
   const inc004Items = [
     hourlyItem('inc_004_d1', '中石化朝阳站 白班', '2026-06-03', 8, 25),
@@ -217,7 +234,40 @@ export const seedWorkerIncomeRecords: WorkerIncomeRecord[] = (() => {
   const inc004Amount = sumItems(inc004Items)
   const inc004Tax = Math.round(inc004Amount * 0.03 * 100) / 100
   const inc005Items = [
-    taskItem('inc_005_d1', '优秀灵工奖励', '2026-06-20', 1, 200),
+    singleTaskItem('inc_005_d1', '优秀灵工奖励', '2026-06-20', 200),
+  ]
+  const inc007Trimmed = [
+    hourlyItem('inc_007_d1', '生产一车间 白班', '2026-07-20', 8, 25),
+    hourlyItem('inc_007_d2', '生产一车间 夜班', '2026-07-20', 8, 30),
+    hourlyItem('inc_007_d3', '生产一车间 白班', '2026-07-21', 8, 25),
+    hourlyItem('inc_007_d4', '生产一车间 白班', '2026-07-22', 8, 25),
+    hourlyItem('inc_007_d5', '生产一车间 夜班', '2026-07-22', 8, 30),
+    hourlyItem('inc_007_d6', '生产一车间 白班', '2026-07-23', 8, 25),
+    hourlyItem('inc_007_d7', '生产一车间 白班', '2026-07-24', 8, 25),
+  ]
+  const inc008Items = [
+    singleTaskItem('inc_008_d1', '会员拉新任务', '2026-07-23', 35),
+    singleTaskItem('inc_008_d2', '会员拉新任务', '2026-07-24', 35),
+    singleTaskItem('inc_008_d3', '会员拉新任务', '2026-07-25', 35),
+    singleTaskItem('inc_008_d4', '会员拉新任务', '2026-07-25', 35),
+    singleTaskItem('inc_008_d5', '会员拉新任务', '2026-07-26', 35),
+  ]
+  const inc009Items = [
+    hourlyItem('inc_009_d1', '生产一车间 白班', '2026-06-24', 8, 25),
+    hourlyItem('inc_009_d2', '生产一车间 夜班', '2026-06-24', 8, 30),
+    hourlyItem('inc_009_d3', '生产一车间 白班', '2026-06-25', 8, 25),
+    hourlyItem('inc_009_d4', '生产一车间 白班', '2026-06-26', 8, 25),
+    hourlyItem('inc_009_d5', '生产一车间 夜班', '2026-06-26', 8, 30),
+    hourlyItem('inc_009_d6', '生产一车间 白班', '2026-06-27', 8, 25),
+    hourlyItem('inc_009_d7', '生产一车间 白班', '2026-06-30', 8, 25),
+  ]
+  const inc009Amount = sumItems(inc009Items)
+  const inc009Tax = Math.round(inc009Amount * 0.03 * 100) / 100
+  const inc010Items = [
+    singleTaskItem('inc_010_d1', '线下推广任务', '2026-07-26', 60),
+    singleTaskItem('inc_010_d2', '线下推广任务', '2026-07-27', 60),
+    singleTaskItem('inc_010_d3', '线下推广任务', '2026-07-28', 60),
+    singleTaskItem('inc_010_d4', '线下推广任务', '2026-07-28', 60),
   ]
 
   return [
@@ -294,6 +344,54 @@ export const seedWorkerIncomeRecords: WorkerIncomeRecord[] = (() => {
       claimBatchId: 'claim_002',
       items: inc005Items,
     },
+    {
+      id: 'inc_007',
+      employeeId: 'emp_002',
+      title: '7月考勤计薪（待结算）',
+      amount: sumItems(inc007Trimmed),
+      status: 'pending_settlement',
+      source: 'attendance',
+      period: '2026-07',
+      createdAt: '2026-07-28T00:00:00',
+      items: inc007Trimmed,
+    },
+    {
+      id: 'inc_008',
+      employeeId: 'emp_002',
+      title: '会员拉新任务奖励',
+      amount: sumItems(inc008Items),
+      status: 'claimable',
+      source: 'task',
+      period: '2026-07',
+      createdAt: '2026-07-26T12:00:00',
+      items: inc008Items,
+    },
+    {
+      id: 'inc_009',
+      employeeId: 'emp_003',
+      title: '6月考勤收入',
+      amount: inc009Amount,
+      tax: inc009Tax,
+      netAmount: Math.round((inc009Amount - inc009Tax) * 100) / 100,
+      status: 'claimed',
+      source: 'attendance',
+      period: '2026-06',
+      createdAt: '2026-07-05T10:00:00',
+      claimedAt: '2026-07-07T11:20:00',
+      claimBatchId: 'claim_003',
+      items: inc009Items,
+    },
+    {
+      id: 'inc_010',
+      employeeId: 'emp_003',
+      title: '7月任务计薪（待结算）',
+      amount: sumItems(inc010Items),
+      status: 'pending_settlement',
+      source: 'task',
+      period: '2026-07',
+      createdAt: '2026-07-29T08:00:00',
+      items: inc010Items,
+    },
   ]
 })()
 
@@ -328,28 +426,128 @@ export const seedWorkerAgreements: WorkerAgreement[] = [
   {
     id: 'agr_001',
     employeeId: 'emp_001',
-    title: '灵活用工服务协议',
-    content: '约定平台与灵工之间的权利义务、服务范围及结算方式。',
+    providerId: 'sp_zhongqin',
+    contractNo: 'WA-2026-00001',
+    title: '灵工服务协议（标准版）',
+    content: '约定灵工与服务商之间的服务关系、服务范围、结算方式及权利义务。',
+    agreementType: 'service',
     signed: true,
     required: true,
     signedAt: '2026-01-15T10:00:00',
+    effectiveDate: '2026-01-15',
+    expiryDate: '2027-01-14',
+    status: 'signed',
+    createdAt: '2026-01-10T09:00:00',
   },
   {
     id: 'agr_002',
     employeeId: 'emp_001',
+    providerId: 'sp_zhongqin',
+    contractNo: 'WA-2026-00002',
     title: '个人信息授权书',
-    content: '授权平台收集和使用个人信息用于实名认证及税务申报。',
+    content: '授权服务商及平台收集和使用个人信息用于实名认证、税务申报与结算。',
+    agreementType: 'privacy',
     signed: true,
     required: true,
     signedAt: '2026-01-15T10:00:00',
+    effectiveDate: '2026-01-15',
+    expiryDate: '2028-01-14',
+    status: 'signed',
+    createdAt: '2026-01-10T09:00:00',
   },
   {
     id: 'agr_003',
     employeeId: 'emp_001',
+    providerId: 'sp_zhongqin',
+    contractNo: 'WA-2026-00003',
     title: '中石化安全生产承诺书',
     content: '承诺遵守中石化加油站安全生产规范，参加必要培训。',
+    agreementType: 'safety',
     signed: false,
     required: true,
+    effectiveDate: '2026-07-20',
+    expiryDate: '2027-07-19',
+    status: 'pending',
+    createdAt: '2026-07-18T11:00:00',
+  },
+  {
+    id: 'agr_004',
+    employeeId: 'emp_002',
+    providerId: 'sp_zhongqin',
+    contractNo: 'WA-2026-00004',
+    title: '灵工服务协议（标准版）',
+    content: '约定灵工与服务商之间的服务关系、服务范围、结算方式及权利义务。',
+    agreementType: 'service',
+    signed: true,
+    required: true,
+    signedAt: '2026-02-01T14:20:00',
+    effectiveDate: '2026-02-01',
+    expiryDate: '2027-01-31',
+    status: 'signed',
+    createdAt: '2026-01-28T10:00:00',
+  },
+  {
+    id: 'agr_005',
+    employeeId: 'emp_003',
+    providerId: 'sp_tengda',
+    contractNo: 'WA-2026-00005',
+    title: '灵工服务协议（仓储）',
+    content: '约定仓储配送类灵工与服务商的服务内容、考勤与结算规则。',
+    agreementType: 'service',
+    signed: true,
+    required: true,
+    signedAt: '2025-06-10T09:30:00',
+    effectiveDate: '2025-06-10',
+    expiryDate: '2026-06-09',
+    status: 'expired',
+    createdAt: '2025-06-05T08:00:00',
+  },
+  {
+    id: 'agr_006',
+    employeeId: 'emp_003',
+    providerId: 'sp_tengda',
+    contractNo: 'WA-2026-00006',
+    title: '灵工服务协议（仓储续签）',
+    content: '续签仓储配送类灵工服务协议，沿用既有结算与考勤规则。',
+    agreementType: 'service',
+    signed: false,
+    required: true,
+    effectiveDate: '2026-06-10',
+    expiryDate: '2027-06-09',
+    status: 'pending',
+    createdAt: '2026-06-01T10:00:00',
+  },
+  {
+    id: 'agr_007',
+    employeeId: 'emp_004',
+    providerId: 'sp_green',
+    contractNo: 'WA-2026-00007',
+    title: '灵工服务协议',
+    content: '约定灵工与服务商之间的权利义务、服务范围及结算方式。',
+    agreementType: 'service',
+    signed: true,
+    required: true,
+    signedAt: '2026-03-12T16:00:00',
+    effectiveDate: '2026-03-12',
+    expiryDate: '2027-03-11',
+    status: 'signed',
+    createdAt: '2026-03-08T09:00:00',
+  },
+  {
+    id: 'agr_008',
+    employeeId: 'emp_002',
+    providerId: 'sp_zhongqin',
+    contractNo: 'WA-2026-00008',
+    title: '灵工服务协议（标准版）',
+    content: '约定灵工与服务商之间的服务关系、服务范围、结算方式及权利义务。',
+    agreementType: 'service',
+    signed: true,
+    required: true,
+    signedAt: '2025-08-01T11:00:00',
+    effectiveDate: '2025-08-01',
+    expiryDate: '2026-07-31',
+    status: 'terminated',
+    createdAt: '2025-07-25T09:00:00',
   },
 ]
 

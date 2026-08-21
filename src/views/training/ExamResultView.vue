@@ -9,8 +9,7 @@ import VChart from '@/components/statistics/VChart.vue'
 import { examQuestionTypeMap } from '@/constants/training'
 import {
   canEmployeeTakeExam,
-  getEmployeeExamStatus,
-  getExamEligibilityLabel,
+  getExamDetailStatusLabel,
   getExamLinkedCourses,
   getExamQuestions,
   getExamStats,
@@ -18,7 +17,8 @@ import {
   getScoreDistribution,
   resolveCourseAssignees,
 } from '@/services/training'
-import type { ExamAttempt } from '@/types'
+import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
+import type { CourseLearningRecord, ExamAttempt } from '@/types'
 import type { EChartsOption } from 'echarts'
 
 const store = useAppStore()
@@ -26,24 +26,26 @@ const route = useRoute()
 const { isPlatform, typeFilter, enterpriseFilter, filterByTrainingType } = useTrainingScope()
 const selectedExamId = ref<string>('')
 const detailVisible = ref(false)
-const selectedAttempt = ref<ExamAttempt | null>(null)
+const detailEmployeeId = ref<string>('')
 
-const publishedExams = computed(() =>
-  filterByTrainingType(store.trainingExams.filter((e) => e.status === 'published')),
+const selectableExams = computed(() =>
+  filterByTrainingType(
+    store.trainingExams.filter((e) => e.status === 'published' || e.status === 'offline'),
+  ),
 )
 
 watch(
   () => route.query.exam,
   (id) => {
     if (typeof id === 'string') selectedExamId.value = id
-    else if (!selectedExamId.value && publishedExams.value.length) {
-      selectedExamId.value = publishedExams.value[0].id
+    else if (!selectedExamId.value && selectableExams.value.length) {
+      selectedExamId.value = selectableExams.value[0].id
     }
   },
   { immediate: true },
 )
 
-watch(publishedExams, (list) => {
+watch(selectableExams, (list) => {
   if (list.length === 0) {
     selectedExamId.value = ''
     return
@@ -62,6 +64,15 @@ const linkedCourse = computed(() => {
   if (!e) return null
   return getExamLinkedCourses(store.trainingCourses, e)[0] ?? null
 })
+
+function enterpriseName(enterpriseId: string | null | undefined) {
+  if (!enterpriseId) return '通用'
+  return (
+    store.enterprises.find((ent) => ent.id === enterpriseId)?.shortName ||
+    store.enterprises.find((ent) => ent.id === enterpriseId)?.name ||
+    '-'
+  )
+}
 
 const examStats = computed(() => {
   const e = selectedExam.value
@@ -107,35 +118,70 @@ const personalRows = computed(() => {
         completedMaterialIds: [],
         studyMinutes: 0,
         updatedAt: '',
-      }
+      } as CourseLearningRecord
     }
     const progress = getLearningProgress(rec, course)
-    const status = getEmployeeExamStatus(emp.id, examId, store.examAttempts)
+    const empAttempts = (attemptMap.get(emp.id) ?? []).sort((a, b) =>
+      b.submittedAt.localeCompare(a.submittedAt),
+    )
+    const latest = empAttempts[0]
     const canTake = canEmployeeTakeExam(emp.id, course, rec, exam, store.examAttempts)
+    const examStatusLabel = getExamDetailStatusLabel({
+      progress,
+      canTake,
+      hasAttempt: empAttempts.length > 0,
+      passed: latest?.passed,
+    })
+    const empEnterpriseId = resolveEnterpriseIdByEmployee(emp)
     return {
       employeeId: emp.id,
       name: emp.name,
+      phone: emp.phone ?? '-',
+      enterprise: enterpriseName(empEnterpriseId || exam.enterpriseId),
       department: dept?.name ?? '-',
-      learningProgress: `${progress}%`,
-      examEligibility: getExamEligibilityLabel(rec, course, rec.examPassed, rec.examScore),
-      canTakeLabel: canTake ? '可考试' : progress < 100 ? '待解锁' : '不可重考',
-      examStatus: status.status === 'not_taken' ? '未考' : '已考',
-      score: status.status !== 'not_taken' ? status.score : '-',
-      passed: status.status === 'passed' ? '是' : status.status === 'failed' ? '否' : '-',
-      duration: status.status !== 'not_taken' ? `${status.durationMinutes} 分` : '-',
-      examTime: status.status !== 'not_taken' ? status.submittedAt?.slice(0, 16).replace('T', ' ') : '-',
-      retakeCount: status.status !== 'not_taken' ? status.attemptNumber : '-',
-      latestAttempt: attemptMap.get(emp.id)?.sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))[0],
+      examName: exam.name,
+      examStatusLabel,
+      score: latest ? latest.score : '-',
+      examTime: latest ? latest.submittedAt.slice(0, 16).replace('T', ' ') : '-',
+      duration: latest ? `${latest.durationMinutes} 分` : '-',
+      passed: latest ? (latest.passed ? '是' : '否') : '-',
+      hasAttempts: empAttempts.length > 0,
     }
   })
 })
 
-function openDetail(row: { latestAttempt?: ExamAttempt }) {
-  if (!row.latestAttempt) {
+const detailAttempts = computed(() => {
+  if (!detailEmployeeId.value || !selectedExamId.value) return []
+  return store.examAttempts
+    .filter((a) => a.examId === selectedExamId.value && a.employeeId === detailEmployeeId.value)
+    .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
+})
+
+function getWrongQuestions(attempt: ExamAttempt) {
+  const questions = getExamQuestions(attempt.examId, store.examQuestions)
+  return questions
+    .map((q) => {
+      const userAns = attempt.answers[q.id] ?? []
+      const correct =
+        q.correctAnswers.every((a) => userAns.includes(a)) &&
+        userAns.length === q.correctAnswers.length
+      return {
+        ...q,
+        typeLabel: examQuestionTypeMap[q.type],
+        userAnswers: userAns.join(', ') || '-',
+        correctLabel: q.correctAnswers.join(', '),
+        isCorrect: correct,
+      }
+    })
+    .filter((q) => !q.isCorrect)
+}
+
+function openDetail(row: { employeeId: string; hasAttempts: boolean }) {
+  if (!row.hasAttempts) {
     ElMessage.info('该人员尚未参加考试')
     return
   }
-  selectedAttempt.value = row.latestAttempt
+  detailEmployeeId.value = row.employeeId
   detailVisible.value = true
 }
 
@@ -143,21 +189,9 @@ function exportScores() {
   ElMessage.success('成绩单导出任务已提交（模拟）')
 }
 
-const detailQuestions = computed(() => {
-  if (!selectedAttempt.value) return []
-  const questions = getExamQuestions(selectedAttempt.value.examId, store.examQuestions)
-  return questions.map((q) => {
-    const userAns = selectedAttempt.value!.answers[q.id] ?? []
-    const correct = q.correctAnswers.every((a) => userAns.includes(a)) && userAns.length === q.correctAnswers.length
-    return {
-      ...q,
-      typeLabel: examQuestionTypeMap[q.type],
-      userAnswers: userAns.join(', ') || '-',
-      correctLabel: q.correctAnswers.join(', '),
-      isCorrect: correct,
-      earned: correct ? q.score : 0,
-    }
-  })
+const detailEmployeeName = computed(() => {
+  const emp = store.employees.find((e) => e.id === detailEmployeeId.value)
+  return emp?.name ?? ''
 })
 </script>
 
@@ -165,7 +199,7 @@ const detailQuestions = computed(() => {
   <div class="page-card">
     <div class="page-header">
       <div>
-        <h2 class="page-title">考核结果查看</h2>
+        <h2 class="page-title">考核数据</h2>
         <p class="text-muted">查看企业考核与通用考核的通过率、分数分布及个人答题详情</p>
       </div>
       <el-button @click="exportScores">导出成绩单</el-button>
@@ -191,7 +225,7 @@ const detailQuestions = computed(() => {
       </el-select>
       <el-select v-model="selectedExamId" placeholder="选择考核" style="width: 280px">
         <el-option
-          v-for="e in publishedExams"
+          v-for="e in selectableExams"
           :key="e.id"
           :label="`${e.enterpriseId == null ? '[通用]' : '[企业]'} ${e.name}`"
           :value="e.id"
@@ -242,39 +276,47 @@ const detailQuestions = computed(() => {
 
       <h3 class="section-title">个人成绩明细</h3>
       <el-table :data="personalRows" border stripe>
-        <el-table-column prop="name" label="灵工姓名" width="100" />
-        <el-table-column prop="department" label="所属部门" width="120" />
-        <el-table-column prop="learningProgress" label="学习进度" width="90" align="center" />
-        <el-table-column prop="examEligibility" label="考核状态" width="140" />
-        <el-table-column prop="canTakeLabel" label="可否考试" width="90" align="center" />
-        <el-table-column prop="examStatus" label="考试状态" width="90" />
-        <el-table-column prop="score" label="分数" width="70" align="center" />
-        <el-table-column prop="passed" label="是否通过" width="90" align="center" />
+        <el-table-column prop="name" label="姓名" width="100" />
+        <el-table-column prop="phone" label="手机号" width="120" />
+        <el-table-column prop="enterprise" label="企业" width="120" show-overflow-tooltip />
+        <el-table-column prop="department" label="部门" width="120" />
+        <el-table-column prop="examName" label="考核名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="examStatusLabel" label="考核状态" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="score" label="考核分数" width="90" align="center" />
+        <el-table-column prop="examTime" label="考核时间(最新)" min-width="150" />
         <el-table-column prop="duration" label="用时" width="90" />
-        <el-table-column prop="examTime" label="考试时间" min-width="150" />
-        <el-table-column prop="retakeCount" label="重考次数" width="90" align="center" />
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column prop="passed" label="考核是否通过" width="110" align="center" />
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">答题详情</el-button>
+            <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
     </template>
   </div>
 
-  <el-dialog v-model="detailVisible" title="个人答题详情" width="640px">
-    <template v-if="selectedAttempt">
-      <p class="summary">
-        得分 <strong>{{ selectedAttempt.score }}</strong> ·
-        {{ selectedAttempt.passed ? '通过' : '未通过' }} ·
-        用时 {{ selectedAttempt.durationMinutes }} 分钟
-      </p>
-      <div v-for="(q, i) in detailQuestions" :key="q.id" class="q-item">
-        <div class="q-head">
-          <span>{{ i + 1 }}. [{{ q.typeLabel }}] {{ q.content }}</span>
-          <el-tag size="small" :type="q.isCorrect ? 'success' : 'danger'">{{ q.earned }}/{{ q.score }}分</el-tag>
+  <el-dialog v-model="detailVisible" :title="`${detailEmployeeName} · 考核记录`" width="680px">
+    <template v-if="detailAttempts.length">
+      <div v-for="(attempt, idx) in detailAttempts" :key="attempt.id" class="attempt-block">
+        <div class="attempt-head">
+          <strong>第 {{ attempt.attemptNumber }} 次考核</strong>
+          <span class="text-muted">{{ attempt.submittedAt.slice(0, 16).replace('T', ' ') }}</span>
+          <el-tag size="small" :type="attempt.passed ? 'success' : 'danger'">
+            {{ attempt.score }} 分 · {{ attempt.passed ? '通过' : '未通过' }} ·
+            用时 {{ attempt.durationMinutes }} 分钟
+          </el-tag>
         </div>
-        <p class="text-muted">你的答案：{{ q.userAnswers }} · 正确答案：{{ q.correctLabel }}</p>
+        <template v-if="getWrongQuestions(attempt).length">
+          <div v-for="(q, i) in getWrongQuestions(attempt)" :key="q.id" class="q-item">
+            <div class="q-head">
+              <span>{{ i + 1 }}. [{{ q.typeLabel }}] {{ q.content }}</span>
+              <el-tag size="small" type="danger">答错</el-tag>
+            </div>
+            <p class="text-muted">你的答案：{{ q.userAnswers }} · 正确答案：{{ q.correctLabel }}</p>
+          </div>
+        </template>
+        <p v-else class="text-muted attempt-all-correct">本次考核全部答对</p>
+        <el-divider v-if="idx < detailAttempts.length - 1" />
       </div>
     </template>
   </el-dialog>
@@ -298,9 +340,17 @@ const detailQuestions = computed(() => {
 .stat-value.sm { font-size: 15px; font-weight: 600; }
 .chart-section { margin-bottom: 24px; }
 .chart-section h3, .section-title { font-size: 15px; margin: 0 0 12px; }
-.summary { margin-bottom: 16px; }
-.q-item { padding: 12px 0; border-bottom: 1px solid #eee; }
+.attempt-block { margin-bottom: 8px; }
+.attempt-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.q-item { padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
 .q-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.attempt-all-correct { padding: 8px 0; }
 @media (max-width: 1200px) {
   .stats-row { grid-template-columns: repeat(2, 1fr); }
 }

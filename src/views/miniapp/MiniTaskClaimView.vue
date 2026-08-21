@@ -5,11 +5,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import {
   calcTaskClaimAmount,
   formatTaskUnitPrice,
   getTaskPricingUnit,
   getWorkerClaimedQuantity,
+  resolvePricingForTask,
   taskPricingUnitMap,
 } from '@/services/miniTask'
 import { getTaskHallExtra } from '@/mock/miniTaskHallSeed'
@@ -18,16 +20,17 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
+const { ensureActionAllowed } = useMiniAppActionGate()
 
 const quantity = ref(1)
 
 const task = computed(() => store.tasks.find((t) => t.id === route.params.taskId))
-const taskType = computed(() =>
-  task.value ? store.taskTypes.find((t) => t.id === task.value!.taskTypeId) : undefined,
+const pricing = computed(() =>
+  task.value ? resolvePricingForTask(task.value, store.taskTypes) : undefined,
 )
 const extra = computed(() => (task.value ? getTaskHallExtra(task.value.id) : { tags: [] }))
 
-const pricingUnit = computed(() => getTaskPricingUnit(taskType.value))
+const pricingUnit = computed(() => getTaskPricingUnit(pricing.value))
 const unitLabel = computed(() => taskPricingUnitMap[pricingUnit.value])
 
 const myClaimed = computed(() =>
@@ -47,15 +50,21 @@ const maxClaimable = computed(() => {
 })
 
 const previewAmount = computed(() =>
-  taskType.value ? calcTaskClaimAmount(taskType.value, quantity.value) : 0,
+  pricing.value ? calcTaskClaimAmount(pricing.value, quantity.value) : 0,
 )
 
-function submitClaim() {
+async function submitClaim() {
   if (!task.value) return
   if (quantity.value < 1 || quantity.value > maxClaimable.value) {
     ElMessage.warning(`请输入 1-${maxClaimable.value} 的领取数量`)
     return
   }
+  const allowed = await ensureActionAllowed({
+    requireDepartment: true,
+    enterpriseId: task.value.enterpriseId,
+    from: 'claim',
+  })
+  if (!allowed) return
   try {
     const instance = store.acceptTaskFromHall(task.value.id, employeeId.value, quantity.value)
     ElMessage.success('领取成功，请填写任务信息')
@@ -73,7 +82,7 @@ function submitClaim() {
       <div class="mini-nav-title">领取任务</div>
     </div>
 
-    <div v-if="task && taskType" class="claim-body">
+    <div v-if="task && pricing" class="claim-body">
       <div class="claim-card">
         <h1 class="claim-title">{{ task.name }}</h1>
         <div class="claim-sub">{{ task.enterpriseName }} · {{ task.taskTypeName }}</div>
@@ -81,7 +90,7 @@ function submitClaim() {
           <span v-for="tag in extra.tags" :key="tag" class="mini-tag orange">{{ tag }}</span>
         </div>
         <div class="claim-price-row">
-          <span class="claim-price">{{ formatTaskUnitPrice(taskType) }}</span>
+          <span class="claim-price">{{ formatTaskUnitPrice(pricing) }}</span>
           <span class="claim-remain">{{ extra.remain != null ? `剩余 ${extra.remain} 名额` : '不限名额' }}</span>
         </div>
         <p class="claim-desc">{{ task.description }}</p>

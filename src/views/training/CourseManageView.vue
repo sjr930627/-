@@ -186,7 +186,7 @@ function openCreate() {
 
 function openEdit(row: TrainingCourse) {
   if (row.status === 'published') {
-    ElMessage.warning('已发布课程不可编辑')
+    ElMessage.warning('已发布课程不可编辑，请先下架')
     return
   }
   editingId.value = row.id
@@ -275,6 +275,28 @@ async function publish(row: TrainingCourse) {
   }
 }
 
+async function offlineCourse(row: TrainingCourse) {
+  await ElMessageBox.confirm(`下架课程「${row.name}」？下架后可重新编辑并上架。`, '下架确认', {
+    type: 'warning',
+  })
+  try {
+    store.offlineTrainingCourse(row.id)
+    ElMessage.success('已下架')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '下架失败')
+  }
+}
+
+async function republishCourse(row: TrainingCourse) {
+  await ElMessageBox.confirm(`重新上架课程「${row.name}」？`, '上架确认')
+  try {
+    store.republishTrainingCourse(row.id)
+    ElMessage.success('已重新上架')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '上架失败')
+  }
+}
+
 async function closeCourse(row: TrainingCourse) {
   await ElMessageBox.confirm(`关闭课程「${row.name}」？`, '提示', { type: 'warning' })
   store.closeTrainingCourse(row.id)
@@ -318,6 +340,7 @@ function viewProgress(courseId: string) {
         <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="draft">草稿</el-radio-button>
         <el-radio-button value="published">已发布</el-radio-button>
+        <el-radio-button value="offline">已下架</el-radio-button>
         <el-radio-button value="closed">已关闭</el-radio-button>
       </el-radio-group>
     </div>
@@ -349,15 +372,26 @@ function viewProgress(courseId: string) {
           <el-tag size="small" :type="row.statusTag">{{ row.statusLabel }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="row.status !== 'published'" link type="primary" @click="openEdit(row)">
+          <el-button
+            v-if="row.status === 'draft' || row.status === 'offline'"
+            link
+            type="primary"
+            @click="openEdit(row)"
+          >
             编辑
           </el-button>
           <el-button v-if="row.status === 'draft'" link type="success" @click="publish(row)">
             发布
           </el-button>
-          <el-button v-if="row.status === 'published'" link type="warning" @click="closeCourse(row)">
+          <el-button v-if="row.status === 'published'" link type="warning" @click="offlineCourse(row)">
+            下架
+          </el-button>
+          <el-button v-if="row.status === 'offline'" link type="success" @click="republishCourse(row)">
+            重新上架
+          </el-button>
+          <el-button v-if="row.status === 'published'" link type="danger" @click="closeCourse(row)">
             关闭
           </el-button>
           <el-button link @click="viewProgress(row.id)">学习详情</el-button>

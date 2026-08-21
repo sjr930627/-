@@ -1,19 +1,31 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { usePortal } from '@/composables/usePortal'
-import { getExceptionLabel } from '@/services/attendance'
+import {
+  buildConfirmHoursWarning,
+  buildDailyAttendanceList,
+  getExceptionLabel,
+  getStatusLabel,
+} from '@/services/attendance'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 const { pathPrefix } = usePortal()
 
+const postDialog = ref(false)
+const postStep = ref<'correct' | 'confirm'>('correct')
+const correctHours = ref(0)
+const correctNote = ref('')
+const postEmployeeId = ref('')
+const postDate = ref('')
+
 const exception = computed(() =>
-  store.exceptions.find((e) => e.id === route.params.id as string),
+  store.exceptions.find((e) => e.id === (route.params.id as string)),
 )
 
 const employee = computed(() =>
@@ -49,6 +61,32 @@ const relatedMakeup = computed(() => {
   )
 })
 
+function dayHours(employeeId: string, date: string) {
+  const rows = buildDailyAttendanceList(
+    [employeeId],
+    [date],
+    store.assignments,
+    store.shifts,
+    store.punches,
+    store.leaveRequests,
+    store.attendanceRule,
+    store.manualOverrides,
+  )
+  const day = rows[0]
+  return {
+    workHours: day?.workHours ?? 0,
+    scheduledHours: day?.scheduledHours ?? 0,
+    statusLabel: day ? getStatusLabel(day.status) : '—',
+  }
+}
+
+const postHours = computed(() => {
+  if (!postEmployeeId.value || !postDate.value) {
+    return { workHours: 0, scheduledHours: 0, statusLabel: '—' }
+  }
+  return dayHours(postEmployeeId.value, postDate.value)
+})
+
 function goBack() {
   router.push(`${pathPrefix.value}/dashboard`)
 }
@@ -72,6 +110,16 @@ async function resolveException(dismiss = false) {
   }
 }
 
+function openPostFlow(employeeId: string, date: string) {
+  const h = dayHours(employeeId, date)
+  postEmployeeId.value = employeeId
+  postDate.value = date
+  correctHours.value = h.workHours
+  correctNote.value = ''
+  postStep.value = 'correct'
+  postDialog.value = true
+}
+
 async function approveMakeup() {
   if (!exception.value || !relatedMakeup.value) return
   try {
@@ -84,11 +132,85 @@ async function approveMakeup() {
       true,
       value?.trim() ?? '',
     )
-    ElMessage.success('补卡已通过，异常已关闭')
-    goBack()
+    ElMessage.success('补卡已通过')
+    openPostFlow(exception.value.employeeId, exception.value.date)
   } catch {
     // cancelled
   }
+}
+
+function submitCorrection() {
+  if (correctHours.value < 0) {
+    ElMessage.warning('工时不能为负数')
+    return
+  }
+  if (!correctNote.value.trim()) {
+    ElMessage.warning('校对工时须填写原因')
+    return
+  }
+  try {
+    store.setWorkHoursCorrection(
+      postEmployeeId.value,
+      postDate.value,
+      Number(correctHours.value),
+      correctNote.value.trim(),
+      '人事管理员',
+      { autoConfirm: false },
+    )
+    postStep.value = 'confirm'
+    ElMessage.success('工时已校对')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '校对失败')
+  }
+}
+
+function skipToConfirm() {
+  postStep.value = 'confirm'
+}
+
+function skipAll() {
+  postDialog.value = false
+  ElMessage.success('已跳过工时处理，可稍后单独处理')
+  goBack()
+}
+
+async function confirmHours() {
+  const h = postHours.value
+  const warning = buildConfirmHoursWarning([
+    {
+      name: employee.value?.name,
+      workHours: h.workHours,
+      scheduledHours: h.scheduledHours,
+    },
+  ])
+  if (warning) {
+    try {
+      await ElMessageBox.confirm(warning, '工时异常提醒', {
+        type: 'warning',
+        confirmButtonText: '仍按现工时确认',
+        cancelButtonText: '取消',
+      })
+    } catch {
+      return
+    }
+  }
+  store.confirmWorkHours(postEmployeeId.value, postDate.value, {
+    workHours: h.workHours,
+    operator: '人事管理员',
+    note: '补卡通过后确认工时',
+  })
+  postDialog.value = false
+  ElMessage.success(`已确认工时 ${h.workHours}h`)
+  goBack()
+}
+
+function skipConfirm() {
+  postDialog.value = false
+  ElMessage.success('已跳过确认工时，可稍后单独处理')
+  router.push({
+    path: `${pathPrefix.value}/attendance-data`,
+    query: { tab: 'daily', date: postDate.value, employee: postEmployeeId.value },
+  })
 }
 
 async function goAttendanceData() {
@@ -145,6 +267,62 @@ async function goAttendanceData() {
         <el-button @click="resolveException(true)">忽略异常</el-button>
       </div>
     </div>
+
+    <el-dialog
+      v-model="postDialog"
+      title="补卡后续：工时校对与确认"
+      width="480px"
+      :close-on-click-modal="false"
+    >
+      <el-steps :active="postStep === 'correct' ? 0 : 1" finish-status="success" simple>
+        <el-step title="工时校对" />
+        <el-step title="确认工时" />
+      </el-steps>
+
+      <div v-if="postStep === 'correct'" class="post-body">
+        <p class="hint">
+          补卡已通过。请二次确认工时是否需要校对；无需校对可进入确认工时，也可整步跳过稍后处理。
+        </p>
+        <p>
+          当前工时 <b>{{ postHours.workHours }}h</b>
+          · 排班 {{ postHours.scheduledHours }}h
+          · {{ postHours.statusLabel }}
+        </p>
+        <el-form label-position="top">
+          <el-form-item label="校对工时（小时）">
+            <el-input-number v-model="correctHours" :min="0" :step="0.5" />
+          </el-form-item>
+          <el-form-item label="校对原因">
+            <el-input
+              v-model="correctNote"
+              type="textarea"
+              :rows="2"
+              placeholder="需校对时必填；跳过可不填"
+            />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <div v-else class="post-body">
+        <p class="hint">确认当日工时，或跳过并在出勤数据中单独处理。</p>
+        <p>
+          待确认工时 <b>{{ postHours.workHours }}h</b>
+          · 排班 {{ postHours.scheduledHours }}h
+        </p>
+      </div>
+
+      <template #footer>
+        <template v-if="postStep === 'correct'">
+          <el-button @click="skipAll">跳过，稍后单独处理</el-button>
+          <el-button @click="skipToConfirm">无需校对，进入确认</el-button>
+          <el-button type="primary" @click="submitCorrection">提交校对并进入确认</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="skipConfirm">跳过确认工时</el-button>
+          <el-button type="primary" @click="confirmHours">确认工时</el-button>
+        </template>
+      </template>
+    </el-dialog>
   </div>
 
   <el-empty v-else description="异常记录不存在或已删除">
@@ -177,5 +355,19 @@ async function goAttendanceData() {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.post-body {
+  margin-top: 16px;
+}
+
+.post-body .hint {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.post-body b {
+  color: #5b4fdb;
 }
 </style>

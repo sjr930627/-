@@ -36,9 +36,7 @@ function formatRate(rate: number | null) {
 <template>
   <section class="wb-card">
     <div class="card-head">
-      <div>
-        <h3 class="card-title">招聘数据概览</h3>
-      </div>
+      <h3 class="card-title">招聘数据概览</h3>
       <el-radio-group v-model="range" size="small">
         <el-radio-button value="month">本月</el-radio-button>
         <el-radio-button value="30d">近30天</el-radio-button>
@@ -68,11 +66,15 @@ function formatRate(rate: number | null) {
         :key="item.label"
         class="conversion-item"
       >
-        <div class="conversion-label">{{ item.label }}</div>
-        <div class="conversion-rate">{{ formatRate(item.rate) }}</div>
-        <div class="conversion-formula">
-          {{ item.numerator }} / {{ item.denominator }}
-          <span class="conversion-hint">（{{ item.formula }}）</span>
+        <div class="conversion-icon">
+          <el-icon :size="14"><TrendCharts /></el-icon>
+        </div>
+        <div>
+          <div class="conversion-label">{{ item.label }}</div>
+          <div class="conversion-rate">{{ formatRate(item.rate) }}</div>
+          <div class="conversion-formula">
+            {{ item.numerator }}/{{ item.denominator }}
+          </div>
         </div>
       </div>
     </div>
@@ -96,9 +98,10 @@ function formatRate(rate: number | null) {
 <style scoped>
 .wb-card {
   background: #fff;
-  border-radius: 16px;
-  padding: 20px 22px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.04);
+  border: 1px solid #eef2f7;
 }
 
 .card-head {
@@ -106,7 +109,7 @@ function formatRate(rate: number | null) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
 
 .card-title {
@@ -114,6 +117,9 @@ function formatRate(rate: number | null) {
   font-size: 16px;
   font-weight: 700;
   color: #0f172a;
+  padding-left: 10px;
+  border-left: 3px solid #2563eb;
+  line-height: 1.2;
 }
 
 .section-label {
@@ -124,7 +130,7 @@ function formatRate(rate: number | null) {
 }
 
 .dept-label {
-  margin-top: 20px;
+  margin-top: 18px;
 }
 
 .funnel-list,
@@ -165,7 +171,7 @@ function formatRate(rate: number | null) {
 .dept-bar {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #c4b5fd, #8b5cf6);
+  background: linear-gradient(90deg, #93c5fd, #2563eb);
   min-width: 8%;
 }
 
@@ -187,32 +193,42 @@ function formatRate(rate: number | null) {
 }
 
 .conversion-item {
+  display: flex;
+  gap: 10px;
   padding: 10px 12px;
   background: #f8fafc;
   border-radius: 10px;
   border: 1px solid #f1f5f9;
 }
 
+.conversion-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .conversion-label {
   font-size: 12px;
   color: #64748b;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .conversion-rate {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   color: #0f172a;
   line-height: 1.2;
 }
 
 .conversion-formula {
-  margin-top: 4px;
+  margin-top: 2px;
   font-size: 11px;
   color: #94a3b8;
-}
-
-.conversion-hint {
-  margin-left: 2px;
 }
 </style>

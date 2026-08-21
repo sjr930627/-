@@ -36,8 +36,17 @@ export const billingRuleTypeMap: Record<
   ContractBillingRuleType,
   { label: string; desc: string }
 > = {
-  hourly: { label: '按工时计费', desc: '按实际出勤人时收取服务费' },
-  task: { label: '按任务计费', desc: '按任务完成量或任务结算额收取服务费' },
+  hourly: { label: '服务费工时', desc: '按工时拆分招聘、管理、抢班服务费' },
+  task: { label: '任务服务费', desc: '按任务拆分招聘、管理服务费' },
+}
+
+export const contractServiceFeeCategoryMap: Record<
+  import('@/types').ContractServiceFeeCategory,
+  { label: string; shortLabel: string }
+> = {
+  recruitment: { label: '招聘服务', shortLabel: '招聘' },
+  management: { label: '管理服务', shortLabel: '管理' },
+  grab: { label: '抢班服务', shortLabel: '抢班' },
 }
 
 export const serviceFeeTypeMap: Record<
@@ -102,6 +111,33 @@ export const contractStatusMap: Record<
   draft: { label: '草稿', type: 'warning', dot: '#e6a23c' },
 }
 
+export const contractApprovalStatusMap: Record<
+  import('@/types').ContractApprovalStatus,
+  { label: string; type: 'success' | 'warning' | 'info' | 'danger' }
+> = {
+  draft: { label: '待提交', type: 'info' },
+  pending: { label: '待审批', type: 'warning' },
+  approved: { label: '已通过', type: 'success' },
+  rejected: { label: '已驳回', type: 'danger' },
+}
+
+export const contractVersionStatusMap: Record<
+  import('@/types').ContractVersionRecordStatus,
+  { label: string; type: 'success' | 'warning' | 'info' | 'danger' }
+> = {
+  effective: { label: '生效中', type: 'success' },
+  history: { label: '历史版本', type: 'info' },
+  draft: { label: '草稿', type: 'info' },
+  pending: { label: '待审批', type: 'warning' },
+  rejected: { label: '已驳回', type: 'danger' },
+}
+
+export function resolveContractApprovalStatus(contract: {
+  approvalStatus?: import('@/types').ContractApprovalStatus
+}): import('@/types').ContractApprovalStatus {
+  return contract.approvalStatus ?? 'approved'
+}
+
 export const billingModeMap: Record<ServiceFeeType, { label: string; tagType: 'primary' | 'warning' | 'success' }> = {
   hourly: { label: '按工时计费', tagType: 'primary' },
   piece: { label: '按件/次计费', tagType: 'warning' },
@@ -118,12 +154,31 @@ export function formatContractRate(feeType: ServiceFeeType, rate: number, charge
 export function resolveContractDisplayStatus(contract: {
   status: ServiceContractStatus
   expiryDate?: string
+  approvalStatus?: import('@/types').ContractApprovalStatus
+  currentVersion?: number
+  versions?: { status: string; expiryDate?: string }[]
 }): ServiceContractStatus {
-  if (contract.status === 'terminated' || contract.status === 'draft') return contract.status
-  if (!contract.expiryDate) return contract.status
+  if (contract.status === 'terminated') return 'terminated'
+
+  // 有生效版本时，列表状态按生效配置的到期日计算（改版待审仍显示生效中）
+  const effective = contract.versions?.find((v) => v.status === 'effective')
+  const expiry = effective?.expiryDate ?? contract.expiryDate
+  if (effective || (contract.currentVersion && contract.currentVersion > 0)) {
+    if (!expiry) return 'active'
+    const today = new Date().toISOString().slice(0, 10)
+    if (expiry < today) return 'expired'
+    const exp = new Date(expiry)
+    const now = new Date(today)
+    const diffDays = (exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
+    if (diffDays <= 30) return 'expiring'
+    return 'active'
+  }
+
+  if (contract.status === 'draft') return 'draft'
+  if (!expiry) return contract.status
   const today = new Date().toISOString().slice(0, 10)
-  if (contract.expiryDate < today) return 'expired'
-  const exp = new Date(contract.expiryDate)
+  if (expiry < today) return 'expired'
+  const exp = new Date(expiry)
   const now = new Date(today)
   const diffDays = (exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
   if (diffDays <= 30) return 'expiring'
@@ -139,11 +194,11 @@ export function generateContractNo(seq: number) {
   return `CT-${year}-${String(seq).padStart(5, '0')}`
 }
 
-export const settlementCycleMap = {
+/** 结算周期（用于提醒生成账单） */
+export const settlementCycleMap: Record<import('@/types').SettlementCycle, string> = {
   weekly: '按周结算',
   monthly: '按月结算',
   quarterly: '按季结算',
-  project: '按项目结算',
 }
 
 export function formatSettlementConfig(contract: ServiceContract): string {
@@ -162,12 +217,38 @@ export function formatSettlementConfig(contract: ServiceContract): string {
         ?.label ?? '第1个月'
     return `按季结算 · ${month} ${contract.settlementQuarterDay ?? 15} 日`
   }
-  return settlementCycleMap[contract.settlementCycle]
+  return settlementCycleMap[contract.settlementCycle] ?? '—'
 }
 
 export function formatContractExpiry(expiryDate: string, term?: ContractTermPreset): string {
   if (term === 'long' || expiryDate >= '2099-01-01') return '长期'
   return expiryDate
+}
+
+/** 列表续约延期周期 */
+export type ContractRenewPeriod = '1w' | '2w' | '1m'
+
+export const contractRenewPeriodOptions: { value: ContractRenewPeriod; label: string }[] = [
+  { value: '1w', label: '1 周' },
+  { value: '2w', label: '2 周' },
+  { value: '1m', label: '1 个月' },
+]
+
+export function addContractRenewPeriod(baseDate: string, period: ContractRenewPeriod): string {
+  const d = new Date(`${baseDate}T00:00:00`)
+  if (Number.isNaN(d.getTime())) throw new Error('无效的到期日期')
+  if (period === '1w') d.setDate(d.getDate() + 7)
+  else if (period === '2w') d.setDate(d.getDate() + 14)
+  else d.setMonth(d.getMonth() + 1)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** 续约起算日：未到期从原到期日延；已到期从今天延 */
+export function resolveContractRenewBaseDate(expiryDate: string, today = new Date().toISOString().slice(0, 10)) {
+  return expiryDate > today ? expiryDate : today
 }
 
 export function formatTierRange(

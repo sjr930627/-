@@ -22,7 +22,7 @@ async function handleLogin() {
     router.replace(
       redirect && redirect.startsWith('/enterprise-miniapp')
         ? redirect
-        : '/enterprise-miniapp/workbench',
+        : '/enterprise-miniapp/recruitment',
     )
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '登录失败')

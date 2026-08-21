@@ -10,6 +10,8 @@ import type {
 } from '@/types'
 import { downloadTextFile } from '@/services/payroll'
 import { validateImportFields } from '@/constants/billImportTemplate'
+import { getContractBillingRules } from '@/services/contractBilling'
+import { findContractByPair } from '@/services/contractVersion'
 import { generateId } from '@/utils'
 
 const DEFAULT_SERVICE_FEE_RATE = 0.0682
@@ -29,6 +31,32 @@ export function resolveServiceProviderForEnterprise(
   return providers.find(
     (p) => p.status === 'cooperating' && p.linkedEnterpriseIds.includes(enterpriseId),
   )
+}
+
+/** 从企业服务合同解析账单含税标记（默认不含税） */
+export function resolveBillTaxFlagsFromContract(
+  enterpriseId: string,
+  providerId: string | undefined,
+  contracts: ServiceContract[],
+): { serviceFeeIncludesTax: boolean; unitPriceIncludesTax: boolean } {
+  const contract = providerId
+    ? findContractByPair(contracts, enterpriseId, providerId)
+    : contracts.find(
+        (c) =>
+          c.enterpriseId === enterpriseId &&
+          (c.status === 'active' || c.status === 'expiring'),
+      )
+  if (!contract) {
+    return { serviceFeeIncludesTax: false, unitPriceIncludesTax: false }
+  }
+  const rules = getContractBillingRules(contract)
+  if (!rules.length) {
+    return { serviceFeeIncludesTax: false, unitPriceIncludesTax: false }
+  }
+  return {
+    serviceFeeIncludesTax: rules.some((r) => r.serviceFeeIncludesTax),
+    unitPriceIncludesTax: rules.some((r) => r.unitPriceIncludesTax),
+  }
 }
 
 export function generateBillNo(existingBills: SettlementBill[]): string {

@@ -19,9 +19,15 @@ const progress = ref(0)
 let timer: ReturnType<typeof setInterval> | undefined
 
 const fromOnboarding = computed(() => route.query.from === 'onboarding')
-const backPath = computed(() =>
-  fromOnboarding.value ? '/miniapp/onboarding?step=face' : '/miniapp/face-verify',
-)
+const redirectAfter = computed(() => {
+  const raw = route.query.redirect
+  return typeof raw === 'string' && raw.startsWith('/miniapp') ? raw : ''
+})
+const backPath = computed(() => {
+  if (fromOnboarding.value) return '/miniapp/onboarding?step=face'
+  if (redirectAfter.value) return redirectAfter.value
+  return '/miniapp/face-verify'
+})
 
 function startScan() {
   phase.value = 'scanning'
@@ -49,6 +55,10 @@ function simulateFail() {
 function handleDone() {
   if (fromOnboarding.value) {
     router.replace('/miniapp/onboarding?step=profile')
+    return
+  }
+  if (redirectAfter.value) {
+    router.replace(redirectAfter.value)
     return
   }
   router.replace('/miniapp/face-verify')

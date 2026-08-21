@@ -1,5 +1,11 @@
 export type EmployeeStatus = 'pending' | 'active' | 'resigned'
 
+/** 待入驻人员阶段：待申请 / 已申请 */
+export type EmployeeOnboardingStage = 'awaiting_apply' | 'applied'
+
+/** 人员归属：排班人员 / 抢班人员 */
+export type EmployeePersonnelCategory = 'schedule' | 'grab'
+
 export type DepartmentOrgType = 'department' | 'enterprise'
 export type DepartmentNodeType = 'branch' | 'leaf'
 
@@ -8,12 +14,21 @@ export interface Department {
   name: string
   parentId: string | null
   sort: number
+  /** 组织编码（可选） */
+  code?: string
   enterpriseId?: string
   orgType?: DepartmentOrgType
   nodeType?: DepartmentNodeType
   description?: string
   managerEmployeeId?: string | null
   attendanceGroupId?: string | null
+  /** 部门图片（可选） */
+  imageUrl?: string
+  /**
+   * 部门数据授权的组织部门 ID 列表。
+   * 被授权部门下的平台账号可访问本部门相关数据（同企业授权）。
+   */
+  authorizedDepartmentIds?: string[]
 }
 
 export interface Team {
@@ -43,16 +58,30 @@ export interface EmployeeSkillCertificate {
 export interface Employee {
   id: string
   name: string
+  /** 人员 ID（原工号，可编辑） */
   employeeNo: string
   departmentId: string
   enterpriseId?: string
   position: string
+  /** 入驻日期 */
   hireDate: string
   skills: string[]
   preferredShiftIds: string[]
   unavailableDates: string[]
   status: EmployeeStatus
+  /** 待入驻阶段（status=pending 时有效） */
+  onboardingStage?: EmployeeOnboardingStage
+  /** 扫码申请入驻的目标部门 */
+  applyDepartmentId?: string
+  /** 是否在岗 */
+  onDuty?: boolean
   phone?: string
+  /** 身份证号 */
+  idCardNo?: string
+  /**
+   * 人员类别：排班人员 / 抢班人员（默认排班）
+   */
+  personnelCategory?: EmployeePersonnelCategory
   gender?: EmployeeGender
   age?: number
   email?: string
@@ -124,8 +153,11 @@ export interface ScheduleTemplate {
   createdAt: string
 }
 
-/** 抢班独立班次状态 */
+/** 抢班独立班次状态（容量/招募） */
 export type GrabShiftStatus = 'open' | 'partial' | 'full' | 'cancelled'
+
+/** 抢班班次发布审批状态（上架小程序前） */
+export type GrabShiftPublishStatus = 'pending' | 'published' | 'rejected'
 
 /** 抢班报名申请 */
 export interface GrabShiftApplication {
@@ -133,7 +165,7 @@ export interface GrabShiftApplication {
   slotId: string
   employeeId: string
   message?: string
-  status: ApprovalStatus
+  status: ApprovalStatus | 'cancelled'
   createdAt: string
   reviewedBy?: string
   reviewedAt?: string
@@ -148,6 +180,149 @@ export interface GrabShiftWhitelistEntry {
   remark?: string
   createdAt: string
   createdBy?: string
+}
+
+/** 抢班面试：周一=1 … 周日=7 */
+export type GrabInterviewWeekday = 1 | 2 | 3 | 4 | 5 | 6 | 7
+
+/** 可面试时间配置方式 */
+export type GrabInterviewScheduleMode = 'unified' | 'by_day'
+
+/** 面试席位计量单位（分钟）：每半小时 / 每 1 小时 */
+export type GrabInterviewSeatUnitMinutes = 30 | 60
+
+export interface GrabInterviewTimeSlot {
+  id: string
+  start: string
+  end: string
+}
+
+/** 岗位要求画像（对齐发布需求 / 可存模板） */
+export interface GrabInterviewPositionProfile {
+  positionName: string
+  jobType?: string
+  skills?: string[]
+  /** 任职要求 */
+  requirements?: string
+  description?: string
+  ageMin?: number
+  ageMax?: number
+  gender?: 'any' | 'male' | 'female'
+  experience?: string
+}
+
+/** 面试时间与席位规则 */
+export interface GrabInterviewScheduleRule {
+  /**
+   * - unified：各选中星期共用 timeSlots
+   * - by_day：按日在 dayTimeSlots 分别配置
+   */
+  scheduleMode?: GrabInterviewScheduleMode
+  weekdays: GrabInterviewWeekday[]
+  timeSlots: GrabInterviewTimeSlot[]
+  dayTimeSlots?: Partial<Record<GrabInterviewWeekday, GrabInterviewTimeSlot[]>>
+  /** 席位计量单位：30=每半小时，60=每 1 小时 */
+  seatUnitMinutes?: GrabInterviewSeatUnitMinutes
+  /** 每个计量单位可面试人数 */
+  seatsPerUnit?: number
+}
+
+/** 企业级岗位模板 */
+export interface GrabInterviewPositionTemplate {
+  id: string
+  enterpriseId: string
+  /** 模板名称 */
+  name: string
+  profile: GrabInterviewPositionProfile
+  /** 模板可选附带默认面试规则 */
+  schedule?: GrabInterviewScheduleRule
+  updatedAt: string
+}
+
+/** 部门下的岗位配置 */
+export interface GrabInterviewDeptPosition {
+  id: string
+  /** 来源模板 */
+  templateId?: string | null
+  profile: GrabInterviewPositionProfile
+  /**
+   * - position：使用本岗位独立面试规则
+   * - department：应用部门统一面试规则
+   */
+  ruleScope: 'position' | 'department'
+  /** 岗位独立规则（ruleScope=position） */
+  schedule?: GrabInterviewScheduleRule
+}
+
+/**
+ * 部门维度面试配置（多岗位）。
+ * 兼容旧版单岗位扁平字段（迁移时写入 positions[0]）。
+ */
+export interface GrabInterviewDeptRule {
+  departmentId: string
+  /** 部门下多岗位 */
+  positions: GrabInterviewDeptPosition[]
+  /** 部门统一面试规则（岗位选择「应用全部门」时使用） */
+  departmentSchedule?: GrabInterviewScheduleRule
+  /** @deprecated 旧版单岗位字段，仅兼容读取 */
+  positionName?: string
+  jobType?: string
+  skills?: string[]
+  requirements?: string
+  description?: string
+  ageMin?: number
+  ageMax?: number
+  gender?: 'any' | 'male' | 'female'
+  experience?: string
+  scheduleMode?: GrabInterviewScheduleMode
+  weekdays?: GrabInterviewWeekday[]
+  timeSlots?: GrabInterviewTimeSlot[]
+  dayTimeSlots?: Partial<Record<GrabInterviewWeekday, GrabInterviewTimeSlot[]>>
+  seatUnitMinutes?: GrabInterviewSeatUnitMinutes
+  seatsPerUnit?: number
+}
+
+/** 企业抢班面试总配置 */
+export interface GrabInterviewConfig {
+  id: string
+  enterpriseId: string
+  /** 抢班是否需要面试 */
+  requireInterview: boolean
+  deptRules: GrabInterviewDeptRule[]
+  /** 企业岗位模板库 */
+  positionTemplates?: GrabInterviewPositionTemplate[]
+  updatedAt: string
+}
+
+export type GrabInterviewRegStatus =
+  | 'pending'
+  | 'passed'
+  | 'failed'
+  | 'no_show_cancelled'
+
+/** 抢班面试报名 */
+export interface GrabInterviewRegistration {
+  id: string
+  enterpriseId: string
+  departmentId: string
+  name: string
+  phone: string
+  position: string
+  /** 面试日期 YYYY-MM-DD */
+  interviewDate: string
+  timeSlotId?: string
+  /** 展示用时段窗口，如 09:00-10:00 */
+  timeSlotLabel: string
+  /** 准确面试开始时间 HH:mm（落在时段窗口内） */
+  interviewExactTime?: string
+  weekday?: GrabInterviewWeekday
+  status: GrabInterviewRegStatus
+  failReason?: string
+  feedbackAt?: string
+  /** 通过后进入人员池的员工 ID */
+  employeeId?: string
+  /** 报名时间 */
+  createdAt: string
 }
 
 /** 灵工可抢的独立班次 */
@@ -175,19 +350,49 @@ export interface GrabShiftSlot {
   endTime: string
   hasBreakTime?: boolean
   breakRule?: string
+  /** 休息分钟数（用于工时计算） */
+  breakMinutes?: number
+  /** 本次班次工时（时段 − 休息） */
+  workHours?: number
   requiredCount: number
   grabbedCount: number
-  /** 时薪补贴（在考勤组单价基础上上浮，元/h） */
+  /** 报名上浮方式 */
+  enrollFloatMode?: 'absolute' | 'percent'
+  /** 报名上浮人数或比例数值 */
+  enrollFloatValue?: number
+  /** 可报名上限（需求 + 上浮） */
+  enrollCap?: number
+  /** 客户基础时薪（审核时不可改） */
   hourlySubsidy?: number
-  /** 发布时快照的基础时薪 */
+  /** 发布时快照的客户基础时薪 */
   baseHourlyRate?: number
-  /** 实际时薪 = 基础 + 补贴 */
+  /** 客户时薪 = 基础 + 补贴 */
   effectiveHourlyRate?: number
+  /** 客户费用 = 客户时薪 × 工时 */
+  customerFee?: number
+  /** 薪资基础时薪（结算价） */
+  wageBaseHourlyRate?: number
+  /** 薪资补贴上浮（审核时可改） */
+  wageHourlySubsidy?: number
+  /** 薪资时薪 = 结算价 + 补贴 */
+  wageHourlyRate?: number
+  /** 薪资费用 = 薪资时薪 × 工时 */
+  wageFee?: number
+  /** 岗位名称（发布时必填） */
+  positionName?: string
   /** 岗位要求说明（发布时必填） */
   positionRequirement?: string
   /** 技能要求 */
   requirements: string[]
   status: GrabShiftStatus
+  /**
+   * 发布审批状态：pending 待平台审核 → published 上架小程序
+   * 缺省视为已发布（兼容旧种子/本地缓存）
+   */
+  publishStatus?: GrabShiftPublishStatus
+  reviewedBy?: string
+  reviewedAt?: string
+  reviewNote?: string
   createdAt: string
 }
 
@@ -215,14 +420,44 @@ export interface ShiftDemandDayCell {
   requiredHeadcount: number
 }
 
-/** 班组周度班次需求计划（无周期规则时使用） */
+/** 班次需求通用配置方式 */
+export type ShiftDemandCommonMode = 'daily_reuse' | 'batch_by_kind' | 'custom'
+
+export interface ShiftDemandShiftCount {
+  shiftTemplateId: string
+  requiredHeadcount: number
+}
+
+/** 通用配置：每日复用 / 按日类型批量 / 每天单独配置 */
+export interface ShiftDemandCommonConfig {
+  mode: ShiftDemandCommonMode
+  /** 每天复用同一套班次人数 */
+  dailyReuse?: ShiftDemandShiftCount[]
+  /** 按平日 / 周末 / 节假日批量配置 */
+  batchByKind?: {
+    weekday: ShiftDemandShiftCount[]
+    weekend: ShiftDemandShiftCount[]
+    holiday: ShiftDemandShiftCount[]
+  }
+  /** 每天单独配置时的单元格快照 */
+  customDays?: ShiftDemandDayCell[]
+}
+
+/**
+ * 班组班次需求计划（支持周 / 月 / 更长周期）。
+ * weekStart/weekEnd 表示计划起止日期（兼容旧字段名）。
+ * status: draft 草稿；published 已发布（confirmed 为历史兼容，等同已发布）
+ */
 export interface WeeklyShiftDemandPlan {
   id: string
   teamId: string
   weekStart: string
   weekEnd: string
-  status: 'draft' | 'confirmed'
+  status: 'draft' | 'confirmed' | 'published'
   cells: ShiftDemandDayCell[]
+  commonConfig?: ShiftDemandCommonConfig
+  publishedAt?: string
+  publishedBy?: string
   createdAt: string
   updatedAt: string
 }
@@ -338,6 +573,21 @@ export interface AttendanceDaily {
   manualNote?: string
   /** 是否已人工矫正工时 */
   workHoursCorrected?: boolean
+  /** 工时是否已确认 */
+  hoursConfirmed?: boolean
+  hoursConfirmedAt?: string
+  hoursConfirmedBy?: string
+  hoursCorrectedAt?: string
+  hoursCorrectedBy?: string
+}
+
+/** 工时确认 / 矫正操作记录 */
+export interface AttendanceHoursAudit {
+  action: 'confirm' | 'correct'
+  workHours: number
+  reason: string
+  operator: string
+  operatedAt: string
 }
 
 /** 日考勤人工调整（状态 / 工时） */
@@ -345,6 +595,12 @@ export interface AttendanceManualAdjustment {
   status?: AttendanceStatus
   workHours?: number
   note?: string
+  hoursConfirmed?: boolean
+  hoursConfirmedAt?: string
+  hoursConfirmedBy?: string
+  hoursCorrectedAt?: string
+  hoursCorrectedBy?: string
+  hoursHistory?: AttendanceHoursAudit[]
 }
 
 export type ExceptionType =
@@ -558,6 +814,16 @@ export interface CancelShiftRequest {
   reviewedBy?: string
   reviewedAt?: string
   reviewNote?: string
+  /** 原因编码（管理端弹窗） */
+  reasonCode?: import('@/constants/cancelShift').CancelShiftReasonCode
+  /** 选择「其他」时的补充说明 */
+  reasonOther?: string
+  /** 来源：排班 / 抢班 */
+  source?: 'schedule' | 'grab'
+  /** 抢班取消范围 */
+  cancelScope?: 'person' | 'slot'
+  /** 关联抢班班次 */
+  grabSlotId?: string
 }
 
 export interface MakeupPunchRequest {
@@ -681,6 +947,14 @@ export interface SettlementBill {
   billNo: string
   enterpriseId: string
   enterpriseName: string
+  /** 账单适用部门范围：全公司或指定部门 */
+  departmentScope: 'all' | 'department'
+  departmentId?: string
+  departmentName: string
+  /** 付款企业（可选，企业确认时可改） */
+  payerEnterpriseName?: string
+  /** 付款企业统一社会信用代码（可选，企业确认时可改） */
+  payerCreditCode?: string
   serviceProviderId?: string
   serviceProviderName?: string
   periodStart: string
@@ -696,6 +970,22 @@ export interface SettlementBill {
   billingRuleName?: string
   excelFileName?: string
   serviceFeeRate?: number
+  /** 服务费是否含税（来自合同服务费配置） */
+  serviceFeeIncludesTax?: boolean
+  /** 工时/任务单价是否含税（来自合同服务费配置） */
+  unitPriceIncludesTax?: boolean
+  /** 减免服务费金额（与服务费同口径：含税/不含税） */
+  serviceFeeWaiver?: number
+  /** 减免服务费录入信息 */
+  serviceFeeWaiverMeta?: {
+    /** by_amount=减免服务费（录入总计金额）；by_quantity 仅兼容旧数据 */
+    mode: 'by_quantity' | 'by_amount'
+    workerCount?: number
+    workHours?: number
+    unitRate?: number
+    note?: string
+    appliedAt?: string
+  }
   summary?: SettlementBillSummary
   pushedAt?: string
   paymentVoucher?: string
@@ -789,7 +1079,7 @@ export interface PendingSettlementItem {
   month: string
 }
 
-export type SettlementManageType = 'hourly' | 'task'
+export type SettlementManageType = 'hourly' | 'task' | 'import'
 
 export type SettlementManageStatus = 'pending_settlement' | 'settled'
 
@@ -835,6 +1125,8 @@ export interface SettlementSlipLine {
   employeeId: string
   employeeName: string
   employeeNo?: string
+  /** 导入发薪必填手机号 */
+  phone?: string
   departmentName?: string
   quantity: number
   unitPrice: number
@@ -901,6 +1193,14 @@ export interface TaxDeclaration {
 
 export type InvoiceType = 'electronic_special' | 'electronic_normal'
 
+/** 企业可开票类目（类目与开票类型 1:1） */
+export interface EnterpriseInvoiceCategoryItem {
+  /** 类目名称，如「生活服务*现代服务」 */
+  name: string
+  /** 电子专票 / 电子普票 */
+  invoiceType: InvoiceType
+}
+
 export type InvoiceDeliveryMethod = 'sf' | 'ems' | 'other'
 
 export type InvoiceStatus =
@@ -911,16 +1211,22 @@ export type InvoiceStatus =
   | 'issuing'
   | 'issued'
 
-/** 企业开票抬头信息 */
+/** 企业开票抬头（可多家，对应付款主体） */
 export interface EnterpriseInvoiceProfile {
+  id: string
   enterpriseId: string
+  /** 抬头名称 / 付款主体 */
   title: string
+  /** 纳税人识别号 / 统一社会信用代码 */
   taxNo: string
   address: string
   phone: string
   bankName: string
   bankAccount: string
   defaultInvoiceType: InvoiceType
+  /** 是否默认抬头 */
+  isDefault?: boolean
+  remark?: string
 }
 
 /** 发票申请关联账单 */
@@ -937,6 +1243,8 @@ export interface InvoiceApplication {
   bills: InvoiceApplicationBillRef[]
   enterpriseId: string
   enterpriseName: string
+  /** 选用的开票抬头 / 付款主体 */
+  invoiceProfileId?: string
   invoiceType: InvoiceType
   invoiceContent: string
   invoiceCategory?: string
@@ -1006,28 +1314,31 @@ export interface ProviderFundAccount {
   updatedAt: string
 }
 
-export type FundTransactionType =
-  | 'income'
-  | 'expense'
-  | 'transfer_in'
-  | 'transfer_out'
-  | 'payout'
-  | 'adjustment'
+export type FundTransactionType = 'income' | 'payout' | 'transfer'
 
 export type FundTransactionStatus = 'success' | 'pending' | 'failed'
 
-/** 资金流水 */
+export type FundTransactionDirection = 'in' | 'out'
+
+/** 资金流水（每笔动账） */
 export interface FundTransaction {
   id: string
   accountId: string
   providerId: string
+  /** 收入 / 代发 / 转账 */
   type: FundTransactionType
+  /** 资金方向：收入为 in，代发为 out，转账按实际方向 */
+  direction: FundTransactionDirection
   amount: number
   balanceAfter: number
   counterparty?: string
+  /** 对手方账号 */
+  counterpartyAccount?: string
   relatedOrderNo?: string
   remark: string
   status: FundTransactionStatus
+  /** 失败原因（status=failed 时） */
+  failReason?: string
   createdAt: string
 }
 
@@ -1105,34 +1416,42 @@ export interface SettlementHourlyConfig {
   holiday: VariablePriceConfig
 }
 
-/** 企业级默认结算价（工时 + 任务） */
+/** @deprecated 已改为按考勤组配置，保留兼容旧本地数据 */
 export interface EnterpriseSettlementConfig extends SettlementHourlyConfig {
   enterpriseId: string
   taskUnitPrice: number
   updatedAt: string
 }
 
-/** 考勤组工时结算价覆盖（未覆盖则继承企业默认） */
+/** 考勤组工时结算价（灵工价单独配置） */
 export interface AttendanceGroupSettlementOverride {
   attendanceGroupId: string
   enterpriseId: string
-  /** true = 使用企业默认工时价 */
-  useEnterpriseDefault: boolean
+  /** @deprecated 企业默认已移除，忽略该字段 */
+  useEnterpriseDefault?: boolean
   /** 是否日结（按考勤组独立配置） */
   dailySettlement?: boolean
+  /**
+   * 是否自动结算：开启后无需人工确认工时。
+   * 仅在 dailySettlement 为 true 时生效。
+   */
+  autoSettlement?: boolean
   dayShiftRate?: number
   nightShiftRate?: number
   overtime?: VariablePriceConfig
   weekend?: VariablePriceConfig
   holiday?: VariablePriceConfig
+  /** @deprecated 任务价已改为按任务类型配置 */
+  taskUnitPrice?: number
   updatedAt?: string
 }
 
-/** 任务类型结算价覆盖（未覆盖则继承企业默认） */
+/** 任务类型灵工结算价（单独配置后才生效） */
 export interface TaskTypeSettlementOverride {
   taskTypeId: string
   enterpriseId: string
-  useEnterpriseDefault: boolean
+  /** true / 未配置单价 = 未设置灵工结算价 */
+  useEnterpriseDefault?: boolean
   unitPrice?: number
   updatedAt?: string
 }
@@ -1150,10 +1469,22 @@ export interface Enterprise {
   address?: string
   status: EnterpriseStatus
   serviceModules: EnterpriseServiceModule[]
-  /** 可开发票类目，如「生活服务*现代服务」 */
-  invoiceCategories?: string[]
+  /**
+   * 可开发票类目（每项含类目名称与开票类型，1:1）
+   * 兼容旧数据：可能为 string[]，读取时需 normalizeEnterpriseInvoiceCategories
+   */
+  invoiceCategories?: EnterpriseInvoiceCategoryItem[] | string[]
   /** 企业负责人（平台操作员账号） */
   enterpriseOwnerIds?: string[]
+  /**
+   * 企业数据授权的组织部门 ID 列表。
+   * 被授权部门及其下级可访问该企业数据。
+   */
+  authorizedDepartmentIds?: string[]
+  /** 企业 Logo（必填） */
+  logoUrl: string
+  /** 场景图（可多张，非必填） */
+  sceneImageUrls?: string[]
   createdAt: string
   adminAccount?: EnterpriseAdminAccount
   /** 租户停用（不可登录企业端，区别于合作终止） */
@@ -1280,7 +1611,7 @@ export interface TaskType {
   createdAt: string
 }
 
-export type TaskPublishStatus = 'draft' | 'active' | 'ended' | 'cancelled'
+export type TaskPublishStatus = 'draft' | 'pending' | 'active' | 'ended' | 'cancelled' | 'rejected'
 export type DispatchMode = 'assign' | 'hall'
 
 export interface Task {
@@ -1288,9 +1619,25 @@ export interface Task {
   enterpriseId: string
   enterpriseName: string
   name: string
-  taskTypeId: string
+  /** @deprecated 兼容旧数据；新任务以 workflowId + 任务内定价为准 */
+  taskTypeId?: string
+  /** 展示用：多为关联流程名称 */
   taskTypeName: string
   workflowId: string
+  /** 发布归属部门/公司 */
+  departmentId?: string
+  departmentName?: string
+  pricingMode?: PricingMode
+  pricingUnit?: TaskPricingUnit
+  fixedPrice?: number
+  tieredPrices?: TieredPrice[]
+  /**
+   * 灵工结算单价（平台审批时可改，默认代入客户单价）
+   * 未设置时认领金额回退客户定价
+   */
+  settlementUnitPrice?: number
+  incentive?: string
+  trainingCourseId?: string
   plannedTotal?: number
   /** 任务数量无上限（plannedTotal 为空且为 true） */
   unlimitedQuantity?: boolean
@@ -1307,6 +1654,9 @@ export interface Task {
   acceptedCount: number
   completedCount: number
   approvedCount: number
+  reviewedBy?: string
+  reviewedAt?: string
+  reviewNote?: string
   createdAt: string
 }
 
@@ -1630,17 +1980,49 @@ export type ContractTermPreset = '1y' | '2y' | '5y' | 'long'
 
 export type ContractBillingRuleType = 'hourly' | 'task'
 
+/** 服务费分项：工时含招聘/管理/抢班；任务含招聘/管理 */
+export type ContractServiceFeeCategory = 'recruitment' | 'management' | 'grab'
+
+export interface ContractServiceFeeItem {
+  category: ContractServiceFeeCategory
+  /** 费率或单价，与所属计费规则的 chargeMethod 一致 */
+  rate: number
+}
+
 export interface ContractBillingRule {
   type: ContractBillingRuleType
   chargeMethod: 'fixed' | 'percentage'
+  /**
+   * 兼容旧数据与列表汇总；有 serviceFees 时等于各分项 rate 之和
+   * @deprecated 请优先使用 serviceFees
+   */
   baseRate: number
+  /** @deprecated 已取消阶梯费率，保留兼容旧数据 */
   tiers: FeeTier[]
+  /** 服务费是否含税，默认不含税 */
+  serviceFeeIncludesTax?: boolean
+  /** 工时/任务单价是否含税，默认不含税 */
+  unitPriceIncludesTax?: boolean
+  /** 分项服务费 */
+  serviceFees?: ContractServiceFeeItem[]
 }
 
-export type SettlementCycle = 'weekly' | 'monthly' | 'quarterly' | 'project'
+/** 结算周期：用于提醒生成账单 */
+export type SettlementCycle = 'weekly' | 'monthly' | 'quarterly'
 
 export type ServiceProviderStatus = 'cooperating' | 'suspended' | 'terminated'
 export type ServiceContractStatus = 'active' | 'expiring' | 'expired' | 'terminated' | 'draft'
+
+/** 合同审批状态：操作员提交 → 负责人审批 */
+export type ContractApprovalStatus = 'draft' | 'pending' | 'approved' | 'rejected'
+
+/** 合同版本状态 */
+export type ServiceContractVersionStatus =
+  | 'effective'
+  | 'history'
+  | 'pending'
+  | 'rejected'
+  | 'draft'
 
 export interface ContractAttachment {
   id: string
@@ -1654,6 +2036,41 @@ export interface ContractOperationLog {
   operator: string
   action: string
   createdAt: string
+}
+
+/** 合同历史版本（配置快照） */
+export interface ServiceContractVersion {
+  id: string
+  /** 版本号，从 1 递增 */
+  version: number
+  status: ServiceContractVersionStatus
+  name: string
+  feeType: ServiceFeeType
+  chargeMethod: 'fixed' | 'percentage'
+  baseRate: number
+  tiers: FeeTier[]
+  billingRules?: ContractBillingRule[]
+  contractTerm?: ContractTermPreset
+  currency: string
+  signingDate: string
+  effectiveDate: string
+  expiryDate: string
+  settlementCycle: SettlementCycle
+  settlementDay?: number
+  settlementWeekday?: number
+  settlementQuarterMonth?: number
+  settlementQuarterDay?: number
+  ourSigningEntity?: string
+  remark?: string
+  /** 本版变更说明 */
+  changeNote?: string
+  submittedBy?: string
+  submittedAt?: string
+  approvedBy?: string
+  approvedAt?: string
+  approvalRemark?: string
+  createdAt: string
+  updatedAt: string
 }
 
 /** 阶梯费率档位 */
@@ -1738,6 +2155,13 @@ export interface ServiceContract {
   effectiveDate: string
   expiryDate: string
   status: ServiceContractStatus
+  /** 审批状态，缺省视为已通过（兼容旧数据） */
+  approvalStatus?: ContractApprovalStatus
+  submittedBy?: string
+  submittedAt?: string
+  approvedBy?: string
+  approvedAt?: string
+  approvalRemark?: string
   settlementCycle: SettlementCycle
   /** 按月：每月几号 */
   settlementDay?: number
@@ -1747,17 +2171,26 @@ export interface ServiceContract {
   settlementQuarterMonth?: number
   /** 按季：该月几号 */
   settlementQuarterDay?: number
-  ourSigningEntity: string
+  /** @deprecated 已从合同表单移除，兼容旧数据 */
+  ourSigningEntity?: string
   remark?: string
   attachments?: ContractAttachment[]
   operationLogs?: ContractOperationLog[]
+  /** 当前生效版本号；0 表示尚无生效版本 */
+  currentVersion?: number
+  /** 版本记录（含历史 / 草稿 / 待审批） */
+  versions?: ServiceContractVersion[]
   createdAt: string
   updatedAt: string
 }
 
+/** @deprecated 使用 ServiceContractVersionStatus */
+export type ContractVersionRecordStatus = ServiceContractVersionStatus
+
 // ── 培训考核 ──
 
 export type TrainingMaterialType = 'video' | 'pdf' | 'article'
+/** @deprecated 使用自定义分类 id / 名称，保留兼容旧枚举值 */
 export type TrainingMaterialCategory =
   | 'info_security'
   | 'safety'
@@ -1766,6 +2199,16 @@ export type TrainingMaterialCategory =
   | 'emergency'
   | 'other'
 export type TrainingMaterialStatus = 'draft' | 'approved'
+
+/** 培训资料分类（可自定义增删改） */
+export interface TrainingMaterialCategoryItem {
+  id: string
+  name: string
+  /** null 表示平台通用分类 */
+  enterpriseId: string | null
+  builtin?: boolean
+  createdAt: string
+}
 
 /** 培训资料 */
 export interface TrainingMaterial {
@@ -1776,19 +2219,24 @@ export interface TrainingMaterial {
    */
   enterpriseId: string | null
   type: TrainingMaterialType
-  category: TrainingMaterialCategory
+  /** 资料分类（可选） */
+  category?: string
   fileUrl: string
   fileName: string
   fileSize: number
-  tags: string[]
+  /** @deprecated 已移除标签录入 */
+  tags?: string[]
   description?: string
+  /** 部门范围：全部部门 / 指定部门 */
+  departmentScope?: 'all' | 'department'
+  departmentIds?: string[]
   status: TrainingMaterialStatus
   createdAt: string
   updatedAt: string
 }
 
 export type CourseStudyMode = 'sequential' | 'free'
-export type CourseStatus = 'draft' | 'published' | 'closed'
+export type CourseStatus = 'draft' | 'published' | 'offline' | 'closed'
 export type CourseScopeType = 'all' | 'department' | 'tag'
 
 /** 培训课程 */
@@ -1832,7 +2280,7 @@ export type ExamQuestionType = 'single' | 'multiple' | 'judge'
 export type ExamQuestionSource = 'manual' | 'ai'
 export type AiRiskScenario = 'info_security' | 'safety' | 'service' | 'emergency'
 export type AiQuestionDifficulty = 'easy' | 'medium' | 'hard'
-export type ExamStatus = 'draft' | 'published'
+export type ExamStatus = 'draft' | 'published' | 'offline'
 
 /** 考核题目 */
 export interface ExamQuestion {
@@ -1870,6 +2318,7 @@ export interface TrainingExam {
   createdAt: string
   updatedAt: string
   publishedAt?: string
+  offlineAt?: string
 }
 
 export type LearningStatus = 'not_started' | 'in_progress' | 'completed'
@@ -1884,6 +2333,10 @@ export interface CourseLearningRecord {
   studyMinutes: number
   examPassed?: boolean
   examScore?: number
+  /**
+   * 历史考核打标：考核下架前已考过；重新考核后清除
+   */
+  historicalExam?: boolean
   completedAt?: string
   updatedAt: string
 }
@@ -1982,14 +2435,33 @@ export interface MiniJobApplication {
   reviewNote?: string
 }
 
+/** 灵工与服务商签署的协议类型 */
+export type WorkerAgreementType =
+  | 'service'
+  | 'dispatch'
+  | 'privacy'
+  | 'safety'
+  | 'other'
+
+export type WorkerAgreementStatus = 'pending' | 'signed' | 'expired' | 'terminated'
+
+/** 灵工人员与服务商签署的协议 */
 export interface WorkerAgreement {
   id: string
   employeeId: string
+  /** 签署服务商；缺失时视为平台通用协议 */
+  providerId?: string
+  contractNo?: string
   title: string
   content: string
+  agreementType?: WorkerAgreementType
   signed: boolean
   required: boolean
   signedAt?: string
+  effectiveDate?: string
+  expiryDate?: string
+  status?: WorkerAgreementStatus
+  createdAt?: string
 }
 
 export interface WorkerPaymentBinding {
@@ -2007,6 +2479,16 @@ export interface WorkerSchedulePreference {
   startTime: string
   endTime: string
   variant?: 'weekday' | 'weekend'
+}
+
+/** 请假 / 不上岗：特定日期区间不可排班、不可指派任务 */
+export interface WorkerUnavailablePeriod {
+  id: string
+  /** leave=请假 off=不上岗 */
+  type: 'leave' | 'off'
+  startDate: string
+  endDate: string
+  reason?: string
 }
 
 export interface WorkerPartTimePreference {
@@ -2052,6 +2534,8 @@ export interface WorkerProfileExt {
   realName?: string
   idCardMasked?: string
   schedulePreferences?: WorkerSchedulePreference[]
+  /** 请假/不上岗日期段 */
+  unavailablePeriods?: WorkerUnavailablePeriod[]
   partTimePreference?: WorkerPartTimePreference
   basicProofs?: WorkerBasicProof[]
   skillCertificates?: WorkerSkillCertificate[]
@@ -2071,4 +2555,86 @@ export interface MiniAppSession {
   phone: string
   onboardingComplete: boolean
   loggedInAt: string
+}
+
+// ── 提醒规则配置 ──
+
+export type ReminderSceneCategory =
+  | 'recruitment'
+  | 'attendance'
+  | 'schedule'
+  | 'settlement'
+  | 'insurance'
+  | 'ops'
+
+export type ReminderRuleStatus = 'active' | 'disabled'
+
+export type ReminderLevel = 'urgent' | 'important' | 'normal'
+
+export type ReminderChannel = 'todo' | 'inbox' | 'push' | 'sms'
+
+export type ReminderTriggerMode = 'realtime' | 'scheduled' | 'delayed'
+
+export type ReminderReceiverMode = 'role' | 'person' | 'dynamic'
+
+export type ReminderConditionOperator =
+  | 'eq'
+  | 'neq'
+  | 'gt'
+  | 'gte'
+  | 'lt'
+  | 'lte'
+  | 'contains'
+
+/** 与上一条条件的逻辑连接（首条条件忽略） */
+export type ReminderConditionLogic = 'and' | 'or'
+
+export interface ReminderCondition {
+  id: string
+  field: string
+  operator: ReminderConditionOperator
+  value: string
+  unit?: string
+  /** 与上一条条件的关系：且 / 或，默认且 */
+  logic?: ReminderConditionLogic
+}
+
+export interface ReminderRule {
+  id: string
+  name: string
+  scene: ReminderSceneCategory
+  description?: string
+  status: ReminderRuleStatus
+  /** 触发对象，如排班实例 */
+  triggerTarget: string
+  /** 数据来源，如考勤打卡记录 */
+  dataSource: string
+  conditions: ReminderCondition[]
+  titleTemplate: string
+  contentTemplate: string
+  level: ReminderLevel
+  channels: ReminderChannel[]
+  receiverMode: ReminderReceiverMode
+  receiverRole?: string
+  ccRole?: string
+  dynamicMatchHint?: string
+  triggerMode: ReminderTriggerMode
+  /** 定时触发：HH:mm */
+  scheduleTime?: string
+  /** 延时触发：分钟 */
+  delayMinutes?: number
+  quietStart?: string
+  quietEnd?: string
+  /** 频控窗口小时数 */
+  rateLimitHours: number
+  /** 窗口内最多触发次数 */
+  rateLimitCount: number
+  /** 空数组 / 含 all 表示全部企业 */
+  enterpriseIds: string[]
+  /** 空数组表示全部考勤组 */
+  attendanceGroupIds: string[]
+  effectiveFrom?: string
+  effectiveTo?: string
+  createdAt: string
+  updatedAt: string
 }

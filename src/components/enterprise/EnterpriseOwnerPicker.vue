@@ -25,6 +25,7 @@ const emit = defineEmits<{
 const store = useAppStore()
 const treeRef = ref<InstanceType<typeof ElTree>>()
 const treeKeyword = ref('')
+const accountKeyword = ref('')
 const selectedDeptId = ref('dept_root')
 
 const treeData = computed(() => buildDepartmentTree(store.departments))
@@ -33,22 +34,30 @@ const selectedDept = computed(() =>
   store.departments.find((d) => d.id === selectedDeptId.value),
 )
 
-const operatorAccounts = computed(() => {
-  if (!selectedDeptId.value) return []
-  const ids = getDepartmentDescendantIds(store.departments, selectedDeptId.value)
-  return store.systemAccounts
-    .filter(
-      (a) =>
-        ids.has(a.departmentId) &&
-        accountHasRole(a, enterpriseOperatorRoleId) &&
-        a.status === 'enabled',
-    )
+const allOperatorAccounts = computed(() =>
+  store.systemAccounts
+    .filter((a) => accountHasRole(a, enterpriseOperatorRoleId) && a.status === 'enabled')
     .map((a) => ({
       ...a,
       departmentName: getDepartmentName(store.departments, a.departmentId),
       checked: props.modelValue.includes(a.id),
     }))
-    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN'))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN')),
+)
+
+const operatorAccounts = computed(() => {
+  const kw = accountKeyword.value.trim().toLowerCase()
+  if (kw) {
+    return allOperatorAccounts.value.filter(
+      (a) =>
+        a.displayName.toLowerCase().includes(kw) ||
+        a.username.toLowerCase().includes(kw) ||
+        (a.phone ?? '').includes(kw),
+    )
+  }
+  if (!selectedDeptId.value) return []
+  const ids = getDepartmentDescendantIds(store.departments, selectedDeptId.value)
+  return allOperatorAccounts.value.filter((a) => ids.has(a.departmentId))
 })
 
 const selectedOwners = computed(() =>
@@ -56,6 +65,9 @@ const selectedOwners = computed(() =>
     .map((id) => store.systemAccounts.find((a) => a.id === id))
     .filter((a): a is NonNullable<typeof a> => Boolean(a)),
 )
+
+const isSearchingAccounts = computed(() => Boolean(accountKeyword.value.trim()))
+
 
 watch(treeKeyword, (val) => {
   treeRef.value?.filter(val)
@@ -136,9 +148,19 @@ function removeOwner(id: string) {
 
       <div class="operator-panel">
         <div class="panel-title">
-          操作员
-          <span v-if="selectedDept" class="panel-sub">（{{ selectedDept.name }}及下级）</span>
+          {{ isSearchingAccounts ? '账号搜索结果' : '操作员' }}
+          <span v-if="!isSearchingAccounts && selectedDept" class="panel-sub">
+            （{{ selectedDept.name }}及下级）
+          </span>
         </div>
+        <el-input
+          v-model="accountKeyword"
+          placeholder="输入姓名/账号/手机查询权限部门人员"
+          clearable
+          prefix-icon="Search"
+          class="org-search"
+          :disabled="disabled"
+        />
         <div v-if="operatorAccounts.length" class="operator-list">
           <label
             v-for="account in operatorAccounts"
@@ -161,7 +183,15 @@ function removeOwner(id: string) {
             </div>
           </label>
         </div>
-        <el-empty v-else description="当前部门及下级暂无可用操作员" :image-size="72" />
+        <el-empty
+          v-else
+          :description="
+            isSearchingAccounts
+              ? '未找到匹配的权限部门账号人员'
+              : '当前部门及下级暂无可用操作员'
+          "
+          :image-size="72"
+        />
       </div>
     </div>
   </div>

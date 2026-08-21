@@ -48,16 +48,16 @@ function save() {
     endTime: form.value.endTime,
   }
   store.upsertWorkerSchedulePreference(employeeId.value, pref)
-  ElMessage.success('排班偏好已保存')
-  router.replace('/miniapp/worker-archive/schedule-pref')
+  ElMessage.success('兼职时间段已保存')
+  router.replace('/miniapp/part-time-pref')
 }
 
 async function remove() {
   if (!editingId.value) return
-  await ElMessageBox.confirm('确定删除这条排班偏好？', '提示', { type: 'warning' })
+  await ElMessageBox.confirm('确定删除这条兼职时间段？', '提示', { type: 'warning' })
   store.removeWorkerSchedulePreference(employeeId.value, editingId.value)
   ElMessage.success('已删除')
-  router.replace('/miniapp/worker-archive/schedule-pref')
+  router.replace('/miniapp/part-time-pref')
 }
 </script>
 
@@ -65,7 +65,7 @@ async function remove() {
   <div class="edit-page">
     <div class="mini-nav-bar">
       <MiniNavBack fallback="/miniapp/worker-archive/schedule-pref" />
-      <div class="mini-nav-title">{{ isNew ? '添加排班偏好' : '编辑排班偏好' }}</div>
+      <div class="mini-nav-title">{{ isNew ? '添加兼职时间段' : '编辑兼职时间段' }}</div>
     </div>
     <div class="mini-page">
       <div class="mini-card">

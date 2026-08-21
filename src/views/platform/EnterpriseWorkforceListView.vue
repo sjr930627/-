@@ -3,6 +3,7 @@ import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { enterpriseStatusMap } from '@/constants/enterprise'
+import { WORKFORCE_STATS_DEMO_DATE } from '@/mock/workforceSeed'
 
 const store = useAppStore()
 const router = useRouter()
@@ -26,7 +27,6 @@ const tableData = computed(() =>
         ...ent,
         ...stats,
         statusMeta: enterpriseStatusMap[ent.status],
-        totalHeadcount: stats.activeCount + stats.pendingCount,
       }
     })
     .filter((row) => {
@@ -39,7 +39,10 @@ const tableData = computed(() =>
         row.shortName.toLowerCase().includes(kw)
       )
     })
-    .sort((a, b) => b.activeCount - a.activeCount || a.name.localeCompare(b.name, 'zh-CN')),
+    .sort(
+      (a, b) =>
+        b.scheduleEmployeeCount - a.scheduleEmployeeCount || a.name.localeCompare(b.name, 'zh-CN'),
+    ),
 )
 
 const pagedData = computed(() => {
@@ -50,9 +53,12 @@ const pagedData = computed(() => {
 const totalCount = computed(() => tableData.value.length)
 
 const summary = computed(() => ({
-  enterprises: store.enterprises.length,
   departments: tableData.value.reduce((sum, row) => sum + row.departmentCount, 0),
-  activeEmployees: tableData.value.reduce((sum, row) => sum + row.activeCount, 0),
+  schedulePersonnel: tableData.value.reduce((sum, row) => sum + row.scheduleEmployeeCount, 0),
+  onDuty: tableData.value.reduce((sum, row) => sum + row.onDutyCount, 0),
+  demandGap: tableData.value.reduce((sum, row) => sum + (row.demandGap ?? 0), 0),
+  grabPool: tableData.value.reduce((sum, row) => sum + (row.grabPoolCount ?? 0), 0),
+  shiftGap: tableData.value.reduce((sum, row) => sum + (row.shiftGap ?? 0), 0),
 }))
 
 function resetFilters() {
@@ -72,18 +78,40 @@ onMounted(() => {
 
 <template>
   <div class="workforce-overview-page">
+    <div class="page-card page-header-card">
+      <div>
+        <h2 class="page-title">企业人员统计</h2>
+        <p class="text-muted">
+          汇总各部门数、排班人员、在岗、需求缺口、抢班池与班次缺口 · 统计日
+          {{ WORKFORCE_STATS_DEMO_DATE }}
+        </p>
+      </div>
+    </div>
+
     <div class="summary-row">
       <div class="summary-card page-card">
-        <div class="summary-value">{{ summary.enterprises }}</div>
-        <div class="summary-label">合作企业</div>
+        <div class="summary-value">{{ summary.departments.toLocaleString() }}</div>
+        <div class="summary-label">部门数</div>
       </div>
       <div class="summary-card page-card">
-        <div class="summary-value">{{ summary.departments }}</div>
-        <div class="summary-label">部门总数</div>
+        <div class="summary-value">{{ summary.schedulePersonnel.toLocaleString() }}</div>
+        <div class="summary-label">排班人员数</div>
       </div>
       <div class="summary-card page-card">
-        <div class="summary-value">{{ summary.activeEmployees.toLocaleString() }}</div>
-        <div class="summary-label">在职人员</div>
+        <div class="summary-value success">{{ summary.onDuty.toLocaleString() }}</div>
+        <div class="summary-label">今日在岗数</div>
+      </div>
+      <div class="summary-card page-card">
+        <div class="summary-value danger">{{ summary.demandGap.toLocaleString() }}</div>
+        <div class="summary-label">需求缺口</div>
+      </div>
+      <div class="summary-card page-card">
+        <div class="summary-value">{{ summary.grabPool.toLocaleString() }}</div>
+        <div class="summary-label">抢班池人数</div>
+      </div>
+      <div class="summary-card page-card">
+        <div class="summary-value warn">{{ summary.shiftGap.toLocaleString() }}</div>
+        <div class="summary-label">班次缺口</div>
       </div>
     </div>
 
@@ -116,10 +144,10 @@ onMounted(() => {
           企业人员统计
           <el-tag size="small" round>{{ totalCount }}</el-tag>
         </div>
+        <span class="text-muted stats-date">统计日 {{ WORKFORCE_STATS_DEMO_DATE }}</span>
       </div>
 
       <el-table :data="pagedData" border stripe>
-        <el-table-column prop="code" label="企业编号" width="140" />
         <el-table-column label="企业名称" min-width="220">
           <template #default="{ row }">
             <div class="name-cell">
@@ -134,17 +162,29 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column prop="departmentCount" label="部门数" width="90" align="center" />
-        <el-table-column prop="activeCount" label="在职人员" width="100" align="center">
+        <el-table-column prop="scheduleEmployeeCount" label="排班人员数" width="110" align="center">
           <template #default="{ row }">
-            <span class="count-strong">{{ row.activeCount }}</span>
+            <span class="count-strong">{{ row.scheduleEmployeeCount }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="pendingCount" label="待入职" width="90" align="center" />
-        <el-table-column prop="resignedCount" label="已离职" width="90" align="center" />
-        <el-table-column prop="teamCount" label="班组数" width="90" align="center" />
-        <el-table-column label="合作状态" width="110">
+        <el-table-column prop="onDutyCount" label="今日在岗数" width="110" align="center">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.statusMeta.type">{{ row.statusMeta.label }}</el-tag>
+            <span class="count-success">{{ row.onDutyCount }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="demandGap" label="需求缺口" width="100" align="center">
+          <template #default="{ row }">
+            <span :class="{ 'count-danger': (row.demandGap ?? 0) > 0 }">{{ row.demandGap ?? 0 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="grabPoolCount" label="抢班池人数" width="110" align="center">
+          <template #default="{ row }">
+            <span class="count-strong">{{ row.grabPoolCount ?? 0 }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="shiftGap" label="班次缺口" width="100" align="center">
+          <template #default="{ row }">
+            <span :class="{ 'count-warn': (row.shiftGap ?? 0) > 0 }">{{ row.shiftGap ?? 0 }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
@@ -180,9 +220,26 @@ onMounted(() => {
   gap: 12px;
 }
 
+.page-header-card {
+  padding: 16px 20px;
+}
+
+.page-header-card .page-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.page-header-card .text-muted {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
+}
+
 .summary-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 12px;
 }
 
@@ -196,6 +253,18 @@ onMounted(() => {
   font-weight: 700;
   color: #2563eb;
   line-height: 1.2;
+}
+
+.summary-value.warn {
+  color: #e6a23c;
+}
+
+.summary-value.success {
+  color: #67c23a;
+}
+
+.summary-value.danger {
+  color: #f56c6c;
 }
 
 .summary-label {
@@ -245,6 +314,10 @@ onMounted(() => {
   font-size: 15px;
 }
 
+.stats-date {
+  font-size: 12px;
+}
+
 .name-cell {
   display: flex;
   align-items: center;
@@ -269,6 +342,21 @@ onMounted(() => {
   color: #2563eb;
 }
 
+.count-success {
+  font-weight: 600;
+  color: #67c23a;
+}
+
+.count-warn {
+  font-weight: 600;
+  color: #e6a23c;
+}
+
+.count-danger {
+  font-weight: 600;
+  color: #f56c6c;
+}
+
 .table-footer {
   display: flex;
   justify-content: space-between;
@@ -276,9 +364,15 @@ onMounted(() => {
   padding: 12px 20px 0;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1200px) {
   .summary-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .summary-row {
+    grid-template-columns: 1fr 1fr;
   }
 }
 </style>

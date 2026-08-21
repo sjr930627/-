@@ -1,5 +1,6 @@
-import type { Enterprise } from '@/types'
+import type { Enterprise, EnterpriseInvoiceCategoryItem, InvoiceType } from '@/types'
 import { getDepartmentName } from '@/utils'
+import { normalizeInvoiceType } from '@/constants/invoice'
 
 export const enterpriseStatusMap = {
   active: { label: '生效中', type: 'success' as const, dot: '#67c23a' },
@@ -41,7 +42,7 @@ export function getTenantModuleTags(modules: Enterprise['serviceModules']): stri
   if (modules.includes('recruitment')) {
     tags.push('招聘管理', '面试日程')
   }
-  if (modules.includes('attendance')) tags.push('人员考勤管理')
+  if (modules.includes('attendance')) tags.push('出勤管理', '人员管理')
   if (modules.includes('training')) tags.push('培训与考核')
   if (modules.includes('task')) tags.push('任务管理')
   if (modules.includes('payroll')) tags.push('财税管理')
@@ -95,10 +96,43 @@ export function generateRandomPassword(length = 11) {
   return result
 }
 
+/** 兼容旧版 string[] 可开票类目 */
+export function normalizeEnterpriseInvoiceCategories(
+  categories: Enterprise['invoiceCategories'] | undefined,
+): EnterpriseInvoiceCategoryItem[] {
+  if (!categories?.length) return []
+  return categories.map((item) => {
+    if (typeof item === 'string') {
+      return {
+        name: item,
+        invoiceType: 'electronic_normal' as InvoiceType,
+      }
+    }
+    return {
+      name: item.name,
+      invoiceType: normalizeInvoiceType(item.invoiceType),
+    }
+  })
+}
+
+export function formatEnterpriseInvoiceCategoryLabel(item: EnterpriseInvoiceCategoryItem) {
+  const typeLabel =
+    item.invoiceType === 'electronic_special' ? '电子专票' : '电子普票'
+  return `${item.name}（${typeLabel}）`
+}
+
 export function getEnterpriseInvoiceCategories(
   enterprises: Enterprise[],
   enterpriseId?: string,
-) {
+): EnterpriseInvoiceCategoryItem[] {
   if (!enterpriseId) return []
-  return enterprises.find((item) => item.id === enterpriseId)?.invoiceCategories ?? []
+  const enterprise = enterprises.find((item) => item.id === enterpriseId)
+  return normalizeEnterpriseInvoiceCategories(enterprise?.invoiceCategories)
+}
+
+export function getEnterpriseInvoiceCategoryNames(
+  enterprises: Enterprise[],
+  enterpriseId?: string,
+): string[] {
+  return getEnterpriseInvoiceCategories(enterprises, enterpriseId).map((item) => item.name)
 }

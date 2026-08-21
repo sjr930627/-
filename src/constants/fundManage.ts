@@ -11,13 +11,10 @@ export const fundAccountStatusMap: Record<FundAccountStatus, { label: string; ty
   disabled: { label: '停用', type: 'info' },
 }
 
-export const fundTransactionTypeMap: Record<FundTransactionType, { label: string; sign: '+' | '-' | '±' }> = {
-  income: { label: '收入', sign: '+' },
-  expense: { label: '支出', sign: '-' },
-  transfer_in: { label: '转入', sign: '+' },
-  transfer_out: { label: '转出', sign: '-' },
-  payout: { label: '灵工发放', sign: '-' },
-  adjustment: { label: '调账', sign: '±' },
+export const fundTransactionTypeMap: Record<FundTransactionType, { label: string }> = {
+  income: { label: '收入' },
+  payout: { label: '代发' },
+  transfer: { label: '转账' },
 }
 
 export const fundTransactionStatusMap: Record<FundTransactionStatus, { label: string; type: 'success' | 'warning' | 'danger' }> = {

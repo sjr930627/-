@@ -9,14 +9,14 @@ import {
   formatEnterpriseOwnerNames,
   getEnterpriseOwnerIds,
 } from '@/constants/enterprise'
+import EnterpriseOwnerFilter from '@/components/enterprise/EnterpriseOwnerFilter.vue'
 import type { Enterprise } from '@/types'
 
 const store = useAppStore()
 const router = useRouter()
 
-const keywordCode = ref('')
 const keywordName = ref('')
-const ownerFilter = ref('')
+const ownerFilterIds = ref<string[]>([])
 const dateRange = ref<[string, string] | null>(null)
 const statusFilter = ref<'all' | 'cooperating' | 'terminated'>('all')
 const page = ref(1)
@@ -34,18 +34,13 @@ const filteredData = computed(() =>
     .filter((e) => {
       if (statusFilter.value === 'cooperating' && e.status === 'terminated') return false
       if (statusFilter.value === 'terminated' && e.status !== 'terminated') return false
-      if (keywordCode.value.trim() && !e.code.includes(keywordCode.value.trim())) return false
       if (keywordName.value.trim()) {
         const kw = keywordName.value.trim()
         if (!e.name.includes(kw) && !e.shortName.includes(kw)) return false
       }
-      if (ownerFilter.value.trim()) {
-        const kw = ownerFilter.value.trim()
-        const ownerLabel = formatEnterpriseOwnerNames(
-          getEnterpriseOwnerIds(e),
-          store.systemAccounts,
-        )
-        if (!ownerLabel.includes(kw)) return false
+      if (ownerFilterIds.value.length) {
+        const owners = getEnterpriseOwnerIds(e)
+        if (!ownerFilterIds.value.some((id) => owners.includes(id))) return false
       }
       if (dateRange.value) {
         const [from, to] = dateRange.value
@@ -69,9 +64,8 @@ const pagedData = computed(() => {
 const totalCount = computed(() => filteredData.value.length)
 
 function resetFilters() {
-  keywordCode.value = ''
   keywordName.value = ''
-  ownerFilter.value = ''
+  ownerFilterIds.value = []
   dateRange.value = null
   statusFilter.value = 'all'
   page.value = 1
@@ -91,6 +85,10 @@ function openDetail(row: Enterprise) {
 
 function openEdit(row: Enterprise) {
   router.push(`/enterprises/${row.id}/edit`)
+}
+
+function openAuthorize(row: Enterprise) {
+  router.push(`/enterprises/${row.id}/authorize`)
 }
 
 async function terminate(row: Enterprise) {
@@ -133,9 +131,13 @@ function batchExport() {
 
     <div class="page-card filter-card">
       <div class="filter-grid">
-        <el-input v-model="keywordCode" placeholder="搜索企业编号" clearable prefix-icon="Search" />
-        <el-input v-model="keywordName" placeholder="搜索企业名称/企业简称" clearable prefix-icon="Search" />
-        <el-input v-model="ownerFilter" placeholder="搜索企业负责人" clearable />
+        <el-input
+          v-model="keywordName"
+          placeholder="搜索企业名称/企业简称"
+          clearable
+          prefix-icon="Search"
+        />
+        <EnterpriseOwnerFilter v-model="ownerFilterIds" />
         <el-date-picker
           v-model="dateRange"
           type="daterange"
@@ -202,10 +204,11 @@ function batchExport() {
             {{ row.statusMeta.label }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">查看</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="primary" @click="openAuthorize(row)">企业授权</el-button>
             <el-button
               v-if="row.status !== 'terminated'"
               link
@@ -261,7 +264,7 @@ function batchExport() {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr)) auto;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(260px, 1.4fr) minmax(220px, 1fr) auto;
   gap: 12px;
   align-items: center;
 }

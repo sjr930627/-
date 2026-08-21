@@ -14,6 +14,32 @@ import type {
 } from '@/types'
 import { calcShiftHours, getMonthDays } from '@/utils'
 
+/** 考勤数据/审批按排班或抢班拆分的数据来源 */
+export type AttendanceAssignmentSource = 'schedule' | 'grab'
+
+export function isGrabAssignment(
+  assignment?: Pick<ScheduleAssignment, 'fromGrabSlotId'> | null,
+): boolean {
+  return Boolean(assignment?.fromGrabSlotId)
+}
+
+export function filterAssignmentsBySource(
+  assignments: ScheduleAssignment[],
+  source: AttendanceAssignmentSource = 'schedule',
+): ScheduleAssignment[] {
+  return assignments.filter((a) =>
+    source === 'grab' ? isGrabAssignment(a) : !isGrabAssignment(a),
+  )
+}
+
+export function assignmentMatchesSource(
+  assignment: ScheduleAssignment | undefined | null,
+  source: AttendanceAssignmentSource,
+): boolean {
+  if (!assignment) return false
+  return source === 'grab' ? isGrabAssignment(assignment) : !isGrabAssignment(assignment)
+}
+
 const STATUS_LABELS: Record<AttendanceStatus, string> = {
   normal: '正常',
   late: '迟到',
@@ -55,7 +81,42 @@ export function isDailyAttendanceVisible(day: AttendanceDaily): boolean {
 }
 
 export function canCorrectWorkHours(status: AttendanceStatus): boolean {
-  return status === 'late' || status === 'missing_punch'
+  return status === 'late' || status === 'missing_punch' || status === 'early_leave' || status === 'normal'
+}
+
+export function canConfirmWorkHours(day: AttendanceDaily): boolean {
+  if (day.scheduledHours <= 0) return false
+  if (day.status === 'leave' || day.status === 'rest') return false
+  return !day.hoursConfirmed
+}
+
+/** 实际工时相对排班：缺失 / 超时 */
+export function getWorkHoursAnomaly(
+  workHours: number,
+  scheduledHours: number,
+): { type: 'shortfall' | 'overtime'; diff: number } | null {
+  const diff = Math.round((workHours - scheduledHours) * 10) / 10
+  if (diff < -0.05) return { type: 'shortfall', diff: Math.abs(diff) }
+  if (diff > 0.05) return { type: 'overtime', diff }
+  return null
+}
+
+/** 确认工时时异常提醒文案；无异常返回 null */
+export function buildConfirmHoursWarning(
+  items: { name?: string; workHours: number; scheduledHours: number }[],
+): string | null {
+  const parts: string[] = []
+  items.forEach((item) => {
+    const anomaly = getWorkHoursAnomaly(item.workHours, item.scheduledHours)
+    if (!anomaly) return
+    const tip =
+      anomaly.type === 'shortfall'
+        ? `${anomaly.diff}工时有缺失`
+        : `${anomaly.diff}工时有超时`
+    parts.push(item.name ? `${item.name}：${tip}` : tip)
+  })
+  if (!parts.length) return null
+  return `请确认工时正确，${parts.join('；')}。是否仍要按现在工时确认？`
 }
 
 function applyManualAdjustment(
@@ -74,6 +135,15 @@ function applyManualAdjustment(
   }
   if (manualOverride.note) {
     next.manualNote = manualOverride.note
+  }
+  if (manualOverride.hoursConfirmed) {
+    next.hoursConfirmed = true
+    next.hoursConfirmedAt = manualOverride.hoursConfirmedAt
+    next.hoursConfirmedBy = manualOverride.hoursConfirmedBy
+  }
+  if (manualOverride.hoursCorrectedAt) {
+    next.hoursCorrectedAt = manualOverride.hoursCorrectedAt
+    next.hoursCorrectedBy = manualOverride.hoursCorrectedBy
   }
   return next
 }

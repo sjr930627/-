@@ -7,16 +7,12 @@ import { useTrainingScope } from '@/composables/useTrainingScope'
 import { trainingTypeFilterOptions } from '@/constants/trainingOwner'
 import VChart from '@/components/statistics/VChart.vue'
 import {
-  learningStatusMap,
-  learningStatusTagType,
-} from '@/constants/training'
-import {
   getCourseCompletionStats,
   getDepartmentCompletionRates,
   getExamEligibilityLabel,
-  getLearningProgress,
   resolveCourseAssignees,
 } from '@/services/training'
+import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 import type { CourseLearningRecord } from '@/types'
 import type { EChartsOption } from 'echarts'
 
@@ -25,9 +21,11 @@ const route = useRoute()
 const { isPlatform, typeFilter, enterpriseFilter, filterByTrainingType } = useTrainingScope()
 const selectedCourseId = ref<string>('')
 
-const publishedCourses = computed(() =>
+const selectableCourses = computed(() =>
   filterByTrainingType(
-    store.trainingCourses.filter((c) => c.status === 'published' || c.status === 'closed'),
+    store.trainingCourses.filter(
+      (c) => c.status === 'published' || c.status === 'offline' || c.status === 'closed',
+    ),
   ),
 )
 
@@ -35,14 +33,14 @@ watch(
   () => route.query.course,
   (id) => {
     if (typeof id === 'string') selectedCourseId.value = id
-    else if (!selectedCourseId.value && publishedCourses.value.length) {
-      selectedCourseId.value = publishedCourses.value[0].id
+    else if (!selectedCourseId.value && selectableCourses.value.length) {
+      selectedCourseId.value = selectableCourses.value[0].id
     }
   },
   { immediate: true },
 )
 
-watch(publishedCourses, (list) => {
+watch(selectableCourses, (list) => {
   if (list.length === 0) {
     selectedCourseId.value = ''
     return
@@ -55,6 +53,15 @@ watch(publishedCourses, (list) => {
 const selectedCourse = computed(() =>
   store.trainingCourses.find((c) => c.id === selectedCourseId.value),
 )
+
+function enterpriseName(enterpriseId: string | null | undefined) {
+  if (!enterpriseId) return '通用'
+  return (
+    store.enterprises.find((e) => e.id === enterpriseId)?.shortName ||
+    store.enterprises.find((e) => e.id === enterpriseId)?.name ||
+    '-'
+  )
+}
 
 const courseStats = computed(() => {
   const c = selectedCourse.value
@@ -95,19 +102,18 @@ const employeeRows = computed(() => {
         updatedAt: '',
       } as CourseLearningRecord
     }
-    const progress = getLearningProgress(rec, c)
     const exam = c.examId ? store.trainingExams.find((e) => e.id === c.examId) : null
     const examLabel = exam
       ? getExamEligibilityLabel(rec, c, rec.examPassed, rec.examScore)
       : '-'
+    const empEnterpriseId = resolveEnterpriseIdByEmployee(emp)
     return {
       employeeId: emp.id,
       name: emp.name,
+      phone: emp.phone ?? '-',
+      enterprise: enterpriseName(empEnterpriseId || c.enterpriseId),
       department: dept?.name ?? '-',
-      status: rec.status,
-      statusLabel: learningStatusMap[rec.status],
-      statusTag: learningStatusTagType[rec.status],
-      progress,
+      courseName: c.name,
       studyMinutes: rec.studyMinutes,
       examLabel,
       completedAt: rec.completedAt?.slice(0, 16).replace('T', ' ') ?? '-',
@@ -116,7 +122,14 @@ const employeeRows = computed(() => {
 })
 
 const incompleteIds = computed(() =>
-  employeeRows.value.filter((r) => r.status !== 'completed').map((r) => r.employeeId),
+  employeeRows.value
+    .filter((r) => {
+      const rec = store.courseLearningRecords.find(
+        (lr) => lr.courseId === selectedCourseId.value && lr.employeeId === r.employeeId,
+      )
+      return rec?.status !== 'completed'
+    })
+    .map((r) => r.employeeId),
 )
 
 async function sendReminder() {
@@ -170,7 +183,7 @@ function exportDetail() {
       </el-select>
       <el-select v-model="selectedCourseId" placeholder="选择课程" style="width: 280px">
         <el-option
-          v-for="c in publishedCourses"
+          v-for="c in selectableCourses"
           :key="c.id"
           :label="`${c.enterpriseId == null ? '[通用]' : '[企业]'} ${c.name}`"
           :value="c.id"
@@ -209,23 +222,16 @@ function exportDetail() {
 
       <h3 class="section-title">灵工学习明细</h3>
       <el-table :data="employeeRows" border stripe>
-        <el-table-column prop="name" label="灵工姓名" width="100" />
-        <el-table-column prop="department" label="所属部门" width="120" />
-        <el-table-column label="学习状态" width="100">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.statusTag">{{ row.statusLabel }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="学习进度" width="120">
-          <template #default="{ row }">
-            <el-progress :percentage="row.progress" :stroke-width="8" />
-          </template>
-        </el-table-column>
+        <el-table-column prop="name" label="姓名" width="100" />
+        <el-table-column prop="phone" label="手机号" width="120" />
+        <el-table-column prop="enterprise" label="企业" width="120" show-overflow-tooltip />
+        <el-table-column prop="department" label="部门" width="120" />
+        <el-table-column prop="courseName" label="课程名称" min-width="140" show-overflow-tooltip />
         <el-table-column label="学习时长" width="100" align="center">
           <template #default="{ row }">{{ row.studyMinutes }} 分钟</template>
         </el-table-column>
-        <el-table-column prop="examLabel" label="考核情况" width="160" />
         <el-table-column prop="completedAt" label="完成时间" min-width="150" />
+        <el-table-column prop="examLabel" label="考核情况" min-width="180" show-overflow-tooltip />
       </el-table>
     </template>
   </div>

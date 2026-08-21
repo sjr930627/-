@@ -11,17 +11,10 @@ const router = useRouter()
 
 const list = computed(() => props.reminders ?? [])
 
-const morningCount = computed(
-  () =>
-    list.value.filter((r) =>
-      ['onboard_today', 'interview_today', 'interview_followup'].includes(r.kind),
-    ).length,
-)
-
 function tagType(item: RecruitmentReminderItem) {
   if (item.kind === 'onboard_today') return 'success'
-  if (item.kind === 'interview_today') return 'danger'
-  if (item.kind === 'interview_followup') return 'warning'
+  if (item.kind === 'interview_today') return 'warning'
+  if (item.kind === 'interview_followup') return 'primary'
   if (item.kind === 'screening') return 'warning'
   if (item.level === 'urgent') return 'danger'
   return 'info'
@@ -35,37 +28,27 @@ function goDefault() {
 <template>
   <section class="wb-card">
     <div class="card-head">
-      <div>
-        <h3 class="card-title">招聘进度提醒</h3>
-        <p class="card-sub">
-          每日早晨 ·
-          {{ morningCount ? `${morningCount} 条今日面试/入职` : '暂无今日安排' }}
-          <template v-if="list.length"> · 共 {{ list.length }} 条</template>
-        </p>
-      </div>
-      <el-button link type="primary" @click="goDefault">
-        查看全部 →
-      </el-button>
+      <h3 class="card-title">招聘进度提醒</h3>
+      <el-button link type="primary" @click="goDefault">查看全部</el-button>
     </div>
 
     <el-empty v-if="!list.length" description="今日暂无面试/入职提醒" :image-size="64" />
 
-    <div v-else class="reminder-list">
+    <div v-else class="reminder-grid">
       <div
-        v-for="item in list"
+        v-for="item in list.slice(0, 6)"
         :key="item.id"
         class="reminder-item"
-        :class="[item.level, item.kind]"
         @click="router.push(item.path)"
       >
-        <el-tag size="small" :type="tagType(item)" effect="light">
+        <el-tag size="small" :type="tagType(item)" effect="light" round>
           {{ item.tag }}
         </el-tag>
         <div class="reminder-body">
           <div class="reminder-title">{{ item.title }}</div>
           <div class="reminder-detail">{{ item.detail }}</div>
         </div>
-        <span class="reminder-action">{{ item.actionLabel }} →</span>
+        <el-icon class="reminder-arrow"><ArrowRight /></el-icon>
       </div>
     </div>
   </section>
@@ -74,17 +57,18 @@ function goDefault() {
 <style scoped>
 .wb-card {
   background: #fff;
-  border-radius: 16px;
-  padding: 20px 22px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 6px 18px rgba(15, 23, 42, 0.04);
+  border: 1px solid #eef2f7;
 }
 
 .card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .card-title {
@@ -92,18 +76,15 @@ function goDefault() {
   font-size: 16px;
   font-weight: 700;
   color: #0f172a;
+  padding-left: 10px;
+  border-left: 3px solid #2563eb;
+  line-height: 1.2;
 }
 
-.card-sub {
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: #94a3b8;
-}
-
-.reminder-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+.reminder-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .reminder-item {
@@ -112,39 +93,15 @@ function goDefault() {
   gap: 10px;
   padding: 12px 14px;
   border-radius: 10px;
+  background: #f8fafc;
   border: 1px solid #f1f5f9;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .reminder-item:hover {
-  background: #f8fafc;
-  border-color: #e2e8f0;
-}
-
-.reminder-item.onboard_today {
-  background: #f6ffed;
-  border-color: #b7eb8f;
-}
-
-.reminder-item.interview_today {
-  background: #fff1f0;
-  border-color: #ffa39e;
-}
-
-.reminder-item.interview_followup {
-  background: #fff7e6;
-  border-color: #ffd591;
-}
-
-.reminder-item.urgent:not(.onboard_today):not(.interview_today):not(.interview_followup) {
-  background: #fff1f0;
-  border-color: #ffa39e;
-}
-
-.reminder-item.important:not(.interview_followup) {
-  background: #fff7e6;
-  border-color: #ffd591;
+  background: #eff6ff;
+  border-color: #dbeafe;
 }
 
 .reminder-body {
@@ -153,24 +110,31 @@ function goDefault() {
 }
 
 .reminder-title {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   color: #0f172a;
-}
-
-.reminder-detail {
-  margin-top: 2px;
-  font-size: 12px;
-  color: #64748b;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.reminder-action {
-  flex-shrink: 0;
+.reminder-detail {
+  margin-top: 2px;
   font-size: 12px;
-  font-weight: 600;
-  color: #3b82f6;
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reminder-arrow {
+  color: #cbd5e1;
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .reminder-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

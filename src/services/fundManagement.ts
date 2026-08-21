@@ -92,6 +92,13 @@ export function formatAccountConfigSummary(account: ProviderFundAccount): string
   return '—'
 }
 
-export function isIncomeTransaction(type: FundTransaction['type']) {
-  return type === 'income' || type === 'transfer_in'
+/** 账户号（支付宝账号 / 银行账号） */
+export function resolveFundAccountNo(account: ProviderFundAccount | undefined): string {
+  if (!account) return '—'
+  if (account.accountType === 'alipay') return account.alipayConfig?.alipayAccount || '—'
+  return account.cmbConfig?.accountNo || '—'
+}
+
+export function isIncomeTransaction(tx: Pick<FundTransaction, 'direction' | 'type'>) {
+  return tx.direction === 'in'
 }

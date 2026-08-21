@@ -1,11 +1,14 @@
 const STORAGE_PREFIX = 'shift-attendance:'
-const DEMO_BRANDING_VERSION = 'sinopec-v12'
+const DEMO_BRANDING_VERSION = 'sinopec-v19'
 
 const DEMO_BRANDING_KEYS = [
+  'enterprises',
   'departments',
   'teams',
   'employees',
   'punches',
+  'assignments',
+  'manualOverrides',
   'attendanceGroups',
   'grabShiftSlots',
   'grabShiftApplications',
@@ -23,12 +26,15 @@ const DEMO_BRANDING_KEYS = [
   'workerAgreements',
   'trainingCourses',
   'trainingMaterials',
+  'trainingMaterialCategories',
   'trainingExams',
   'examQuestions',
   'examAttempts',
   'courseLearningRecords',
   'insurancePolicies',
   'billingRules',
+  'settlementBills',
+  'serviceContracts',
 ]
 
 /** 演示数据品牌升级：刷新本地缓存以加载最新 seed */
@@ -41,6 +47,141 @@ export function ensureDemoBrandingVersion() {
   localStorage.removeItem(`${STORAGE_PREFIX}courseLearningRecordsVersion`)
   localStorage.removeItem(`${STORAGE_PREFIX}examQuestionsVersion`)
   localStorage.setItem(versionKey, DEMO_BRANDING_VERSION)
+}
+
+/** 补齐开票抬头 id / 默认标记（兼容旧本地数据） */
+export function ensureEnterpriseInvoiceProfiles(
+  profiles: import('@/types').EnterpriseInvoiceProfile[],
+  seed: import('@/types').EnterpriseInvoiceProfile[],
+): import('@/types').EnterpriseInvoiceProfile[] {
+  const result: import('@/types').EnterpriseInvoiceProfile[] = profiles.map((profile, index) => ({
+    ...profile,
+    id: profile.id || `eip_legacy_${profile.enterpriseId}_${index}`,
+  }))
+
+  // 每个企业至少保留一个默认抬头
+  const byEnterprise = new Map<string, import('@/types').EnterpriseInvoiceProfile[]>()
+  for (const profile of result) {
+    const list = byEnterprise.get(profile.enterpriseId) ?? []
+    list.push(profile)
+    byEnterprise.set(profile.enterpriseId, list)
+  }
+  for (const list of byEnterprise.values()) {
+    if (!list.some((item) => item.isDefault)) {
+      list[0].isDefault = true
+    }
+  }
+
+  for (const s of seed) {
+    if (result.some((item) => item.id === s.id)) continue
+    // 同企业同税号已存在则跳过
+    if (result.some((item) => item.enterpriseId === s.enterpriseId && item.taxNo === s.taxNo)) {
+      continue
+    }
+    result.push({ ...s })
+  }
+  return result
+}
+
+/** 补齐账单部门/付款企业字段（兼容旧本地数据） */
+export function ensureSettlementBills(
+  bills: import('@/types').SettlementBill[],
+): import('@/types').SettlementBill[] {
+  return bills.map((bill) => {
+    const departmentScope = bill.departmentScope ?? 'all'
+    return {
+      ...bill,
+      departmentScope,
+      departmentName: bill.departmentName?.trim() || '全公司',
+      departmentId: departmentScope === 'department' ? bill.departmentId : undefined,
+      payerEnterpriseName: bill.payerEnterpriseName,
+      payerCreditCode: bill.payerCreditCode,
+      serviceFeeWaiver: bill.serviceFeeWaiver ?? 0,
+    }
+  })
+}
+
+/** 兼容旧流水类型，并补齐演示失败流水 */
+export function ensureFundTransactions(
+  transactions: import('@/types').FundTransaction[],
+  seed: import('@/types').FundTransaction[],
+): import('@/types').FundTransaction[] {
+  const normalize = (raw: Record<string, unknown>): import('@/types').FundTransaction => {
+    const legacyType = String(raw.type ?? '')
+    let type: import('@/types').FundTransactionType = 'transfer'
+    let direction: import('@/types').FundTransactionDirection =
+      (raw.direction as import('@/types').FundTransactionDirection) ?? 'out'
+
+    if (legacyType === 'income') {
+      type = 'income'
+      direction = (raw.direction as import('@/types').FundTransactionDirection) ?? 'in'
+    } else if (legacyType === 'payout') {
+      type = 'payout'
+      direction = (raw.direction as import('@/types').FundTransactionDirection) ?? 'out'
+    } else if (legacyType === 'transfer') {
+      type = 'transfer'
+      direction = (raw.direction as import('@/types').FundTransactionDirection) ?? 'out'
+    } else if (legacyType === 'transfer_in') {
+      type = 'transfer'
+      direction = 'in'
+    } else if (
+      legacyType === 'transfer_out' ||
+      legacyType === 'expense' ||
+      legacyType === 'adjustment'
+    ) {
+      type = 'transfer'
+      direction = 'out'
+    }
+
+    return {
+      id: String(raw.id ?? ''),
+      accountId: String(raw.accountId ?? ''),
+      providerId: String(raw.providerId ?? ''),
+      type,
+      direction,
+      amount: Number(raw.amount ?? 0),
+      balanceAfter: Number(raw.balanceAfter ?? 0),
+      counterparty: raw.counterparty as string | undefined,
+      counterpartyAccount: raw.counterpartyAccount as string | undefined,
+      relatedOrderNo: raw.relatedOrderNo as string | undefined,
+      remark: String(raw.remark ?? ''),
+      status: (raw.status as import('@/types').FundTransactionStatus) ?? 'success',
+      failReason: raw.failReason as string | undefined,
+      createdAt: String(raw.createdAt ?? ''),
+    }
+  }
+
+  const result = transactions.map((tx) => normalize(tx as unknown as Record<string, unknown>))
+  for (const s of seed) {
+    if (result.some((tx) => tx.id === s.id)) continue
+    result.push({ ...s })
+  }
+  return result
+}
+
+/** 补齐单笔班次/任务待结算明细，并清理旧的周期汇总待结算单 */
+export function ensureSettlementManageOrders(
+  orders: import('@/types').SettlementManageOrder[],
+  seed: import('@/types').SettlementManageOrder[],
+): import('@/types').SettlementManageOrder[] {
+  const legacyAggregatedPendingIds = new Set([
+    'smo_h_001',
+    'smo_h_002',
+    'smo_t_001',
+    'smo_t_003',
+  ])
+  const result = orders.filter((order) => {
+    if (!legacyAggregatedPendingIds.has(order.id)) return true
+    return !order.workerLines.every((line) => line.status === 'pending_settlement')
+  })
+  for (const s of seed) {
+    if (result.some((order) => order.id === s.id)) continue
+    result.unshift({
+      ...s,
+      workerLines: s.workerLines.map((line) => ({ ...line })),
+    })
+  }
+  return result
 }
 
 export function ensureWorkerIncomeSeed(
@@ -76,8 +217,18 @@ export function ensureWorkerIncomeSeed(
       const localMissingCalcType = current.items?.some(
         (i) => !('calcType' in i) || !(i as { calcType?: string }).calcType,
       )
-      if (seedHasItems && (!current.items?.length || localMissingCalcType)) {
+      const itemCountChanged = seedHasItems && (current.items?.length ?? 0) !== s.items!.length
+      const hasAggregatedItem = current.items?.some(
+        (i) =>
+          (i.calcType === 'hourly' && (i.quantity ?? 0) > 24) ||
+          (i.calcType === 'task' && (i.quantity ?? 0) > 1) ||
+          /汇总/.test(i.title),
+      )
+      if (seedHasItems && (!current.items?.length || localMissingCalcType || itemCountChanged || hasAggregatedItem)) {
         patch.items = [...s.items!]
+        patch.amount = s.amount
+        if (s.tax != null) patch.tax = s.tax
+        if (s.netAmount != null) patch.netAmount = s.netAmount
       }
       if (current.status === 'pending_settlement' && s.status === 'pending_settlement') {
         patch.amount = s.amount
@@ -86,7 +237,7 @@ export function ensureWorkerIncomeSeed(
         patch.claimBatchId = s.claimBatchId
       }
       if (Object.keys(patch).length > 0) result[idx] = { ...current, ...patch }
-    } else if (s.status === 'pending_settlement') {
+    } else {
       result.unshift({ ...s, items: s.items ? [...s.items] : undefined })
     }
   }

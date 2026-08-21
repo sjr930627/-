@@ -276,7 +276,7 @@ function handleBlacklist() {
           <span class="info-value">{{ attendanceGroup?.name ?? '—' }}</span>
         </div>
         <div class="info-item">
-          <span class="info-label">入职日期</span>
+          <span class="info-label">入驻日期</span>
           <span class="info-value">{{ employee.hireDate }}</span>
         </div>
         <div class="info-item">

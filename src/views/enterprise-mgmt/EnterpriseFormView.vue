@@ -1,19 +1,26 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, type UploadFile } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
   defaultEnterpriseModules,
   enterpriseModuleMap,
   enterpriseStatusMap,
+  formatEnterpriseInvoiceCategoryLabel,
   formatEnterpriseModules,
   generateRandomPassword,
   getEnterpriseOwnerIds,
+  normalizeEnterpriseInvoiceCategories,
   normalizeEnterpriseModules,
 } from '@/constants/enterprise'
-import type { EnterpriseServiceModule } from '@/types'
+import type { EnterpriseInvoiceCategoryItem, EnterpriseServiceModule, InvoiceType } from '@/types'
 import EnterpriseOwnerPicker from '@/components/enterprise/EnterpriseOwnerPicker.vue'
+
+const invoiceTypeOptions: { value: InvoiceType; label: string }[] = [
+  { value: 'electronic_special', label: '电子专票' },
+  { value: 'electronic_normal', label: '电子普票' },
+]
 
 const props = withDefaults(
   defineProps<{
@@ -57,16 +64,16 @@ const form = ref({
   contactPerson: '',
   contactPhone: '',
   address: '',
+  logoUrl: '',
+  sceneImageUrls: [] as string[],
   adminName: '',
   adminPhone: '',
   adminRole: '企业超级管理员',
   manualPassword: '',
   serviceModules: [...defaultEnterpriseModules] as EnterpriseServiceModule[],
-  invoiceCategories: [] as string[],
+  invoiceCategories: [] as EnterpriseInvoiceCategoryItem[],
   enterpriseOwnerIds: [] as string[],
 })
-
-const newCategoryInput = ref('')
 
 function loadForm() {
   if ((isEdit.value || isDetail.value) && existing.value) {
@@ -78,12 +85,14 @@ function loadForm() {
       contactPerson: e.contactPerson,
       contactPhone: e.contactPhone,
       address: e.address ?? '',
+      logoUrl: e.logoUrl ?? '',
+      sceneImageUrls: [...(e.sceneImageUrls ?? [])],
       adminName: e.adminAccount?.name ?? '',
       adminPhone: e.adminAccount?.phone ?? '',
       adminRole: e.adminAccount?.role ?? '企业超级管理员',
       manualPassword: '',
       serviceModules: normalizeEnterpriseModules([...e.serviceModules]),
-      invoiceCategories: [...(e.invoiceCategories ?? [])],
+      invoiceCategories: normalizeEnterpriseInvoiceCategories(e.invoiceCategories),
       enterpriseOwnerIds: [...getEnterpriseOwnerIds(e)],
     }
     createAdmin.value = Boolean(e.adminAccount)
@@ -113,26 +122,65 @@ function hasModule(key: EnterpriseServiceModule) {
 }
 
 function addCategory() {
-  const value = newCategoryInput.value.trim()
-  if (!value) {
-    ElMessage.warning('请输入发票类目')
-    return
-  }
-  if (form.value.invoiceCategories.includes(value)) {
-    ElMessage.warning('该类目已存在')
-    return
-  }
-  form.value.invoiceCategories.push(value)
-  newCategoryInput.value = ''
+  form.value.invoiceCategories.push({
+    name: '',
+    invoiceType: 'electronic_normal',
+  })
 }
 
 function removeCategory(index: number) {
   form.value.invoiceCategories.splice(index, 1)
 }
 
+function readImageFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('请上传图片文件'))
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      reject(new Error('图片大小不能超过 5MB'))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('图片读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function onLogoChange(uploadFile: UploadFile) {
+  const raw = uploadFile.raw
+  if (!raw) return
+  try {
+    form.value.logoUrl = await readImageFile(raw)
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '上传失败')
+  }
+}
+
+async function onSceneChange(uploadFile: UploadFile) {
+  const raw = uploadFile.raw
+  if (!raw) return
+  try {
+    const url = await readImageFile(raw)
+    form.value.sceneImageUrls.push(url)
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '上传失败')
+  }
+}
+
+function removeScene(index: number) {
+  form.value.sceneImageUrls.splice(index, 1)
+}
+
 function validate() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请输入企业名称')
+    return false
+  }
+  if (!form.value.logoUrl.trim()) {
+    ElMessage.warning('请上传企业 Logo')
     return false
   }
   if (!form.value.creditCode.trim() || form.value.creditCode.trim().length !== 18) {
@@ -147,12 +195,21 @@ function validate() {
     ElMessage.warning('至少开通两个模块')
     return false
   }
-  const categories = form.value.invoiceCategories.map((item) => item.trim()).filter(Boolean)
+  const categories = form.value.invoiceCategories
+    .map((item) => ({
+      name: item.name.trim(),
+      invoiceType: item.invoiceType,
+    }))
+    .filter((item) => item.name)
   if (!categories.length) {
     ElMessage.warning('请至少维护一个可开发票类目')
     return false
   }
-  if (new Set(categories).size !== categories.length) {
+  if (categories.some((item) => !item.invoiceType)) {
+    ElMessage.warning('请为每个类目选择开票类型')
+    return false
+  }
+  if (new Set(categories.map((item) => item.name)).size !== categories.length) {
     ElMessage.warning('发票类目不能重复')
     return false
   }
@@ -188,8 +245,15 @@ function buildPayload() {
     contactPerson: form.value.contactPerson.trim(),
     contactPhone: form.value.contactPhone.trim(),
     address: form.value.address.trim() || undefined,
+    logoUrl: form.value.logoUrl,
+    sceneImageUrls: form.value.sceneImageUrls.length ? [...form.value.sceneImageUrls] : undefined,
     serviceModules: normalizeEnterpriseModules(form.value.serviceModules),
-    invoiceCategories: form.value.invoiceCategories.map((item) => item.trim()).filter(Boolean),
+    invoiceCategories: form.value.invoiceCategories
+      .map((item) => ({
+        name: item.name.trim(),
+        invoiceType: item.invoiceType,
+      }))
+      .filter((item) => item.name),
     enterpriseOwnerIds: [...form.value.enterpriseOwnerIds],
     adminAccount,
   }
@@ -317,6 +381,73 @@ function goEdit() {
             :disabled="isDetail || readonly"
             placeholder="请输入联系地址"
           />
+        </el-form-item>
+
+        <el-form-item label="企业 Logo" required>
+          <div class="media-block">
+            <div class="media-actions">
+              <el-upload
+                v-if="!isDetail && !readonly"
+                :show-file-list="false"
+                :auto-upload="false"
+                accept="image/*"
+                @change="onLogoChange"
+              >
+                <el-button plain>{{ form.logoUrl ? '重新上传' : '上传 Logo' }}</el-button>
+              </el-upload>
+              <el-button
+                v-if="form.logoUrl && !isDetail && !readonly"
+                link
+                type="danger"
+                @click="form.logoUrl = ''"
+              >
+                清除
+              </el-button>
+            </div>
+            <div class="field-hint">必填，建议正方形 PNG/JPG，不超过 5MB</div>
+            <img v-if="form.logoUrl" :src="form.logoUrl" alt="企业 Logo" class="logo-preview" />
+            <el-empty v-else-if="isDetail || readonly" description="未上传 Logo" :image-size="48" />
+          </div>
+        </el-form-item>
+
+        <el-form-item label="场景图">
+          <div class="media-block">
+            <div class="media-actions">
+              <el-upload
+                v-if="!isDetail && !readonly"
+                :show-file-list="false"
+                :auto-upload="false"
+                accept="image/*"
+                multiple
+                @change="onSceneChange"
+              >
+                <el-button plain>上传场景图</el-button>
+              </el-upload>
+            </div>
+            <div class="field-hint">非必填，可上传多张门店/作业等场景图，单张不超过 5MB</div>
+            <div v-if="form.sceneImageUrls.length" class="scene-grid">
+              <div
+                v-for="(url, index) in form.sceneImageUrls"
+                :key="`${index}-${url.slice(0, 24)}`"
+                class="scene-item"
+              >
+                <img :src="url" alt="场景图" />
+                <button
+                  v-if="!isDetail && !readonly"
+                  type="button"
+                  class="scene-remove"
+                  @click="removeScene(index)"
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+            <el-empty
+              v-else-if="isDetail || readonly"
+              description="未上传场景图"
+              :image-size="48"
+            />
+          </div>
         </el-form-item>
 
         <el-row v-if="existing" :gutter="16">
@@ -487,7 +618,7 @@ function goEdit() {
         <div class="section-icon section-icon--orange">票</div>
         <div>
           <h3>可开发票类目</h3>
-          <p>维护该企业可申请开具的发票类目，企业端开票申请时从中选择</p>
+          <p>每个类目需绑定开票类型（电子专票 / 电子普票），企业端开票申请时按类目自动带出类型</p>
         </div>
       </div>
 
@@ -499,22 +630,30 @@ function goEdit() {
         <template v-if="isDetail || readonly">
           <el-tag
             v-for="(item, index) in form.invoiceCategories"
-            :key="`${item}-${index}`"
+            :key="`${item.name}-${item.invoiceType}-${index}`"
             class="category-tag"
           >
-            {{ item }}
+            {{ formatEnterpriseInvoiceCategoryLabel(item) }}
           </el-tag>
         </template>
         <template v-else>
           <div
-            v-for="(_, index) in form.invoiceCategories"
+            v-for="(item, index) in form.invoiceCategories"
             :key="index"
             class="category-row"
           >
             <el-input
-              v-model="form.invoiceCategories[index]"
-              placeholder="如：生活服务*现代服务"
+              v-model="item.name"
+              placeholder="类目名称，如：生活服务*现代服务"
             />
+            <el-select v-model="item.invoiceType" placeholder="开票类型" style="width: 140px">
+              <el-option
+                v-for="opt in invoiceTypeOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
             <el-button type="danger" plain @click="removeCategory(index)">
               删除
             </el-button>
@@ -524,16 +663,11 @@ function goEdit() {
       <el-empty v-else description="暂未维护发票类目" :image-size="64" />
 
       <div v-if="!isDetail && !readonly" class="category-add">
-        <el-input
-          v-model="newCategoryInput"
-          placeholder="输入类目名称，如：生活服务*现代服务"
-          @keyup.enter="addCategory"
-        />
         <el-button type="primary" @click="addCategory">新增类目</el-button>
       </div>
 
-      <div v-if="isDetail && existing?.invoiceCategories?.length" class="modules-summary">
-        共 {{ existing.invoiceCategories.length }} 个类目
+      <div v-if="isDetail && form.invoiceCategories.length" class="modules-summary">
+        共 {{ form.invoiceCategories.length }} 个类目
       </div>
     </section>
   </div>
@@ -734,7 +868,7 @@ function goEdit() {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-width: 720px;
+  max-width: 860px;
 }
 
 .category-list--readonly {
@@ -759,16 +893,67 @@ function goEdit() {
 
 .category-row .el-input {
   flex: 1;
+  min-width: 0;
 }
 
 .category-add {
-  display: flex;
-  gap: 10px;
   margin-top: 14px;
-  max-width: 720px;
 }
 
-.category-add .el-input {
-  flex: 1;
+.media-block {
+  width: 100%;
+}
+
+.media-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logo-preview {
+  margin-top: 10px;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid #ebeef5;
+  background: #f5f7fa;
+}
+
+.scene-grid {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.scene-item {
+  position: relative;
+  width: 140px;
+  height: 88px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid #ebeef5;
+  background: #f5f7fa;
+}
+
+.scene-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.scene-remove {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
 }
 </style>

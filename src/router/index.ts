@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import PlatformLayout from '@/layouts/PlatformLayout.vue'
 import EnterpriseLayout from '@/layouts/EnterpriseLayout.vue'
-import { isMiniAppAuthed, isMiniAppOnboardingComplete } from '@/composables/useMiniAppAuth'
+import { isMiniAppAuthed } from '@/composables/useMiniAppAuth'
 import { isEnterpriseMiniAuthed } from '@/composables/useEnterpriseMiniAuth'
 
 const sharedOpsRoutes: RouteRecordRaw[] = [
@@ -48,6 +48,12 @@ const sharedOpsRoutes: RouteRecordRaw[] = [
     meta: { title: '考核管理', group: '培训与考核' },
   },
   {
+    path: 'training/exams/:examId/questions',
+    name: 'TrainingExamQuestions',
+    component: () => import('@/views/training/ExamQuestionManageView.vue'),
+    meta: { title: '题目管理', group: '培训与考核', hidden: true },
+  },
+  {
     path: 'training/progress',
     name: 'TrainingProgress',
     component: () => import('@/views/training/LearningProgressView.vue'),
@@ -64,73 +70,131 @@ const sharedOpsRoutes: RouteRecordRaw[] = [
     path: 'departments',
     name: 'Departments',
     component: () => import('@/views/department/DepartmentList.vue'),
-    meta: { title: '部门管理', group: '人员考勤管理' },
+    meta: { title: '部门管理', group: '排班管理' },
   },
   {
     path: 'employees',
     name: 'Employees',
     component: () => import('@/views/employee/EmployeeList.vue'),
-    meta: { title: '人员管理', group: '人员考勤管理' },
+    meta: { title: '人员管理', group: '人员管理' },
   },
   {
     path: 'employees/:id',
     name: 'EmployeeDetail',
     component: () => import('@/views/employee/EmployeeDetailView.vue'),
-    meta: { title: '查看详情', group: '人员考勤管理' },
+    meta: { title: '查看详情', group: '人员管理' },
   },
   {
     path: 'attendance-groups',
     name: 'AttendanceGroups',
     component: () => import('@/views/attendance/AttendanceGroupList.vue'),
-    meta: { title: '考勤规则', group: '人员考勤管理' },
+    meta: { title: '考勤组管理', group: '人员管理' },
   },
   {
     path: 'attendance-groups/create',
     name: 'AttendanceGroupCreate',
     component: () => import('@/views/attendance/AttendanceGroupForm.vue'),
-    meta: { title: '新建考勤组', group: '人员考勤管理' },
+    meta: { title: '新建考勤组', group: '人员管理' },
   },
   {
     path: 'attendance-groups/:id/edit',
     name: 'AttendanceGroupEdit',
     component: () => import('@/views/attendance/AttendanceGroupForm.vue'),
-    meta: { title: '编辑考勤组', group: '人员考勤管理' },
+    meta: { title: '编辑考勤组', group: '人员管理' },
+  },
+  {
+    path: 'shift-demand-manage',
+    name: 'ShiftDemandManage',
+    component: () => import('@/views/schedule/ShiftDemandManageView.vue'),
+    meta: { title: '需求总览', group: '排班管理' },
   },
   {
     path: 'schedule-manage',
     name: 'ScheduleManage',
     component: () => import('@/views/schedule/ScheduleManageView.vue'),
-    meta: { title: '排班管理', group: '人员考勤管理' },
+    meta: { title: '排班管理', group: '排班管理' },
+  },
+  {
+    path: 'grab-personnel-pool',
+    name: 'GrabPersonnelPool',
+    component: () => import('@/views/schedule/GrabPersonnelPoolView.vue'),
+    meta: { title: '人员池', group: '抢班管理' },
+  },
+  {
+    path: 'grab-interview',
+    name: 'GrabInterview',
+    component: () => import('@/views/schedule/GrabInterviewManageView.vue'),
+    meta: { title: '抢班面试管理', group: '抢班管理' },
   },
   {
     path: 'grab-shifts',
     name: 'GrabShifts',
     component: () => import('@/views/schedule/GrabShiftManageView.vue'),
-    meta: { title: '抢班管理', group: '人员考勤管理' },
+    meta: { title: '抢班管理', group: '抢班管理' },
+  },
+  {
+    path: 'grab-shift-history',
+    name: 'GrabShiftHistory',
+    component: () => import('@/views/schedule/GrabShiftHistoryView.vue'),
+    meta: { title: '历史抢班记录', group: '抢班管理' },
   },
   {
     path: 'attendance-data',
     name: 'AttendanceData',
     component: () => import('@/views/attendance/AttendanceDataView.vue'),
-    meta: { title: '考勤记录', group: '人员考勤管理' },
+    meta: { title: '考勤数据', group: '排班管理', assignmentSource: 'schedule' },
   },
   {
     path: 'attendance-exceptions',
     name: 'AttendanceExceptions',
     component: () => import('@/views/attendance/ExceptionList.vue'),
-    meta: { title: '考勤审批处理', group: '人员考勤管理' },
+    meta: { title: '考勤审批', group: '排班管理', assignmentSource: 'schedule' },
+  },
+  {
+    path: 'cancel-shift-records',
+    name: 'CancelShiftRecords',
+    component: () => import('@/views/attendance/CancelShiftRecordsView.vue'),
+    meta: {
+      title: '取消班次记录',
+      group: '排班管理',
+      assignmentSource: 'schedule',
+      hidden: true,
+    },
+  },
+  {
+    path: 'grab-attendance-data',
+    name: 'GrabAttendanceData',
+    component: () => import('@/views/attendance/AttendanceDataView.vue'),
+    meta: { title: '考勤数据', group: '抢班管理', assignmentSource: 'grab' },
+  },
+  {
+    path: 'grab-attendance-exceptions',
+    name: 'GrabAttendanceExceptions',
+    component: () => import('@/views/attendance/ExceptionList.vue'),
+    meta: { title: '考勤审批记录', group: '抢班管理', assignmentSource: 'grab' },
+  },
+  {
+    path: 'grab-cancel-shift-records',
+    name: 'GrabCancelShiftRecords',
+    component: () => import('@/views/attendance/CancelShiftRecordsView.vue'),
+    meta: {
+      title: '取消班次记录',
+      group: '抢班管理',
+      assignmentSource: 'grab',
+      hidden: true,
+    },
   },
   {
     path: 'attendance-alerts/:id',
     name: 'AttendanceAlertHandle',
     component: () => import('@/views/attendance/AttendanceExceptionHandleView.vue'),
-    meta: { title: '考勤异常处理', group: '人员考勤管理', hidden: true },
+    meta: { title: '考勤异常处理', group: '排班管理', hidden: true },
   },
   {
     path: 'insurance',
     name: 'InsuranceManage',
     component: () => import('@/views/insurance/InsuranceManageView.vue'),
-    meta: { title: '保险管理', group: '人员考勤管理' },
+    meta: { title: '保险管理', group: '人员管理' },
   },
   {
     path: 'approvals',
@@ -211,6 +275,12 @@ const platformChildren: RouteRecordRaw[] = [
     meta: { title: '编辑企业', group: '企业管理', hidden: true, portal: 'platform' },
   },
   {
+    path: 'enterprises/:id/authorize',
+    name: 'EnterpriseAuthorize',
+    component: () => import('@/views/enterprise-mgmt/EnterpriseAuthorizeView.vue'),
+    meta: { title: '企业授权', group: '企业管理', hidden: true, portal: 'platform' },
+  },
+  {
     path: 'enterprises/:id',
     name: 'EnterpriseDetail',
     component: () => import('@/views/enterprise-mgmt/EnterpriseDetailView.vue'),
@@ -238,19 +308,31 @@ const platformChildren: RouteRecordRaw[] = [
     path: 'contracts/create',
     name: 'ContractCreate',
     component: () => import('@/views/platform/ContractFormView.vue'),
-    meta: { title: '新增合约', group: '企业管理', hidden: true, portal: 'platform' },
+    meta: { title: '新增合同', group: '企业管理', hidden: true, portal: 'platform' },
   },
   {
     path: 'contracts/:id/edit',
     name: 'ContractEdit',
     component: () => import('@/views/platform/ContractFormView.vue'),
-    meta: { title: '编辑合约', group: '企业管理', hidden: true, portal: 'platform' },
+    meta: { title: '编辑合同', group: '企业管理', hidden: true, portal: 'platform' },
+  },
+  {
+    path: 'contracts/:id/renew',
+    name: 'ContractRenew',
+    component: () => import('@/views/platform/ContractFormView.vue'),
+    meta: { title: '续约合同', group: '企业管理', hidden: true, portal: 'platform' },
   },
   {
     path: 'contracts/:id',
     name: 'ContractDetail',
     component: () => import('@/views/platform/ContractDetailView.vue'),
-    meta: { title: '合约详情', group: '企业管理', hidden: true, portal: 'platform' },
+    meta: { title: '合同详情', group: '企业管理', hidden: true, portal: 'platform' },
+  },
+  {
+    path: 'worker-agreements',
+    name: 'WorkerAgreements',
+    component: () => import('@/views/personnel/WorkerAgreementManageView.vue'),
+    meta: { title: '合同管理', group: '人员管理', portal: 'platform' },
   },
   {
     path: 'task-workflows',
@@ -271,10 +353,14 @@ const platformChildren: RouteRecordRaw[] = [
     meta: { title: '编辑工作流', group: '任务管理', hidden: true, portal: 'platform' },
   },
   {
+    path: 'task-approval',
+    name: 'TaskApproval',
+    component: () => import('@/views/task/TaskApproval.vue'),
+    meta: { title: '任务审批', group: '任务管理', portal: 'platform' },
+  },
+  {
     path: 'task-type-approval',
-    name: 'TaskTypeApproval',
-    component: () => import('@/views/task/TaskTypeApproval.vue'),
-    meta: { title: '任务类型审批', group: '任务管理', portal: 'platform' },
+    redirect: '/task-approval',
   },
   {
     path: 'task-types/:id',
@@ -322,21 +408,39 @@ const platformChildren: RouteRecordRaw[] = [
     path: 'employees',
     name: 'PlatformEmployees',
     component: () => import('@/views/platform/EnterpriseWorkforceListView.vue'),
-    meta: { title: '人员管理', group: '人员考勤管理', portal: 'platform' },
+    meta: { title: '人员管理', group: '人员管理', portal: 'platform' },
   },
   {
     path: 'employees/org/:enterpriseId',
     name: 'PlatformEnterpriseOrg',
     component: () => import('@/views/employee/EmployeeList.vue'),
-    meta: { title: '组织架构', group: '人员考勤管理', hidden: true, portal: 'platform' },
+    meta: { title: '组织架构', group: '人员管理', hidden: true, portal: 'platform' },
   },
   {
     path: 'employees/org/:enterpriseId/:id',
     name: 'PlatformEmployeeDetail',
     component: () => import('@/views/employee/EmployeeDetailView.vue'),
-    meta: { title: '查看详情', group: '人员考勤管理', hidden: true, portal: 'platform' },
+    meta: { title: '查看详情', group: '人员管理', hidden: true, portal: 'platform' },
   },
   ...platformSharedOpsRoutes.map((r) => ({ ...r, meta: { ...r.meta, portal: 'platform' } })),
+  {
+    path: 'system/reminder-rules',
+    name: 'ReminderRules',
+    component: () => import('@/views/system/ReminderRuleListView.vue'),
+    meta: { title: '提醒规则配置', group: '系统设置', portal: 'platform' },
+  },
+  {
+    path: 'system/reminder-rules/create',
+    name: 'ReminderRuleCreate',
+    component: () => import('@/views/system/ReminderRuleFormView.vue'),
+    meta: { title: '新建提醒规则', group: '系统设置', hidden: true, portal: 'platform' },
+  },
+  {
+    path: 'system/reminder-rules/:id/edit',
+    name: 'ReminderRuleEdit',
+    component: () => import('@/views/system/ReminderRuleFormView.vue'),
+    meta: { title: '编辑提醒规则', group: '系统设置', hidden: true, portal: 'platform' },
+  },
   ...platformCommonTrainingRedirects,
   {
     path: 'payroll/bills',
@@ -360,7 +464,19 @@ const platformChildren: RouteRecordRaw[] = [
     path: 'payroll/settlement',
     name: 'PayrollSettlement',
     component: () => import('@/views/payroll/SettlementOverviewView.vue'),
-    meta: { title: '结算管理', group: '财税管理', portal: 'platform' },
+    meta: { title: '发薪管理', group: '财税管理', portal: 'platform' },
+  },
+  {
+    path: 'payroll/settlement/import',
+    name: 'PayrollImport',
+    component: () => import('@/views/payroll/PayrollImportView.vue'),
+    meta: { title: '导入发薪', group: '财税管理', hidden: true, portal: 'platform' },
+  },
+  {
+    path: 'payroll/settlement/import/confirm',
+    name: 'PayrollImportConfirm',
+    component: () => import('@/views/payroll/PayrollImportConfirmView.vue'),
+    meta: { title: '确认导入发薪', group: '财税管理', hidden: true, portal: 'platform' },
   },
   {
     path: 'payroll/settlement/slip/:id',
@@ -439,9 +555,7 @@ const enterpriseChildren: RouteRecordRaw[] = [
   },
   {
     path: 'task/types',
-    name: 'EnterpriseTaskTypes',
-    component: () => import('@/views/enterprise/TaskTypeList.vue'),
-    meta: { title: '任务类型管理', group: '任务管理', portal: 'enterprise' },
+    redirect: '/enterprise/task/publish',
   },
   {
     path: 'task/publish',
@@ -464,6 +578,12 @@ const enterpriseChildren: RouteRecordRaw[] = [
     name: 'EnterpriseTaskInstanceDetail',
     component: () => import('@/views/task/TaskInstanceDetailView.vue'),
     meta: { title: '认领详情', group: '任务管理', hidden: true, portal: 'enterprise' },
+  },
+  {
+    path: 'contracts',
+    name: 'EnterpriseContracts',
+    component: () => import('@/views/enterprise-mgmt/ContractList.vue'),
+    meta: { title: '合同管理', group: '人员管理', portal: 'enterprise' },
   },
   {
     path: 'partnership',
@@ -821,17 +941,23 @@ const router = createRouter({
           meta: { title: '人脸识别', miniTab: false, miniOnboarding: true },
         },
         {
+          path: 'part-time-pref',
+          name: 'MiniPartTimePreference',
+          component: () => import('@/views/miniapp/MiniPartTimePreferenceView.vue'),
+          meta: { title: '兼职偏好', miniTab: false },
+        },
+        {
           path: 'credit',
           name: 'MiniCredit',
           component: () => import('@/views/miniapp/MiniCreditView.vue'),
-          meta: { title: '等级信用', miniTab: false },
+          meta: { title: '等级信用', miniTab: false, hidden: true },
         },
       ],
     },
     {
       path: '/enterprise-miniapp',
       component: () => import('@/layouts/EnterpriseMiniAppLayout.vue'),
-      redirect: '/enterprise-miniapp/workbench',
+      redirect: '/enterprise-miniapp/recruitment',
       children: [
         {
           path: 'login',
@@ -841,21 +967,31 @@ const router = createRouter({
         },
         {
           path: 'workbench',
-          name: 'EntMiniWorkbench',
-          component: () => import('@/views/enterprise-miniapp/EntMiniWorkbenchView.vue'),
-          meta: { title: '工作台', entMiniTab: true },
+          redirect: '/enterprise-miniapp/recruitment',
         },
         {
           path: 'recruitment',
           name: 'EntMiniRecruitment',
           component: () => import('@/views/enterprise-miniapp/EntMiniRecruitmentView.vue'),
-          meta: { title: '招聘管理', entMiniTab: true },
+          meta: { title: '招聘', entMiniTab: true },
         },
         {
           path: 'recruitment/publish',
           name: 'EntMiniPublish',
           component: () => import('@/views/enterprise-miniapp/EntMiniPublishView.vue'),
           meta: { title: '发布招聘', entMiniTab: false },
+        },
+        {
+          path: 'recruitment/jobs',
+          name: 'EntMiniJobRequirements',
+          component: () => import('@/views/enterprise-miniapp/EntMiniJobRequirementsView.vue'),
+          meta: { title: '岗位需求', entMiniTab: false },
+        },
+        {
+          path: 'recruitment/leads',
+          name: 'EntMiniRecruitLeads',
+          component: () => import('@/views/enterprise-miniapp/EntMiniRecruitLeadsView.vue'),
+          meta: { title: '招聘线索', entMiniTab: false },
         },
         {
           path: 'recruitment/progress',
@@ -876,28 +1012,98 @@ const router = createRouter({
           meta: { title: '资质审核', entMiniTab: false },
         },
         {
+          path: 'attendance',
+          name: 'EntMiniAttendance',
+          component: () => import('@/views/enterprise-miniapp/EntMiniAttendanceView.vue'),
+          meta: { title: '出勤', entMiniTab: true },
+        },
+        {
+          path: 'today-schedule',
+          name: 'EntMiniTodaySchedule',
+          component: () => import('@/views/enterprise-miniapp/EntMiniTodayScheduleView.vue'),
+          meta: { title: '今日排班', entMiniTab: false },
+        },
+        {
+          path: 'tasks',
+          name: 'EntMiniTasks',
+          component: () => import('@/views/enterprise-miniapp/EntMiniTasksView.vue'),
+          meta: { title: '任务管理', entMiniTab: true },
+        },
+        {
+          path: 'stats',
+          name: 'EntMiniStats',
+          component: () => import('@/views/enterprise-miniapp/EntMiniStatsView.vue'),
+          meta: { title: '统计', entMiniTab: true },
+        },
+        {
+          path: 'messages',
+          name: 'EntMiniMessages',
+          component: () => import('@/views/enterprise-miniapp/EntMiniMessagesView.vue'),
+          meta: { title: '消息', entMiniTab: false },
+        },
+        {
           path: 'schedule',
           name: 'EntMiniSchedule',
           component: () => import('@/views/enterprise-miniapp/EntMiniScheduleView.vue'),
-          meta: { title: '排班管理', entMiniTab: true },
-        },
-        {
-          path: 'grab',
-          name: 'EntMiniGrab',
-          component: () => import('@/views/enterprise-miniapp/EntMiniGrabShiftView.vue'),
-          meta: { title: '发布抢班', entMiniTab: false },
+          meta: { title: '划线排班', entMiniTab: false },
         },
         {
           path: 'exceptions',
           name: 'EntMiniExceptions',
           component: () => import('@/views/enterprise-miniapp/EntMiniExceptionView.vue'),
-          meta: { title: '考勤异常', entMiniTab: false },
+          meta: { title: '考勤审批', entMiniTab: false },
+        },
+        {
+          path: 'punch-records',
+          name: 'EntMiniPunchRecords',
+          component: () => import('@/views/enterprise-miniapp/EntMiniPunchRecordsView.vue'),
+          meta: { title: '班次人员打卡记录', entMiniTab: false },
+        },
+        {
+          path: 'hours-confirm',
+          name: 'EntMiniHoursConfirm',
+          component: () => import('@/views/enterprise-miniapp/EntMiniHoursConfirmView.vue'),
+          meta: { title: '工时确认', entMiniTab: false },
         },
         {
           path: 'hours',
           name: 'EntMiniHours',
           component: () => import('@/views/enterprise-miniapp/EntMiniHoursView.vue'),
-          meta: { title: '工时确认', entMiniTab: false },
+          meta: { title: '工时确认记录', entMiniTab: false },
+        },
+        {
+          path: 'personnel',
+          name: 'EntMiniPersonnel',
+          component: () => import('@/views/enterprise-miniapp/EntMiniPersonnelView.vue'),
+          meta: { title: '人员管理', entMiniTab: false },
+        },
+        {
+          path: 'onboard',
+          name: 'EntMiniOnboard',
+          component: () => import('@/views/enterprise-miniapp/EntMiniOnboardView.vue'),
+          meta: { title: '入驻管理', entMiniTab: false },
+        },
+        {
+          path: 'shift-demand',
+          name: 'EntMiniShiftDemand',
+          component: () => import('@/views/enterprise-miniapp/EntMiniShiftDemandView.vue'),
+          meta: { title: '需求总览', entMiniTab: false },
+        },
+        {
+          path: 'grab-manage',
+          name: 'EntMiniGrabManage',
+          component: () => import('@/views/enterprise-miniapp/EntMiniGrabShiftView.vue'),
+          meta: { title: '抢班管理', entMiniTab: false },
+        },
+        {
+          path: 'grab-interview',
+          name: 'EntMiniGrabInterview',
+          component: () => import('@/views/enterprise-miniapp/EntMiniGrabInterviewView.vue'),
+          meta: { title: '抢班面试配置', entMiniTab: false },
+        },
+        {
+          path: 'grab',
+          redirect: '/enterprise-miniapp/grab-manage',
         },
         {
           path: 'profile',
@@ -909,7 +1115,7 @@ const router = createRouter({
     },
     // legacy redirects
     { path: '/partnership', redirect: '/enterprise/partnership' },
-    { path: '/enterprise/task-types', redirect: '/enterprise/task/types' },
+    { path: '/enterprise/task-types', redirect: '/enterprise/task/publish' },
     { path: '/enterprise/task-publish', redirect: '/enterprise/task/publish' },
     { path: '/enterprise/task-acceptance', redirect: '/enterprise/task/progress' },
     { path: '/enterprise/task-progress', redirect: '/enterprise/task/progress' },
@@ -923,7 +1129,7 @@ router.beforeEach((to) => {
     const isPublic = to.meta.entMiniPublic === true
     if (isPublic) {
       if (isEnterpriseMiniAuthed() && to.path === '/enterprise-miniapp/login') {
-        return '/enterprise-miniapp/workbench'
+        return '/enterprise-miniapp/recruitment'
       }
       return true
     }
@@ -936,12 +1142,10 @@ router.beforeEach((to) => {
   if (!to.path.startsWith('/miniapp')) return true
 
   const isPublic = to.meta.miniPublic === true
-  const isOnboardingRoute =
-    to.meta.miniOnboarding === true || to.path === '/miniapp/onboarding'
 
   if (isPublic) {
     if (isMiniAppAuthed() && (to.path === '/miniapp/login' || to.path === '/miniapp/register')) {
-      return isMiniAppOnboardingComplete() ? '/miniapp/workbench' : '/miniapp/onboarding'
+      return '/miniapp/workbench'
     }
     return true
   }
@@ -950,13 +1154,7 @@ router.beforeEach((to) => {
     return { path: '/miniapp/login', query: { redirect: to.fullPath } }
   }
 
-  if (!isMiniAppOnboardingComplete() && !isOnboardingRoute) {
-    if (to.path === '/miniapp/face-verify' || to.path.startsWith('/miniapp/face-verify/')) {
-      return true
-    }
-    return '/miniapp/onboarding'
-  }
-
+  // 已登录即可浏览全部数据；实名/人脸在报名、打卡、领任务等动作时拦截
   return true
 })
 

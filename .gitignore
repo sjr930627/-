@@ -4,3 +4,6 @@ dist
 *.local
 shift-attendance-admin-html.zip
 shift-attendance-admin-html/
+__MACOSX/
+/shift-attendance-admin/
+tsconfig.tsbuildinfo

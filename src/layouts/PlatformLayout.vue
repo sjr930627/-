@@ -16,6 +16,7 @@ interface MenuChild {
   path: string
   title: string
   icon: string
+  badgeKey?: 'scheduleAttendance' | 'grabAttendance'
 }
 
 interface MenuGroup {
@@ -60,17 +61,45 @@ const menuGroups: MenuGroup[] = [
     ],
   },
   {
-    index: 'attendance',
-    title: '人员考勤管理',
+    index: 'personnel',
+    title: '人员管理',
     icon: 'Avatar',
     children: [
-      { path: '/employees', title: '人员管理', icon: 'UserFilled' },
+      { path: '/employees', title: '人员管理', icon: 'Avatar' },
       { path: '/attendance-groups', title: '考勤组管理', icon: 'Grid' },
-      { path: '/schedule-manage', title: '排班管理', icon: 'Notebook' },
-      { path: '/grab-shifts', title: '抢班管理', icon: 'Bell' },
-      { path: '/attendance-data', title: '考勤数据', icon: 'DataBoard' },
-      { path: '/attendance-exceptions', title: '考勤审批处理', icon: 'WarningFilled' },
+      { path: '/worker-agreements', title: '合同管理', icon: 'Document' },
       { path: '/insurance', title: '保险管理', icon: 'FirstAidKit' },
+    ],
+  },
+  {
+    index: 'schedule',
+    title: '排班管理',
+    icon: 'Calendar',
+    children: [
+      { path: '/schedule-manage', title: '排班管理', icon: 'Notebook' },
+      { path: '/attendance-data', title: '考勤数据', icon: 'DataBoard' },
+      {
+        path: '/attendance-exceptions',
+        title: '考勤审批',
+        icon: 'WarningFilled',
+        badgeKey: 'scheduleAttendance',
+      },
+    ],
+  },
+  {
+    index: 'grab',
+    title: '抢班管理',
+    icon: 'Bell',
+    children: [
+      { path: '/grab-interview', title: '抢班面试管理', icon: 'ChatDotRound' },
+      { path: '/grab-shifts', title: '抢班管理', icon: 'Bell' },
+      { path: '/grab-attendance-data', title: '考勤数据', icon: 'DataBoard' },
+      {
+        path: '/grab-attendance-exceptions',
+        title: '考勤审批记录',
+        icon: 'WarningFilled',
+        badgeKey: 'grabAttendance',
+      },
     ],
   },
   {
@@ -79,7 +108,7 @@ const menuGroups: MenuGroup[] = [
     icon: 'List',
     children: [
       { path: '/task-workflows', title: '任务流程配置', icon: 'SetUp' },
-      { path: '/task-type-approval', title: '任务类型审批', icon: 'Stamp' },
+      { path: '/task-approval', title: '任务审批', icon: 'Stamp' },
       { path: '/task-manage', title: '任务管理', icon: 'Tickets' },
     ],
   },
@@ -99,7 +128,7 @@ const menuGroups: MenuGroup[] = [
       { path: '/payroll/bills', title: '账单管理', icon: 'DocumentCopy' },
       { path: '/payroll/import-templates', title: '账单导入模板', icon: 'Upload' },
       { path: '/payroll/billing-rules', title: '计薪规则', icon: 'Operation' },
-      { path: '/payroll/settlement', title: '结算管理', icon: 'PieChart' },
+      { path: '/payroll/settlement', title: '发薪管理', icon: 'PieChart' },
       { path: '/payroll/funds', title: '资金管理', icon: 'Wallet' },
       { path: '/payroll/tax', title: '个税管理', icon: 'Coin' },
       { path: '/payroll/invoices', title: '发票管理', icon: 'Ticket' },
@@ -127,6 +156,7 @@ const settingsGroup: MenuGroup = {
   children: [
     { path: '/system/accounts', title: '账号管理', icon: 'User' },
     { path: '/system/roles', title: '角色权限', icon: 'Key' },
+    { path: '/system/reminder-rules', title: '提醒规则配置', icon: 'Bell' },
     { path: '/system/oplog', title: '操作日志', icon: 'Document' },
   ],
 }
@@ -142,13 +172,20 @@ const breadcrumbs = computed(() => {
 })
 
 const openMenus = computed(() => {
+  const opened = ['home']
   for (const group of [...menuGroups, settingsGroup]) {
     if (group.children.some((c) => activeMenu.value === c.path || activeMenu.value.startsWith(`${c.path}/`))) {
-      return [group.index]
+      opened.push(group.index)
     }
   }
-  return []
+  return opened
 })
+
+function menuBadgeValue(child: MenuChild) {
+  if (child.badgeKey === 'scheduleAttendance') return store.pendingScheduleAttendanceApprovalCount
+  if (child.badgeKey === 'grabAttendance') return store.pendingGrabAttendanceApprovalCount
+  return 0
+}
 
 function navigate(path: string) {
   router.push(path)
@@ -171,9 +208,9 @@ function formatTime(iso: string) {
 
 <template>
   <el-container class="platform-layout">
-    <el-header class="header">
-      <div class="header-left">
-        <div class="brand" @click="navigate('/dashboard')">
+    <el-container class="body-container">
+      <el-aside :width="asideWidth" class="aside" :class="{ collapsed: navCollapsed }">
+        <div class="aside-brand" @click="navigate('/dashboard')">
           <div class="brand-mark">
             <svg viewBox="0 0 24 24" fill="none">
               <rect x="3" y="3" width="8" height="8" rx="2" fill="currentColor" opacity=".9" />
@@ -182,49 +219,12 @@ function formatTime(iso: string) {
               <rect x="13" y="13" width="8" height="8" rx="2" fill="currentColor" opacity=".45" />
             </svg>
           </div>
-          <span class="brand-title">灵工平台</span>
-          <span class="brand-badge">运营后台</span>
-        </div>
-      </div>
-
-      <div class="header-center">
-        <el-input
-          v-model="searchKeyword"
-          class="header-search"
-          placeholder="搜索功能、页面..."
-          prefix-icon="Search"
-          clearable
-          @keyup.enter="handleSearch"
-        />
-      </div>
-
-      <div class="header-right">
-        <el-badge :value="store.unreadNotificationCount" :hidden="store.unreadNotificationCount === 0">
-          <button class="icon-btn" type="button" @click="notificationDrawer = true">
-            <el-icon size="18"><Bell /></el-icon>
-          </button>
-        </el-badge>
-        <el-dropdown trigger="click">
-          <div class="user-info">
-            <el-avatar :size="32" class="user-avatar">张</el-avatar>
-            <span v-show="!navCollapsed" class="username">张 管理</span>
-            <el-icon class="user-arrow"><ArrowDown /></el-icon>
+          <div v-show="!navCollapsed" class="brand-text">
+            <div class="brand-title">灵工平台</div>
+            <div class="brand-sub">运营后台系统</div>
           </div>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item @click="router.push('/system/accounts')">账号管理</el-dropdown-item>
-              <el-dropdown-item @click="router.push('/system/roles')">角色权限</el-dropdown-item>
-              <el-dropdown-item @click="router.push('/portals')">三端入口</el-dropdown-item>
-              <el-dropdown-item @click="router.push('/enterprise/dashboard')">企业端</el-dropdown-item>
-              <el-dropdown-item @click="router.push('/miniapp/workbench')">灵工小程序</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </div>
-    </el-header>
+        </div>
 
-    <el-container class="body-container">
-      <el-aside :width="asideWidth" class="aside" :class="{ collapsed: navCollapsed }">
         <el-scrollbar class="menu-scroll">
           <el-menu
             :default-active="activeMenu"
@@ -234,10 +234,16 @@ function formatTime(iso: string) {
             class="side-menu"
             @select="navigate"
           >
-            <el-menu-item index="/dashboard">
-              <el-icon class="menu-icon"><Odometer /></el-icon>
-              <template #title>工作台</template>
-            </el-menu-item>
+            <el-sub-menu index="home">
+              <template #title>
+                <el-icon class="menu-icon"><HomeFilled /></el-icon>
+                <span>首页</span>
+              </template>
+              <el-menu-item index="/dashboard">
+                <el-icon class="menu-icon menu-icon--sub"><Odometer /></el-icon>
+                <template #title>工作台</template>
+              </el-menu-item>
+            </el-sub-menu>
 
             <el-sub-menu v-for="group in menuGroups" :key="group.index" :index="group.index">
               <template #title>
@@ -254,8 +260,8 @@ function formatTime(iso: string) {
                   <span class="menu-item-title">
                     {{ child.title }}
                     <el-badge
-                      v-if="child.path === '/attendance-exceptions' && store.pendingAttendanceApprovalCount > 0"
-                      :value="store.pendingAttendanceApprovalCount"
+                      v-if="menuBadgeValue(child) > 0"
+                      :value="menuBadgeValue(child)"
                       class="menu-badge"
                     />
                   </span>
@@ -293,16 +299,57 @@ function formatTime(iso: string) {
         </div>
       </el-aside>
 
-      <el-main class="main">
-        <div v-if="breadcrumbs.length" class="page-breadcrumb">
-          <el-breadcrumb separator="/">
-            <el-breadcrumb-item v-for="(crumb, i) in breadcrumbs" :key="i">
-              {{ crumb }}
-            </el-breadcrumb-item>
-          </el-breadcrumb>
-        </div>
-        <RouterView />
-      </el-main>
+      <el-container class="content-shell" direction="vertical">
+        <el-header class="header">
+          <div class="header-spacer" />
+          <div class="header-right">
+            <el-input
+              v-model="searchKeyword"
+              class="header-search"
+              placeholder="搜索功能、页面"
+              prefix-icon="Search"
+              clearable
+              @keyup.enter="handleSearch"
+            />
+            <el-badge :value="store.unreadNotificationCount" :hidden="store.unreadNotificationCount === 0" is-dot>
+              <button class="icon-btn" type="button" @click="notificationDrawer = true">
+                <el-icon size="18"><Bell /></el-icon>
+              </button>
+            </el-badge>
+            <button class="icon-btn" type="button" @click="router.push('/system/roles')">
+              <el-icon size="18"><Setting /></el-icon>
+            </button>
+            <el-dropdown trigger="click">
+              <div class="user-info">
+                <el-avatar :size="32" class="user-avatar">张</el-avatar>
+                <span class="username">张斌</span>
+                <span class="user-role">超级管理员</span>
+                <el-icon class="user-arrow"><ArrowDown /></el-icon>
+              </div>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="router.push('/system/accounts')">账号管理</el-dropdown-item>
+                  <el-dropdown-item @click="router.push('/system/roles')">角色权限</el-dropdown-item>
+                  <el-dropdown-item @click="router.push('/portals')">三端入口</el-dropdown-item>
+                  <el-dropdown-item @click="router.push('/enterprise/dashboard')">企业端</el-dropdown-item>
+                  <el-dropdown-item @click="router.push('/miniapp/workbench')">灵工小程序</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </el-header>
+
+        <el-main class="main">
+          <div v-if="breadcrumbs.length && route.path !== '/dashboard'" class="page-breadcrumb">
+            <el-breadcrumb separator="/">
+              <el-breadcrumb-item v-for="(crumb, i) in breadcrumbs" :key="i">
+                {{ crumb }}
+              </el-breadcrumb-item>
+            </el-breadcrumb>
+          </div>
+          <RouterView />
+        </el-main>
+      </el-container>
     </el-container>
 
     <el-drawer v-model="notificationDrawer" title="消息通知" size="400px">
@@ -345,83 +392,105 @@ function formatTime(iso: string) {
   --el-color-primary-dark-2: #1d4ed8;
 
   height: 100vh;
-  flex-direction: column;
   background: var(--app-bg);
 }
 
-.header {
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 56px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--app-border);
-  flex-shrink: 0;
-  z-index: 10;
+.body-container {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
-.header-left,
-.header-right {
+.content-shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.aside {
+  background: #fff;
+  border-right: 1px solid var(--app-border);
+  display: flex;
+  flex-direction: column;
+  transition: width 0.2s ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.aside-brand {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex: 1;
-}
-
-.header-center {
-  flex: 1.4;
-  display: flex;
-  justify-content: center;
-  max-width: 420px;
-}
-
-.header-right {
-  justify-content: flex-end;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  height: 64px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--app-border);
   cursor: pointer;
-  user-select: none;
+  flex-shrink: 0;
+}
+
+.aside.collapsed .aside-brand {
+  justify-content: center;
+  padding: 0;
 }
 
 .brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
   background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
 }
 
 .brand-mark svg {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
+}
+
+.brand-text {
+  min-width: 0;
 }
 
 .brand-title {
   font-size: 16px;
   font-weight: 700;
   color: var(--app-text);
+  line-height: 1.2;
 }
 
-.brand-badge {
-  font-size: 11px;
-  font-weight: 600;
-  color: #2563eb;
-  background: #eff6ff;
-  border-radius: 999px;
-  padding: 2px 8px;
+.brand-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.header {
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 64px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--app-border);
+  flex-shrink: 0;
+}
+
+.header-spacer {
+  flex: 1;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .header-search {
-  width: 100%;
+  width: 260px;
 }
 
 .header-search :deep(.el-input__wrapper) {
@@ -441,7 +510,7 @@ function formatTime(iso: string) {
   height: 36px;
   border: none;
   border-radius: 10px;
-  background: #f5f6fa;
+  background: transparent;
   color: #64748b;
   cursor: pointer;
   display: inline-flex;
@@ -460,14 +529,11 @@ function formatTime(iso: string) {
   align-items: center;
   gap: 8px;
   cursor: pointer;
-  padding: 4px 10px 4px 4px;
+  padding: 4px 8px 4px 4px;
   border-radius: 999px;
-  border: 1px solid var(--app-border);
-  background: #fff;
 }
 
 .user-info:hover {
-  border-color: #bfdbfe;
   background: #f8fbff;
 }
 
@@ -480,28 +546,22 @@ function formatTime(iso: string) {
 
 .username {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--app-text);
+}
+
+.user-role {
+  font-size: 11px;
+  font-weight: 600;
+  color: #16a34a;
+  background: #ecfdf5;
+  border-radius: 999px;
+  padding: 2px 8px;
 }
 
 .user-arrow {
   color: #94a3b8;
   font-size: 12px;
-}
-
-.body-container {
-  flex: 1;
-  min-height: 0;
-}
-
-.aside {
-  background: #fff;
-  border-right: 1px solid var(--app-border);
-  display: flex;
-  flex-direction: column;
-  transition: width 0.2s ease;
-  overflow: hidden;
-  flex-shrink: 0;
 }
 
 .menu-scroll {
@@ -516,7 +576,7 @@ function formatTime(iso: string) {
   --el-menu-bg-color: transparent;
   --el-menu-text-color: #475569;
   background: transparent;
-  padding: 4px 8px;
+  padding: 8px;
 }
 
 .side-menu:not(.el-menu--collapse) {
@@ -617,7 +677,7 @@ function formatTime(iso: string) {
 }
 
 .main {
-  padding: 12px 20px 20px;
+  padding: 16px 24px 24px;
   overflow: auto;
   background: var(--app-bg);
   min-width: 0;
@@ -646,31 +706,31 @@ function formatTime(iso: string) {
 
 .notification-item {
   padding: 12px;
-  border-radius: 8px;
-  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: #f8fafc;
   cursor: pointer;
-  background: #fff;
 }
 
 .notification-item.unread {
-  background: var(--app-primary-light);
-  border-color: #bfdbfe;
+  background: #eff6ff;
 }
 
 .notification-title {
+  font-size: 14px;
   font-weight: 600;
-  margin-bottom: 4px;
+  color: #0f172a;
 }
 
 .notification-content {
+  margin-top: 4px;
   font-size: 13px;
-  color: #606266;
-  margin-bottom: 4px;
+  color: #64748b;
 }
 
 .notification-time {
+  margin-top: 6px;
   font-size: 12px;
-  color: #909399;
+  color: #94a3b8;
 }
 </style>
 

@@ -1,6 +1,20 @@
 import type { Enterprise } from '@/types'
 
-export const seedEnterprises: Enterprise[] = [
+/** 演示用 Logo（SVG data URL） */
+function logo(shortName: string, color = '#5b4fdb') {
+  const label = shortName.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').slice(0, 2) || '企'
+  return `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" rx="28" fill="${color}"/><text x="80" y="96" text-anchor="middle" fill="#fff" font-size="48" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-weight="700">${label}</text></svg>`,
+  )}`
+}
+
+function scene(color: string, caption: string) {
+  return `data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="${color}" offset="0%"/><stop stop-color="#ffffff" offset="100%"/></linearGradient></defs><rect width="320" height="180" fill="url(#g)"/><text x="160" y="98" text-anchor="middle" fill="#334155" font-size="22" font-family="PingFang SC,Microsoft YaHei,sans-serif">${caption}</text></svg>`,
+  )}`
+}
+
+const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_stars_telecom',
     code: 'CT-2024-00158',
@@ -13,8 +27,12 @@ export const seedEnterprises: Enterprise[] = [
     address: '浙江省杭州市西湖区文三路 88 号',
     status: 'active',
     serviceModules: ['recruitment', 'attendance', 'task', 'payroll'],
-    invoiceCategories: ['生活服务*现代服务', '信息技术服务*技术服务费'],
+    invoiceCategories: [
+      { name: '生活服务*现代服务', invoiceType: 'electronic_normal' },
+      { name: '信息技术服务*技术服务费', invoiceType: 'electronic_special' },
+    ],
     enterpriseOwnerIds: ['acc_ops_chen', 'acc_ops_lin'],
+    authorizedDepartmentIds: ['dept_hr', 'dept_prod'],
     createdAt: '2024-03-15',
   },
   {
@@ -29,8 +47,13 @@ export const seedEnterprises: Enterprise[] = [
     address: '北京市朝阳区建国路 98 号',
     status: 'active',
     serviceModules: ['recruitment', 'attendance', 'task'],
-    invoiceCategories: ['生活服务*现代服务', '信息技术服务*技术服务费', '现代服务*咨询服务费'],
+    invoiceCategories: [
+      { name: '生活服务*现代服务', invoiceType: 'electronic_normal' },
+      { name: '信息技术服务*技术服务费', invoiceType: 'electronic_special' },
+      { name: '现代服务*咨询服务费', invoiceType: 'electronic_normal' },
+    ],
     enterpriseOwnerIds: ['acc_ops_huang', 'acc_ops_xu'],
+    authorizedDepartmentIds: ['dept_hr'],
     adminAccount: {
       name: '陈先生',
       phone: '13800138002',
@@ -52,7 +75,7 @@ export const seedEnterprises: Enterprise[] = [
     address: '浙江省杭州市滨江区网商路 699 号',
     status: 'expiring',
     serviceModules: ['recruitment', 'attendance', 'task', 'payroll'],
-    invoiceCategories: ['生活服务*现代服务'],
+    invoiceCategories: [{ name: '生活服务*现代服务', invoiceType: 'electronic_special' }],
     adminAccount: {
       name: '张主管',
       phone: '13900139001',
@@ -74,7 +97,10 @@ export const seedEnterprises: Enterprise[] = [
     address: '上海市浦东新区陆家嘴环路 1000 号',
     status: 'active',
     serviceModules: ['attendance', 'task'],
-    invoiceCategories: ['生活服务*现代服务', '现代服务*渠道推广费'],
+    invoiceCategories: [
+      { name: '生活服务*现代服务', invoiceType: 'electronic_normal' },
+      { name: '现代服务*渠道推广费', invoiceType: 'electronic_special' },
+    ],
     createdAt: '2023-12-18',
   },
   {
@@ -117,7 +143,10 @@ export const seedEnterprises: Enterprise[] = [
     address: '广东省广州市天河区珠江新城',
     status: 'active',
     serviceModules: ['recruitment', 'attendance', 'task', 'payroll'],
-    invoiceCategories: ['生活服务*现代服务', '现代服务*能源服务费'],
+    invoiceCategories: [
+      { name: '生活服务*现代服务', invoiceType: 'electronic_normal' },
+      { name: '现代服务*能源服务费', invoiceType: 'electronic_special' },
+    ],
     createdAt: '2023-09-22',
   },
   {
@@ -160,7 +189,7 @@ export const seedEnterprises: Enterprise[] = [
     address: '四川省成都市高新区天府大道',
     status: 'active',
     serviceModules: ['recruitment', 'task', 'payroll'],
-    invoiceCategories: ['生活服务*现代服务'],
+    invoiceCategories: [{ name: '生活服务*现代服务', invoiceType: 'electronic_normal' }],
     createdAt: '2023-06-18',
   },
   {
@@ -175,7 +204,10 @@ export const seedEnterprises: Enterprise[] = [
     address: '上海市静安区南京西路 1266 号',
     status: 'expiring',
     serviceModules: ['attendance', 'task', 'payroll'],
-    invoiceCategories: ['生活服务*现代服务', '现代服务*零售服务费'],
+    invoiceCategories: [
+      { name: '生活服务*现代服务', invoiceType: 'electronic_normal' },
+      { name: '现代服务*零售服务费', invoiceType: 'electronic_special' },
+    ],
     createdAt: '2023-05-12',
   },
   {
@@ -190,7 +222,23 @@ export const seedEnterprises: Enterprise[] = [
     address: '湖北省武汉市武昌区中北路',
     status: 'active',
     serviceModules: ['recruitment', 'attendance', 'task', 'payroll'],
-    invoiceCategories: ['生活服务*现代服务', '信息技术服务*技术服务费'],
+    invoiceCategories: [
+      { name: '生活服务*现代服务', invoiceType: 'electronic_normal' },
+      { name: '信息技术服务*技术服务费', invoiceType: 'electronic_special' },
+    ],
     createdAt: '2023-04-01',
   },
 ]
+
+const logoColors = ['#5b4fdb', '#2563eb', '#0f766e', '#d97706', '#dc2626', '#7c3aed']
+
+export const seedEnterprises: Enterprise[] = rawEnterprises.map((e, index) => ({
+  ...e,
+  logoUrl: logo(e.shortName, logoColors[index % logoColors.length]),
+  sceneImageUrls:
+    index % 3 === 0
+      ? [scene('#c7d2fe', '门店场景'), scene('#bbf7d0', '作业现场')]
+      : index % 3 === 1
+        ? [scene('#fde68a', '办公场景')]
+        : undefined,
+}))

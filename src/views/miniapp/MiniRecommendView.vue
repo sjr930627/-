@@ -10,13 +10,17 @@ import {
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import { getGrabShiftPostExtra, getGrabShiftSlotExtra, getJobDetailExtra } from '@/mock/miniappDetailSeed'
 import { TASK_PREVIEW_LIMIT } from '@/services/miniTask'
+import { isGrabShiftOpenForWorkers } from '@/services/grabShift'
+import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
 const store = useAppStore()
 const route = useRoute()
 const router = useRouter()
 const { employeeId } = useMiniAppWorker()
+const { ensureActionAllowed } = useMiniAppActionGate()
 const activeTab = ref<'jobs' | 'shifts'>('shifts')
 const city = ref('上海市')
 
@@ -117,7 +121,9 @@ const jobs = computed(() =>
 )
 
 const shiftCompanies = computed(() => {
-  const open = store.grabShiftSlots.filter((s) => s.status === 'open' || s.status === 'partial')
+  const open = store.grabShiftSlots.filter(
+    (s) => isGrabShiftOpenForWorkers(s),
+  )
   const teamIds = [...new Set(open.map((s) => s.teamId))]
   return teamIds.map((teamId) => {
     const teamSlots = open
@@ -220,8 +226,22 @@ function openShiftEnterprise(teamId: string) {
   router.push(`/miniapp/recommend/shift/${teamId}`)
 }
 
-function applyShiftSlot(slotId: string, e: Event) {
+async function applyShiftSlot(slotId: string, e: Event) {
   e.stopPropagation()
+  const slot = store.grabShiftSlots.find((s) => s.id === slotId)
+  const enterpriseId = slot
+    ? resolveEnterpriseIdByAttendanceGroupId(
+        slot.attendanceGroupId,
+        store.attendanceGroups,
+        store.departments,
+      )
+    : undefined
+  const allowed = await ensureActionAllowed({
+    requireDepartment: true,
+    enterpriseId,
+    from: 'grab',
+  })
+  if (!allowed) return
   try {
     const app = store.submitGrabShiftApplication({
       slotId,

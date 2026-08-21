@@ -3,7 +3,12 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { isUnassignedDepartment } from '@/constants/department'
-import type { EmployeeGender, EmployeeSkillCertificate, EmployeeStatus } from '@/types'
+import type {
+  EmployeeGender,
+  EmployeePersonnelCategory,
+  EmployeeSkillCertificate,
+  EmployeeStatus,
+} from '@/types'
 
 export interface EmployeeFormModel {
   name: string
@@ -18,6 +23,7 @@ export interface EmployeeFormModel {
   departmentId: string
   remark: string
   status: EmployeeStatus
+  idCardNo: string
   skillCertificates: EmployeeSkillCertificate[]
 }
 
@@ -25,6 +31,8 @@ const props = defineProps<{
   visible: boolean
   editingId?: string | null
   defaultDepartmentId?: string
+  /** 新建时默认人员类别 */
+  defaultPersonnelCategory?: EmployeePersonnelCategory
 }>()
 
 const emit = defineEmits<{
@@ -67,6 +75,7 @@ const emptyForm = (): EmployeeFormModel => ({
   departmentId: props.defaultDepartmentId ?? '',
   remark: '',
   status: isUnassignedDepartment(props.defaultDepartmentId) ? 'pending' : 'active',
+  idCardNo: '',
   skillCertificates: [],
 })
 
@@ -100,6 +109,7 @@ watch(
         departmentId: emp.departmentId,
         remark: emp.remark ?? '',
         status: emp.status,
+        idCardNo: emp.idCardNo ?? '',
         skillCertificates:
           emp.skillCertificates?.length
             ? emp.skillCertificates.map((c) => ({ ...c }))
@@ -150,11 +160,11 @@ function submit() {
     return
   }
   if (!form.value.employeeNo.trim()) {
-    ElMessage.warning('请填写工号')
+    ElMessage.warning('请填写人员 ID')
     return
   }
   if (!form.value.hireDate) {
-    ElMessage.warning('请选择入职日期')
+    ElMessage.warning('请选择入驻日期')
     return
   }
   if (!form.value.position.trim()) {
@@ -193,6 +203,7 @@ function submit() {
     departmentId: form.value.departmentId,
     remark: form.value.remark.trim(),
     status,
+    idCardNo: form.value.idCardNo.trim() || undefined,
     skills: certificates.map((c) => c.name.trim()),
     skillCertificates: certificates,
     preferredShiftIds: [] as string[],
@@ -209,11 +220,15 @@ function submit() {
       realNameVerified: existing?.realNameVerified,
       preferredShiftIds: existing?.preferredShiftIds ?? [],
       unavailableDates: existing?.unavailableDates ?? [],
+      personnelCategory: existing?.personnelCategory,
     })
     ElMessage.success('人员信息已保存')
     emit('saved', props.editingId)
   } else {
-    const emp = store.addEmployee(payload)
+    const emp = store.addEmployee({
+      ...payload,
+      personnelCategory: props.defaultPersonnelCategory ?? 'schedule',
+    })
     ElMessage.success('人员已添加')
     emit('saved', emp.id)
   }
@@ -276,9 +291,16 @@ function submit() {
               </el-col>
             </el-row>
             <el-row :gutter="16">
+              <el-col :span="12">
+                <el-form-item label="身份证号">
+                  <el-input v-model="form.idCardNo" placeholder="请输入身份证号" maxlength="18" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="16">
               <el-col :span="24">
-                <el-form-item label="工号" required>
-                  <el-input v-model="form.employeeNo" placeholder="请输入工号" />
+                <el-form-item label="人员 ID" required>
+                  <el-input v-model="form.employeeNo" placeholder="请输入人员 ID" />
                 </el-form-item>
               </el-col>
             </el-row>
@@ -296,7 +318,7 @@ function submit() {
             </el-row>
             <el-row :gutter="16">
               <el-col :span="24">
-                <el-form-item label="入职日期" required>
+                <el-form-item label="入驻日期" required>
                   <el-date-picker
                     v-model="form.hireDate"
                     type="date"

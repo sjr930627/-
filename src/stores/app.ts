@@ -50,6 +50,10 @@ import type {
   GrabShiftSlot,
   GrabShiftApplication,
   GrabShiftWhitelistEntry,
+  GrabInterviewConfig,
+  GrabInterviewRegistration,
+  GrabInterviewDeptRule,
+  GrabInterviewPositionTemplate,
   CancelShiftRequest,
   SwapRequest,
   SystemRole,
@@ -67,6 +71,7 @@ import type {
   InsuranceProduct,
   InsurancePolicy,
   TrainingMaterial,
+  TrainingMaterialCategoryItem,
   TrainingCourse,
   TrainingExam,
   ExamQuestion,
@@ -81,10 +86,12 @@ import type {
   WorkerPaymentBinding,
   WorkerProfileExt,
   WorkerSchedulePreference,
+  WorkerUnavailablePeriod,
   WorkerPartTimePreference,
   WorkerSkillCertificate,
   ProviderFundAccount,
   FundTransaction,
+  ReminderRule,
 } from '@/types'
 import {
   createUnassignedDepartment,
@@ -92,6 +99,9 @@ import {
   isEnterpriseRootDepartment,
   createEnterpriseRootDepartment,
   createEnterpriseUnassignedDepartment,
+  enterpriseUnassignedDepartmentId,
+  parseDepartmentJoinQrPayload,
+  UNASSIGNED_POSITION,
 } from '@/constants/department'
 import {
   defaultAttendanceRule,
@@ -154,18 +164,33 @@ import { seedTaxDeclarations } from '@/mock/taxDeclarationSeed'
 import { seedGrabShiftSlots } from '@/mock/grabShiftSeed'
 import { seedGrabShiftApplications } from '@/mock/grabShiftApplicationSeed'
 import { seedGrabShiftWhitelist } from '@/mock/grabShiftWhitelistSeed'
+import {
+  seedGrabInterviewConfigs,
+  seedGrabInterviewRegistrations,
+} from '@/mock/grabInterviewSeed'
+import {
+  normalizeDeptInterviewRule,
+  normalizeGrabInterviewDeptRule,
+} from '@/constants/grabInterview'
+import { isAssignmentConfirmedLocked, normalizeConfirmStatus } from '@/constants/schedule'
 import { seedScheduleTemplates } from '@/mock/scheduleTemplateSeed'
 import {
   seedTeamCycleScheduleRules,
   seedWeeklyShiftDemandPlans,
 } from '@/mock/shiftDemandSeed'
 import { generateCycleSchedule } from '@/services/schedule'
+import {
+  expandUnavailablePeriods,
+  isEmployeeUnavailableInRange,
+  isEmployeeUnavailableOnDate,
+} from '@/services/employeeAvailability'
 import { seedInsurancePolicies, seedInsuranceProducts } from '@/mock/insuranceSeed'
 import {
   seedExamAttempts,
   loadCourseLearningRecords,
   loadExamQuestions,
   loadTrainingCoursesAndExams,
+  loadTrainingMaterialCategories,
   loadTrainingMaterials,
 } from '@/mock/trainingSeed'
 import {
@@ -176,6 +201,7 @@ import {
   seedWorkerPaymentBindings,
   seedWorkerProfileExts,
 } from '@/mock/miniappSeed'
+import { seedReminderRules } from '@/mock/reminderRuleSeed'
 import {
   calcProfileCompleteness,
   inferScheduleVariant,
@@ -194,11 +220,9 @@ import {
   seedTaskTypeSettlementOverrides,
 } from '@/mock/settlementPriceSeed'
 import {
-  createDefaultEnterpriseSettlementConfig,
   getAttendanceGroupsForEnterprise,
-  normalizeEnterpriseSettlementConfig,
   resolveHourlySettlementPrice,
-  resolveTaskSettlementPrice,
+  resolveTaskTypeSettlementPrice as resolveTaskTypePrice,
 } from '@/services/settlementPrice'
 import {
   advanceThroughSystemNodes,
@@ -217,18 +241,30 @@ import {
   resolveActionTargetNodeId,
 } from '@/utils/workflow'
 import {
-  calcTaskClaimAmount,
   getWorkerClaimedQuantity,
   pickWorkerSubmitAction,
 } from '@/services/miniTask'
+import { resolveTaskPricing } from '@/constants/task'
 import { generateEnterpriseCode, normalizeEnterpriseModules } from '@/constants/enterprise'
 import { normalizeSystemAccount, accountHasRole } from '@/constants/account'
 import { unionMenuPermissions, unionPermissionIds } from '@/constants/permission'
-import { generateContractNo, generateServiceProviderCode } from '@/constants/partnership'
-import { generateId, ensureDemoBrandingVersion, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage } from '@/utils'
-import { generateBillNo, resolveServiceProviderForEnterprise } from '@/services/billSettlement'
+import { generateContractNo, generateServiceProviderCode, addContractRenewPeriod, resolveContractRenewBaseDate, contractRenewPeriodOptions, type ContractRenewPeriod } from '@/constants/partnership'
+import {
+  applyContractConfig,
+  createContractVersion,
+  ensureContractVersions,
+  findContractByPair,
+  getEffectiveVersion,
+  getWorkingVersion,
+  pickContractConfig,
+  restoreEffectiveConfig,
+} from '@/services/contractVersion'
+import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage } from '@/utils'
+import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
+import { generateBillNo, resolveBillTaxFlagsFromContract, resolveServiceProviderForEnterprise } from '@/services/billSettlement'
+import { estimateServiceFeeWaiverByQuantity } from '@/constants/payrollBill'
 import { resolveWithdrawalChannel } from '@/constants/taxManage'
-import { deriveExceptions, getDatesBetween, buildDailyAttendanceList, getMonthDateRange } from '@/services/attendance'
+import { deriveExceptions, getDatesBetween, buildDailyAttendanceList, getMonthDateRange, computeDailyAttendance } from '@/services/attendance'
 import {
   resolveGroupScheduleRule,
   scheduleRuleToCompliance,
@@ -303,6 +339,14 @@ export const useAppStore = defineStore('app', {
     grabShiftWhitelist: loadFromStorage<GrabShiftWhitelistEntry[]>(
       'grabShiftWhitelist',
       seedGrabShiftWhitelist,
+    ),
+    grabInterviewConfigs: loadFromStorage<GrabInterviewConfig[]>(
+      'grabInterviewConfigs',
+      seedGrabInterviewConfigs,
+    ),
+    grabInterviewRegistrations: loadFromStorage<GrabInterviewRegistration[]>(
+      'grabInterviewRegistrations',
+      seedGrabInterviewRegistrations,
     ),
     scheduleTemplates: loadFromStorage<ScheduleTemplate[]>('scheduleTemplates', seedScheduleTemplates),
     weeklyShiftDemandPlans: loadFromStorage<WeeklyShiftDemandPlan[]>(
@@ -395,8 +439,12 @@ export const useAppStore = defineStore('app', {
       seedSystemOperationLogs,
     ),
     serviceProviders: loadFromStorage<ServiceProvider[]>('serviceProviders', seedServiceProviders),
-    serviceContracts: loadFromStorage<ServiceContract[]>('serviceContracts', seedServiceContracts),
-    settlementBills: loadFromStorage<SettlementBill[]>('settlementBills', seedSettlementBills),
+    serviceContracts: loadFromStorage<ServiceContract[]>('serviceContracts', seedServiceContracts).map(
+      (c) => ensureContractVersions({ ...c, versions: c.versions ? c.versions.map((v) => ({ ...v })) : undefined }),
+    ),
+    settlementBills: ensureSettlementBills(
+      loadFromStorage<SettlementBill[]>('settlementBills', seedSettlementBills),
+    ),
     billingRules: loadFromStorage<BillingRule[]>('billingRules', seedBillingRules),
     billImportTemplates: loadFromStorage<BillImportTemplate[]>(
       'billImportTemplates',
@@ -406,8 +454,11 @@ export const useAppStore = defineStore('app', {
       'pendingSettlements',
       seedPendingSettlements,
     ),
-    settlementManageOrders: loadFromStorage<SettlementManageOrder[]>(
-      'settlementManageOrders',
+    settlementManageOrders: ensureSettlementManageOrders(
+      loadFromStorage<SettlementManageOrder[]>(
+        'settlementManageOrders',
+        seedSettlementManageOrders,
+      ),
       seedSettlementManageOrders,
     ),
     settlementSlips: loadFromStorage<SettlementSlip[]>('settlementSlips', seedSettlementSlips),
@@ -416,13 +467,17 @@ export const useAppStore = defineStore('app', {
       'invoiceApplications',
       seedInvoiceApplications,
     ),
-    enterpriseInvoiceProfiles: loadFromStorage<EnterpriseInvoiceProfile[]>(
-      'enterpriseInvoiceProfiles',
+    enterpriseInvoiceProfiles: ensureEnterpriseInvoiceProfiles(
+      loadFromStorage<EnterpriseInvoiceProfile[]>(
+        'enterpriseInvoiceProfiles',
+        seedEnterpriseInvoiceProfiles,
+      ),
       seedEnterpriseInvoiceProfiles,
     ),
     insuranceProducts: loadFromStorage<InsuranceProduct[]>('insuranceProducts', seedInsuranceProducts),
     insurancePolicies: loadFromStorage<InsurancePolicy[]>('insurancePolicies', seedInsurancePolicies),
     trainingMaterials: loadTrainingMaterials(),
+    trainingMaterialCategories: loadTrainingMaterialCategories(),
     trainingCourses: trainingData.courses,
     trainingExams: trainingData.exams,
     examQuestions: loadExamQuestions(),
@@ -451,7 +506,11 @@ export const useAppStore = defineStore('app', {
       'providerFundAccounts',
       seedProviderFundAccounts,
     ),
-    fundTransactions: loadFromStorage<FundTransaction[]>('fundTransactions', seedFundTransactions),
+    fundTransactions: ensureFundTransactions(
+      loadFromStorage<FundTransaction[]>('fundTransactions', seedFundTransactions),
+      seedFundTransactions,
+    ),
+    reminderRules: loadFromStorage<ReminderRule[]>('reminderRules', seedReminderRules),
     }
   },
 
@@ -463,11 +522,33 @@ export const useAppStore = defineStore('app', {
       state.swapRequests.filter((r) => r.status === 'pending').length +
       state.makeupRequests.filter((r) => r.status === 'pending').length +
       state.overtimeRequests.filter((r) => r.status === 'pending').length +
-      state.taskTypes.filter((t) => t.status === 'pending').length,
+      state.tasks.filter((t) => t.status === 'pending').length,
     pendingAttendanceApprovalCount: (state) =>
       state.makeupRequests.filter((r) => r.status === 'pending').length +
-      state.cancelShiftRequests.filter((r) => r.status === 'pending').length +
-      state.overtimeRequests.filter((r) => r.status === 'pending').length,
+      state.cancelShiftRequests.filter((r) => r.status === 'pending').length,
+    pendingScheduleAttendanceApprovalCount: (state) => {
+      const isSchedule = (employeeId: string, date: string) =>
+        !state.assignments.find((a) => a.employeeId === employeeId && a.date === date)?.fromGrabSlotId
+      return (
+        state.makeupRequests.filter((r) => r.status === 'pending' && isSchedule(r.employeeId, r.date))
+          .length +
+        state.cancelShiftRequests.filter(
+          (r) => r.status === 'pending' && isSchedule(r.employeeId, r.date),
+        ).length
+      )
+    },
+    pendingGrabAttendanceApprovalCount: (state) => {
+      const isGrab = (employeeId: string, date: string) =>
+        Boolean(
+          state.assignments.find((a) => a.employeeId === employeeId && a.date === date)?.fromGrabSlotId,
+        )
+      return (
+        state.makeupRequests.filter((r) => r.status === 'pending' && isGrab(r.employeeId, r.date))
+          .length +
+        state.cancelShiftRequests.filter((r) => r.status === 'pending' && isGrab(r.employeeId, r.date))
+          .length
+      )
+    },
     openExceptionCount: (state) =>
       state.exceptions.filter((e) => e.status === 'open' || e.status === 'appealed').length,
     currentEnterprise: (state) =>
@@ -513,30 +594,21 @@ export const useAppStore = defineStore('app', {
       state.employees.filter(
         (e) => (e.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId,
       ),
-    getEnterpriseSettlementConfig: (state) => (enterpriseId: string) => {
-      const found = state.enterpriseSettlementConfigs.find((c) => c.enterpriseId === enterpriseId)
-      return normalizeEnterpriseSettlementConfig(
-        found ?? createDefaultEnterpriseSettlementConfig(enterpriseId),
-      )
-    },
     getAttendanceGroupsByEnterprise: (state) => (enterpriseId: string) =>
       getAttendanceGroupsForEnterprise(enterpriseId, state.attendanceGroups, state.departments),
     getTaskTypesByEnterprise: (state) => (enterpriseId: string) =>
       state.taskTypes.filter((t) => t.enterpriseId === enterpriseId),
-    resolveGroupSettlementPrice: (state) => (enterpriseId: string, attendanceGroupId: string) =>
-      resolveHourlySettlementPrice(
+    resolveGroupSettlementPrice: (state) => (enterpriseId: string, attendanceGroupId: string) => {
+      const group = state.attendanceGroups.find((g) => g.id === attendanceGroupId)
+      return resolveHourlySettlementPrice(
         enterpriseId,
         attendanceGroupId,
-        state.enterpriseSettlementConfigs,
         state.attendanceGroupSettlementOverrides,
-      ),
+        group,
+      )
+    },
     resolveTaskTypeSettlementPrice: (state) => (enterpriseId: string, taskType: TaskType) =>
-      resolveTaskSettlementPrice(
-        enterpriseId,
-        taskType,
-        state.enterpriseSettlementConfigs,
-        state.taskTypeSettlementOverrides,
-      ),
+      resolveTaskTypePrice(enterpriseId, taskType, state.taskTypeSettlementOverrides),
     getFundAccountsByProvider: (state) => (providerId: string) =>
       state.providerFundAccounts.filter((account) => account.providerId === providerId),
     getFundTransactionsByProvider: (state) => (providerId: string) =>
@@ -571,37 +643,130 @@ export const useAppStore = defineStore('app', {
       const deptIds = new Set(depts.map((d) => d.id))
       const teams = state.teams.filter((t) => deptIds.has(t.departmentId))
       const snapshot = seedEnterpriseWorkforceSnapshots[enterpriseId]
+      const groupIds = new Set(
+        state.attendanceGroups
+          .filter((g) =>
+            g.departmentBindings.some((b) => deptIds.has(b.departmentId)),
+          )
+          .map((g) => g.id),
+      )
 
-      const departmentCount = depts.filter(
+      const liveDepartmentCount = depts.filter(
         (d) => !isUnassignedDepartment(d.id) && d.orgType !== 'enterprise',
       ).length
 
-      if (employees.length > 0) {
-        return {
-          departmentCount,
-          activeCount: employees.filter((e) => e.status === 'active').length,
-          pendingCount: employees.filter((e) => e.status === 'pending').length,
-          resignedCount: employees.filter((e) => e.status === 'resigned').length,
-          teamCount: teams.length,
-        }
-      }
+      /** 演示快照优先，保证后台「企业人员统计」指标有稳定可读数据；需求缺口始终按招聘需求实时汇总 */
+      const demandGap = state.jobRequirements
+        .filter((j) => j.enterpriseId === enterpriseId && j.status !== 'completed')
+        .reduce((sum, j) => sum + Math.max(0, (j.headcount ?? 0) - (j.filledCount ?? 0)), 0)
+
+      const liveShiftGap = state.grabShiftSlots
+        .filter(
+          (s) =>
+            groupIds.has(s.attendanceGroupId) &&
+            s.status !== 'cancelled' &&
+            s.status !== 'full',
+        )
+        .reduce((sum, s) => sum + Math.max(0, (s.requiredCount ?? 0) - (s.grabbedCount ?? 0)), 0)
 
       if (snapshot) {
+        const scheduleEmployeeCount =
+          snapshot.scheduleEmployeeCount ??
+          Math.max(0, (snapshot.activeCount ?? 0) - (snapshot.grabPoolCount ?? 0))
+        const grabPoolCount = snapshot.grabPoolCount ?? 0
         return {
-          departmentCount: snapshot.departmentCount,
-          activeCount: snapshot.activeCount,
+          departmentCount: Math.max(snapshot.departmentCount, liveDepartmentCount),
+          scheduleEmployeeCount,
+          grabPoolCount,
+          employeeCount: scheduleEmployeeCount,
+          activeCount: scheduleEmployeeCount + grabPoolCount,
           pendingCount: snapshot.pendingCount,
           resignedCount: snapshot.resignedCount,
-          teamCount: snapshot.teamCount,
+          teamCount: Math.max(snapshot.teamCount, teams.length),
+          onDutyCount: snapshot.onDutyCount,
+          absentCount: snapshot.absentCount,
+          demandGap,
+          shiftGap: snapshot.shiftGap ?? liveShiftGap,
         }
       }
 
-      return {
-        departmentCount,
+      const emptyStats = {
+        departmentCount: liveDepartmentCount,
+        scheduleEmployeeCount: 0,
+        grabPoolCount: 0,
+        employeeCount: 0,
         activeCount: 0,
         pendingCount: 0,
         resignedCount: 0,
         teamCount: teams.length,
+        onDutyCount: 0,
+        absentCount: 0,
+        demandGap,
+        shiftGap: liveShiftGap,
+      }
+
+      if (!employees.length) return emptyStats
+
+      const isGrabPersonnel = (e: (typeof employees)[number]) => e.personnelCategory === 'grab'
+      const activeEmployees = employees.filter((e) => e.status === 'active')
+      const scheduleActive = activeEmployees.filter((e) => !isGrabPersonnel(e))
+      const grabActive = activeEmployees.filter((e) => isGrabPersonnel(e))
+      const activeIds = new Set(scheduleActive.map((e) => e.id))
+      const punchDates = state.punches
+        .filter((p) => activeIds.has(p.employeeId))
+        .map((p) => p.date)
+      const assignmentDates = state.assignments
+        .filter((a) => activeIds.has(a.employeeId) && !a.fromGrabSlotId)
+        .map((a) => a.date)
+      const candidateDates = [...punchDates, ...assignmentDates].sort()
+      const today =
+        candidateDates[candidateDates.length - 1] || new Date().toISOString().slice(0, 10)
+
+      const clockedIn = new Set(
+        state.punches
+          .filter(
+            (p) => activeIds.has(p.employeeId) && p.date === today && p.type === 'clock_in',
+          )
+          .map((p) => p.employeeId),
+      )
+
+      let onDutyCount = 0
+      let absentCount = 0
+      scheduleActive.forEach((emp) => {
+        const asn = state.assignments.find(
+          (a) => a.employeeId === emp.id && a.date === today && !a.fromGrabSlotId,
+        )
+        const shift = asn ? state.shifts.find((s) => s.id === asn.shiftId) : undefined
+        const scheduled = Boolean(shift && shift.code !== 'REST')
+        if (clockedIn.has(emp.id)) {
+          onDutyCount += 1
+        } else if (scheduled) {
+          absentCount += 1
+        }
+      })
+
+      if (onDutyCount === 0 && absentCount === 0 && scheduleActive.length > 0) {
+        onDutyCount = Math.max(1, Math.round(scheduleActive.length * 0.88))
+        absentCount = Math.max(0, scheduleActive.length - onDutyCount)
+        if (absentCount === 0 && scheduleActive.length > 3) {
+          absentCount = Math.max(1, Math.round(scheduleActive.length * 0.06))
+          onDutyCount = Math.max(0, scheduleActive.length - absentCount)
+        }
+      }
+
+      return {
+        departmentCount: liveDepartmentCount,
+        scheduleEmployeeCount: scheduleActive.length,
+        grabPoolCount: grabActive.length,
+        employeeCount: scheduleActive.length,
+        activeCount: activeEmployees.length,
+        pendingCount: employees.filter((e) => e.status === 'pending').length,
+        resignedCount: employees.filter((e) => e.status === 'resigned').length,
+        teamCount: teams.length,
+        onDutyCount,
+        absentCount,
+        demandGap,
+        shiftGap: liveShiftGap,
       }
     },
     invoiceableBills: (state) =>
@@ -664,7 +829,7 @@ export const useAppStore = defineStore('app', {
       return item
     },
     updateDepartment(id: string, data: Partial<Department>) {
-      if (isUnassignedDepartment(id)) throw new Error('待分配人员为系统部门，不可编辑')
+      if (isUnassignedDepartment(id)) throw new Error('待入驻人员为系统部门，不可编辑')
       const existing = this.departments.find((d) => d.id === id)
       if (existing && isEnterpriseRootDepartment(existing)) {
         throw new Error('企业根节点不可编辑')
@@ -676,7 +841,7 @@ export const useAppStore = defineStore('app', {
       }
     },
     removeDepartment(id: string) {
-      if (isUnassignedDepartment(id)) throw new Error('待分配人员为系统部门，不可删除')
+      if (isUnassignedDepartment(id)) throw new Error('待入驻人员为系统部门，不可删除')
       const existing = this.departments.find((d) => d.id === id)
       if (existing && isEnterpriseRootDepartment(existing)) {
         throw new Error('企业根节点不可删除')
@@ -693,7 +858,7 @@ export const useAppStore = defineStore('app', {
       position: 'before' | 'after' | 'inner',
     ) {
       if (isUnassignedDepartment(dragId) || isUnassignedDepartment(targetId)) {
-        throw new Error('待分配人员为系统部门，不可调整顺序')
+        throw new Error('待入驻人员为系统部门，不可调整顺序')
       }
       const drag = this.departments.find((d) => d.id === dragId)
       const target = this.departments.find((d) => d.id === targetId)
@@ -784,18 +949,127 @@ export const useAppStore = defineStore('app', {
       this.persist('teams')
       this.persist('assignments')
     },
-    batchAssignEmployees(ids: string[], departmentId: string, position: string) {
+    batchAssignEmployees(
+      ids: string[],
+      departmentId: string,
+      position: string,
+      options?: { employeeNo?: string },
+    ) {
       if (isUnassignedDepartment(departmentId)) {
         throw new Error('请选择具体部门进行分配')
       }
       if (!position.trim()) throw new Error('请填写岗位')
       ids.forEach((id) => {
         const existing = this.employees.find((e) => e.id === id)
-        this.updateEmployee(id, {
+        const patch: Partial<Employee> = {
           departmentId,
           position: position.trim(),
+          applyDepartmentId: undefined,
+          onboardingStage: undefined,
           ...(existing?.status !== 'resigned' ? { status: 'active' as const } : {}),
+        }
+        if (options?.employeeNo?.trim()) {
+          patch.employeeNo = options.employeeNo.trim()
+        }
+        this.updateEmployee(id, patch)
+      })
+    },
+
+    /** 待申请人员：直接分配岗位与人员 ID */
+    assignPendingOnboardEmployee(
+      employeeId: string,
+      data: { departmentId: string; position: string; employeeNo: string },
+    ) {
+      const emp = this.employees.find((e) => e.id === employeeId)
+      if (!emp) throw new Error('人员不存在')
+      if (!data.employeeNo.trim()) throw new Error('请填写人员 ID')
+      this.batchAssignEmployees([employeeId], data.departmentId, data.position, {
+        employeeNo: data.employeeNo,
+      })
+    },
+
+    /** 已申请入驻：审批通过并分配部门、岗位、人员 ID */
+    approveOnboardApplication(
+      employeeId: string,
+      data: { departmentId: string; position: string; employeeNo: string },
+    ) {
+      const emp = this.employees.find((e) => e.id === employeeId)
+      if (!emp) throw new Error('人员不存在')
+      if (emp.onboardingStage !== 'applied' && emp.status === 'pending') {
+        // 仍允许审批待申请以外的已申请
+      }
+      if (!data.employeeNo.trim()) throw new Error('请填写人员 ID')
+      this.batchAssignEmployees([employeeId], data.departmentId, data.position, {
+        employeeNo: data.employeeNo,
+      })
+    },
+
+    /** 灵工扫码申请入驻企业-部门 */
+    applyJoinDepartmentByQr(
+      qrPayload: string,
+      applicant: { name: string; phone?: string; employeeId?: string },
+    ) {
+      const parsed = parseDepartmentJoinQrPayload(qrPayload)
+      if (!parsed) throw new Error('无效的入驻二维码')
+      const dept = this.departments.find((d) => d.id === parsed.departmentId)
+      if (!dept) throw new Error('目标部门不存在')
+      if (isUnassignedDepartment(dept.id) || isEnterpriseRootDepartment(dept)) {
+        throw new Error('请扫描具体业务部门二维码')
+      }
+      const enterpriseId =
+        parsed.enterpriseId ||
+        resolveEnterpriseIdByDepartment(dept.id, this.departments) ||
+        dept.enterpriseId
+      if (!enterpriseId) throw new Error('无法识别企业')
+      this.ensureEnterpriseOrgStructure(enterpriseId)
+      const unassignedId = enterpriseUnassignedDepartmentId(enterpriseId)
+
+      if (applicant.employeeId) {
+        const existing = this.employees.find((e) => e.id === applicant.employeeId)
+        if (existing) {
+          this.updateEmployee(existing.id, {
+            status: 'pending',
+            onboardingStage: 'applied',
+            applyDepartmentId: dept.id,
+            departmentId: unassignedId,
+            enterpriseId,
+            position: UNASSIGNED_POSITION,
+            hireDate: existing.hireDate || new Date().toISOString().slice(0, 10),
+          })
+          return existing
+        }
+      }
+
+      const dup = this.employees.find(
+        (e) =>
+          e.status === 'pending' &&
+          e.phone === applicant.phone &&
+          e.enterpriseId === enterpriseId,
+      )
+      if (dup) {
+        this.updateEmployee(dup.id, {
+          onboardingStage: 'applied',
+          applyDepartmentId: dept.id,
+          departmentId: unassignedId,
         })
+        return dup
+      }
+
+      return this.addEmployee({
+        name: applicant.name.trim() || '新申请人员',
+        employeeNo: `T${Date.now().toString().slice(-6)}`,
+        departmentId: unassignedId,
+        enterpriseId,
+        position: UNASSIGNED_POSITION,
+        hireDate: new Date().toISOString().slice(0, 10),
+        skills: [],
+        preferredShiftIds: [],
+        unavailableDates: [],
+        status: 'pending',
+        onboardingStage: 'applied',
+        applyDepartmentId: dept.id,
+        phone: applicant.phone,
+        realNameVerified: false,
       })
     },
 
@@ -869,6 +1143,10 @@ export const useAppStore = defineStore('app', {
       },
     ) {
       this.assertCourseGateForEmployee(data.employeeId, 'schedule')
+      const emp = this.employees.find((e) => e.id === data.employeeId)
+      if (isEmployeeUnavailableOnDate(emp, data.date)) {
+        throw new Error('该灵工已配置请假/不上岗，所选日期无法排班')
+      }
       const published = data.published ?? false
       const existing = this.assignments.find(
         (a) =>
@@ -966,6 +1244,8 @@ export const useAppStore = defineStore('app', {
       if (!team) throw new Error('班组不存在')
       const month = dates[0]?.slice(0, 7) ?? ''
       const nextAssignments: ScheduleAssignment[] = []
+      const notifyEmployeeIds = new Set<string>()
+      let changedCount = 0
 
       team.memberIds.forEach((employeeId) => {
         dates.forEach((date) => {
@@ -977,15 +1257,38 @@ export const useAppStore = defineStore('app', {
           )
           const draft = cell.find((a) => !a.published)
           const published = cell.find((a) => a.published)
+
+          // 已确认班次原样保留，不可被草稿覆盖
+          if (isAssignmentConfirmedLocked(published)) {
+            nextAssignments.push({ ...published! })
+            return
+          }
+
           const source = draft ?? published
           if (!source) return
+
+          const shiftChanged =
+            Boolean(draft) &&
+            (!published ||
+              draft!.shiftId !== published.shiftId ||
+              (draft!.note ?? '') !== (published.note ?? ''))
+          const isNew = Boolean(draft) && !published
+          const needsConfirm = Boolean(draft) && (isNew || shiftChanged || !published)
+
           nextAssignments.push({
             ...source,
-            id: generateId('asn'),
+            id: published && !draft ? published.id : generateId('asn'),
             published: true,
-            confirmStatus: 'pending',
+            confirmStatus: needsConfirm
+              ? 'pending'
+              : published?.confirmStatus ?? 'pending',
             manualEdited: false,
           })
+
+          if (needsConfirm) {
+            notifyEmployeeIds.add(employeeId)
+            changedCount += 1
+          }
         })
       })
 
@@ -1015,15 +1318,68 @@ export const useAppStore = defineStore('app', {
         version,
         periodStart: dates[0],
         periodEnd: dates[dates.length - 1],
-        changeNote: version === 1 ? '首次发布' : '排班更新',
+        changeNote:
+          version === 1
+            ? '首次发布'
+            : changedCount > 0
+              ? `排班更新（通知 ${notifyEmployeeIds.size} 人）`
+              : '排班更新',
         snapshot: JSON.parse(JSON.stringify(nextAssignments)) as ScheduleAssignment[],
       }
       this.publishRecords.unshift(record)
+
       this.pushNotification({
         title: '排班发布通知',
-        content: `${team.name} 排班已发布，已通知 ${team.memberIds.length} 位员工确认`,
+        content:
+          changedCount > 0
+            ? `${team.name} 排班已更新，已通知 ${notifyEmployeeIds.size} 位灵工确认待确认班次`
+            : `${team.name} 排班已发布（无待确认变更）`,
         type: 'schedule',
       })
+
+      // 向受影响灵工推送小程序排班确认消息
+      const group = this.attendanceGroups.find((g) => g.id === team.attendanceGroupId)
+      notifyEmployeeIds.forEach((employeeId) => {
+        const related = nextAssignments.filter(
+          (a) =>
+            a.employeeId === employeeId &&
+            normalizeConfirmStatus(a.confirmStatus) === 'pending',
+        )
+        if (!related.length) return
+        const first = related[0]
+        const shift = this.shifts.find((s) => s.id === first.shiftId)
+        const shiftLabel = shift?.name ?? '班次'
+        const shiftTime =
+          shift && shift.code !== 'REST'
+            ? `${shift.startTime.slice(0, 5)}-${shift.endTime.slice(0, 5)}`
+            : ''
+        const dateText =
+          related.length === 1
+            ? first.date
+            : `${related.length} 个日期（含 ${first.date}）`
+        this.miniAppMessages.unshift({
+          id: generateId('msg'),
+          employeeId,
+          category: 'schedule',
+          actionType: 'schedule_confirm',
+          title: `排班已更新，请确认【${team.name}】${shiftLabel}`,
+          content: `班次：【${team.name}】${shiftLabel}${shiftTime ? ` · ${shiftTime}` : ''} · ${dateText}，请确认是否可出勤。`,
+          read: false,
+          createdAt: new Date().toISOString(),
+          scheduleDetail: {
+            enterpriseName: group?.name ?? team.name,
+            groupName: team.name,
+            shiftLabel,
+            shiftTime,
+            date: first.date,
+            hourlyRate: team.hourlyRate ?? 0,
+            confirmBefore: `${first.date}T23:59:00`,
+            confirmStatus: 'pending',
+          },
+        })
+      })
+      if (notifyEmployeeIds.size) this.persist('miniAppMessages')
+
       this.persist('assignments')
       this.persist('publishRecords')
       return record
@@ -1042,8 +1398,15 @@ export const useAppStore = defineStore('app', {
       if (!team) throw new Error('班组不存在')
 
       record.snapshot.forEach((item) => {
+        const published = this.assignments.find(
+          (a) =>
+            a.employeeId === item.employeeId &&
+            a.date === item.date &&
+            a.published &&
+            (a.teamId ?? record.teamId) === record.teamId,
+        )
+        if (isAssignmentConfirmedLocked(published)) return
         this.removeAssignment(item.employeeId, item.date, false)
-        this.removeAssignment(item.employeeId, item.date, true)
         this.upsertAssignment({
           employeeId: item.employeeId,
           shiftId: item.shiftId,
@@ -1128,12 +1491,21 @@ export const useAppStore = defineStore('app', {
       let count = 0
       memberIds.forEach((employeeId) => {
         sourceDates.forEach((srcDate, idx) => {
+          const targetDate = targetDates[idx]
+          const published = this.assignments.find(
+            (a) =>
+              a.employeeId === employeeId &&
+              a.date === targetDate &&
+              a.teamId === teamId &&
+              a.published,
+          )
+          if (isAssignmentConfirmedLocked(published)) return
           const src = this.getAssignment(employeeId, srcDate)
           if (!src || src.teamId !== teamId) return
           this.upsertAssignment({
             employeeId,
             shiftId: src.shiftId,
-            date: targetDates[idx],
+            date: targetDate,
             teamId,
             published: false,
             manualEdited: true,
@@ -1156,6 +1528,8 @@ export const useAppStore = defineStore('app', {
               a.published &&
               a.teamId === teamId,
           )
+          // 已确认班次不可进入草稿编辑，须走取消班次
+          if (isAssignmentConfirmedLocked(published)) return
           const draft = this.assignments.find(
             (a) =>
               a.employeeId === employeeId &&
@@ -1269,23 +1643,114 @@ export const useAppStore = defineStore('app', {
       this.syncExceptions()
     },
 
+    confirmWorkHours(
+      employeeId: string,
+      date: string,
+      options?: { workHours?: number; note?: string; operator?: string },
+    ) {
+      const key = `${employeeId}_${date}`
+      const prev = this.manualOverrides[key] ?? {}
+      const now = new Date().toISOString()
+      const operator = options?.operator?.trim() || '考勤管理员'
+      const workHours =
+        options?.workHours ??
+        prev.workHours ??
+        this.resolveSystemWorkHours(employeeId, date)
+      const reason = options?.note?.trim() || '确认系统工时'
+      const history = [...(prev.hoursHistory ?? [])]
+      history.unshift({
+        action: 'confirm',
+        workHours,
+        reason,
+        operator,
+        operatedAt: now,
+      })
+      this.manualOverrides[key] = {
+        ...prev,
+        workHours: prev.workHours,
+        hoursConfirmed: true,
+        hoursConfirmedAt: now,
+        hoursConfirmedBy: operator,
+        note: prev.note,
+        hoursHistory: history.slice(0, 20),
+      }
+      this.persist('manualOverrides')
+      return this.manualOverrides[key]
+    },
+
+    batchConfirmWorkHours(
+      items: { employeeId: string; date: string; workHours?: number }[],
+      options?: { note?: string; operator?: string },
+    ) {
+      let count = 0
+      items.forEach((item) => {
+        this.confirmWorkHours(item.employeeId, item.date, {
+          workHours: item.workHours,
+          note: options?.note,
+          operator: options?.operator,
+        })
+        count += 1
+      })
+      return count
+    },
+
     setWorkHoursCorrection(
       employeeId: string,
       date: string,
       workHours: number,
       note?: string,
+      operator = '考勤管理员',
+      options?: { autoConfirm?: boolean },
     ) {
       const reason = note?.trim()
       if (!reason) {
-        throw new Error('工时确认/矫正必须填写具体原因')
+        throw new Error('工时矫正必须填写具体原因')
       }
+      if (workHours < 0) {
+        throw new Error('工时不能为负数')
+      }
+      const autoConfirm = options?.autoConfirm !== false
       const key = `${employeeId}_${date}`
+      const prev = this.manualOverrides[key] ?? {}
+      const now = new Date().toISOString()
+      const history = [...(prev.hoursHistory ?? [])]
+      history.unshift({
+        action: 'correct',
+        workHours,
+        reason,
+        operator,
+        operatedAt: now,
+      })
       this.manualOverrides[key] = {
-        ...this.manualOverrides[key],
+        ...prev,
         workHours,
         note: reason,
+        hoursConfirmed: autoConfirm ? true : prev.hoursConfirmed,
+        hoursConfirmedAt: autoConfirm
+          ? (prev.hoursConfirmedAt ?? now)
+          : prev.hoursConfirmedAt,
+        hoursConfirmedBy: autoConfirm
+          ? (prev.hoursConfirmedBy ?? operator)
+          : prev.hoursConfirmedBy,
+        hoursCorrectedAt: now,
+        hoursCorrectedBy: operator,
+        hoursHistory: history.slice(0, 20),
       }
       this.persist('manualOverrides')
+      return this.manualOverrides[key]
+    },
+
+    resolveSystemWorkHours(employeeId: string, date: string) {
+      const day = computeDailyAttendance(
+        employeeId,
+        date,
+        this.assignments,
+        this.shifts,
+        this.punches,
+        this.leaveRequests,
+        this.attendanceRule,
+      )
+      return day.workHours
     },
 
     clearManualOverride(employeeId: string, date: string) {
@@ -1419,38 +1884,46 @@ export const useAppStore = defineStore('app', {
     },
 
     submitCancelShiftRequest(
-      data: Omit<CancelShiftRequest, 'id' | 'status' | 'createdAt'>,
+      data: Omit<CancelShiftRequest, 'id' | 'status' | 'createdAt'> & {
+        status?: CancelShiftRequest['status']
+      },
     ) {
       const dup = this.cancelShiftRequests.find(
         (r) =>
           r.employeeId === data.employeeId &&
           r.date === data.date &&
-          r.status === 'pending',
+          r.status === 'pending' &&
+          (data.grabSlotId ? r.grabSlotId === data.grabSlotId : true),
       )
       if (dup) throw new Error('该日期已有待审批的取消班次申请')
 
-      const asn = this.getAssignment(data.employeeId, data.date)
-      if (!asn) throw new Error('该日期暂无排班，无法申请取消')
+      const asn = data.employeeId ? this.getAssignment(data.employeeId, data.date) : undefined
+      if (data.employeeId && !asn && data.source !== 'grab') {
+        throw new Error('该日期暂无排班，无法申请取消')
+      }
 
-      const teamId = data.teamId || asn.teamId
+      const teamId = data.teamId || asn?.teamId
       if (!teamId) throw new Error('无法确定班组信息')
 
+      const status = data.status ?? 'pending'
       const item: CancelShiftRequest = {
         ...data,
-        shiftId: data.shiftId || asn.shiftId,
+        shiftId: data.shiftId || asn?.shiftId || '',
         teamId,
         id: generateId('cancel_shift'),
-        status: 'pending',
+        status,
         createdAt: new Date().toISOString(),
       }
       this.cancelShiftRequests.unshift(item)
       this.persist('cancelShiftRequests')
-      const empName = this.employees.find((e) => e.id === data.employeeId)?.name ?? ''
-      this.pushNotification({
-        title: '取消班次申请待审批',
-        content: `${empName} 申请取消 ${data.date} 排班`,
-        type: 'approval',
-      })
+      if (status === 'pending') {
+        const empName = this.employees.find((e) => e.id === data.employeeId)?.name ?? ''
+        this.pushNotification({
+          title: '取消班次申请待审批',
+          content: `${empName || '管理端'} 申请取消 ${data.date} 排班`,
+          type: 'approval',
+        })
+      }
       return item
     },
 
@@ -1651,24 +2124,280 @@ export const useAppStore = defineStore('app', {
 
     createGrabShiftSlot(
       data: Omit<GrabShiftSlot, 'id' | 'createdAt' | 'grabbedCount' | 'status'>,
+      options?: { publishStatus?: GrabShiftSlot['publishStatus'] },
     ) {
+      const publishStatus = options?.publishStatus ?? data.publishStatus ?? 'pending'
       const item: GrabShiftSlot = {
         ...data,
         id: generateId('gs'),
         grabbedCount: 0,
         status: 'open',
+        publishStatus,
         createdAt: new Date().toISOString(),
       }
       this.grabShiftSlots.unshift(item)
       this.persist('grabShiftSlots')
+      if (publishStatus === 'pending') {
+        this.pushNotification({
+          title: '抢班班次待审批',
+          content: `${item.shiftName}（${item.date}）已提交，待平台审核后上架小程序`,
+          type: 'approval',
+        })
+      }
       return item
     },
 
-    cancelGrabShiftSlot(id: string) {
+    updateGrabShiftSlot(
+      id: string,
+      data: Partial<
+        Pick<
+          GrabShiftSlot,
+          | 'date'
+          | 'startTime'
+          | 'endTime'
+          | 'requiredCount'
+          | 'hourlySubsidy'
+          | 'baseHourlyRate'
+          | 'effectiveHourlyRate'
+          | 'positionRequirement'
+          | 'requirements'
+          | 'hasBreakTime'
+          | 'breakRule'
+          | 'breakMinutes'
+          | 'workHours'
+          | 'enrollFloatMode'
+          | 'enrollFloatValue'
+          | 'enrollCap'
+          | 'customerFee'
+          | 'wageBaseHourlyRate'
+          | 'wageHourlySubsidy'
+          | 'wageHourlyRate'
+          | 'wageFee'
+        >
+      >,
+    ) {
       const slot = this.grabShiftSlots.find((s) => s.id === id)
       if (!slot) throw new Error('抢班班次不存在')
-      slot.status = 'cancelled'
+      Object.assign(slot, data)
+      if (data.hourlySubsidy != null || data.baseHourlyRate != null) {
+        const base = data.baseHourlyRate ?? slot.baseHourlyRate ?? 0
+        const subsidy = data.hourlySubsidy ?? slot.hourlySubsidy ?? 0
+        slot.effectiveHourlyRate = Math.round((base + Math.max(0, subsidy)) * 100) / 100
+      }
+      if (data.wageHourlySubsidy != null || data.wageBaseHourlyRate != null) {
+        const wBase = data.wageBaseHourlyRate ?? slot.wageBaseHourlyRate ?? 0
+        const wSub = data.wageHourlySubsidy ?? slot.wageHourlySubsidy ?? 0
+        slot.wageHourlyRate = Math.round((wBase + Math.max(0, wSub)) * 100) / 100
+      }
       this.persist('grabShiftSlots')
+      return slot
+    },
+
+    /** 平台审核抢班班次：可配置上浮/薪资费用等后上架小程序（日期时段人数客户费用不可改） */
+    reviewGrabShiftSlot(
+      id: string,
+      approved: boolean,
+      reviewNote = '',
+      reviewedBy = '运营-李芳',
+      edits?: Partial<
+        Pick<
+          GrabShiftSlot,
+          | 'positionRequirement'
+          | 'requirements'
+          | 'breakMinutes'
+          | 'workHours'
+          | 'enrollFloatMode'
+          | 'enrollFloatValue'
+          | 'enrollCap'
+          | 'customerFee'
+          | 'wageBaseHourlyRate'
+          | 'wageHourlySubsidy'
+          | 'wageHourlyRate'
+          | 'wageFee'
+        >
+      >,
+    ) {
+      const slot = this.grabShiftSlots.find((s) => s.id === id)
+      if (!slot) throw new Error('抢班班次不存在')
+      if (slot.publishStatus !== 'pending') throw new Error('班次不在待审核状态')
+
+      if (approved && edits) {
+        this.updateGrabShiftSlot(id, edits)
+      }
+      const now = new Date().toISOString()
+      slot.reviewedBy = reviewedBy
+      slot.reviewedAt = now
+      slot.reviewNote = reviewNote.trim() || undefined
+      if (approved) {
+        slot.publishStatus = 'published'
+        this.pushNotification({
+          title: '抢班班次已上架',
+          content: `${slot.shiftName}（${slot.date}）已通过审核，灵工可在小程序报名`,
+          type: 'system',
+        })
+      } else {
+        slot.publishStatus = 'rejected'
+        this.pushNotification({
+          title: '抢班班次已驳回',
+          content: `${slot.shiftName}（${slot.date}）未通过审核${reviewNote ? `：${reviewNote}` : ''}`,
+          type: 'system',
+        })
+      }
+      this.persist('grabShiftSlots')
+      return slot
+    },
+
+    cancelGrabShiftSlot(
+      id: string,
+      options?: {
+        scope?: 'slot' | 'person'
+        employeeId?: string
+        reasonCode?: import('@/constants/cancelShift').CancelShiftReasonCode
+        reasonOther?: string
+        reason?: string
+        operatedBy?: string
+      },
+    ) {
+      const slot = this.grabShiftSlots.find((s) => s.id === id)
+      if (!slot) throw new Error('抢班班次不存在')
+      if (slot.status === 'cancelled') throw new Error('该班次已取消')
+
+      const scope = options?.scope ?? 'slot'
+      const operatedBy = options?.operatedBy ?? '排班管理员'
+      const reasonMap = {
+        business_change: '业务变动，班次调整/取消',
+        force_majeure: '不可抗力因素取消班次',
+        personnel_replace: '班次人员替换/补班',
+        other: '其他',
+      } as const
+      const reason =
+        options?.reason ||
+        (options?.reasonCode === 'other'
+          ? options.reasonOther?.trim() || '其他'
+          : options?.reasonCode
+            ? reasonMap[options.reasonCode]
+            : '管理端取消班次')
+      const now = new Date().toISOString()
+
+      const pushRecord = (employeeId: string, cancelScope: 'person' | 'slot') => {
+        this.cancelShiftRequests.unshift({
+          id: generateId('cancel_shift'),
+          employeeId,
+          date: slot.date,
+          shiftId: slot.shiftId,
+          teamId: slot.teamId,
+          reason,
+          reasonCode: options?.reasonCode,
+          reasonOther: options?.reasonOther,
+          status: 'approved',
+          initiatedBy: 'admin',
+          source: 'grab',
+          cancelScope,
+          grabSlotId: slot.id,
+          createdAt: now,
+          reviewedBy: operatedBy,
+          reviewedAt: now,
+          reviewNote: cancelScope === 'slot' ? '整班取消' : '单人取消',
+        })
+      }
+
+      if (scope === 'person') {
+        const employeeId = options?.employeeId
+        if (!employeeId) throw new Error('请选择要取消的人员')
+
+        const app = this.grabShiftApplications.find(
+          (a) =>
+            a.slotId === slot.id &&
+            a.employeeId === employeeId &&
+            (a.status === 'approved' || a.status === 'pending'),
+        )
+        const hadApprovedSeat =
+          app?.status === 'approved' ||
+          this.assignments.some(
+            (a) => a.fromGrabSlotId === slot.id && a.employeeId === employeeId,
+          )
+        if (!app && !hadApprovedSeat) {
+          throw new Error('该人员未在本班次报名或已取消')
+        }
+
+        if (app) {
+          app.status = 'cancelled'
+          app.reviewedBy = operatedBy
+          app.reviewedAt = now
+          app.reviewNote = reason
+        }
+
+        this.assignments = this.assignments.filter(
+          (a) =>
+            !(
+              a.employeeId === employeeId &&
+              a.date === slot.date &&
+              a.fromGrabSlotId === slot.id
+            ),
+        )
+
+        if (hadApprovedSeat) {
+          slot.grabbedCount = Math.max(0, (slot.grabbedCount ?? 0) - 1)
+        } else {
+          slot.grabbedCount = this.grabShiftApplications.filter(
+            (a) => a.slotId === slot.id && a.status === 'approved',
+          ).length
+        }
+        slot.status =
+          slot.grabbedCount <= 0
+            ? 'open'
+            : slot.grabbedCount >= slot.requiredCount
+              ? 'full'
+              : 'partial'
+
+        pushRecord(employeeId, 'person')
+        this.persist('grabShiftSlots')
+        this.persist('grabShiftApplications')
+        this.persist('assignments')
+        this.persist('cancelShiftRequests')
+        this.syncExceptions()
+        this.pushNotification({
+          title: '抢班单人取消',
+          content: `${slot.shiftName}（${slot.date}）已取消 1 人，需求名额已释放`,
+          type: 'schedule',
+        })
+        return
+      }
+
+      this.grabShiftApplications.forEach((a) => {
+        if (a.slotId !== slot.id) return
+        if (a.status === 'approved' || a.status === 'pending') {
+          a.status = 'cancelled'
+          a.reviewedBy = operatedBy
+          a.reviewedAt = now
+          a.reviewNote = reason
+        }
+      })
+      const affected = [
+        ...new Set(
+          this.assignments
+            .filter((a) => a.fromGrabSlotId === slot.id)
+            .map((a) => a.employeeId),
+        ),
+      ]
+      this.assignments = this.assignments.filter((a) => a.fromGrabSlotId !== slot.id)
+      slot.status = 'cancelled'
+      slot.grabbedCount = 0
+      if (affected.length) {
+        affected.forEach((employeeId) => pushRecord(employeeId, 'slot'))
+      } else {
+        pushRecord('', 'slot')
+      }
+      this.persist('grabShiftSlots')
+      this.persist('grabShiftApplications')
+      this.persist('assignments')
+      this.persist('cancelShiftRequests')
+      this.syncExceptions()
+      this.pushNotification({
+        title: '抢班班次已取消',
+        content: `${slot.shiftName}（${slot.date}）已整班取消`,
+        type: 'schedule',
+      })
     },
 
     assignGrabShift(slotId: string, employeeId: string) {
@@ -1697,8 +2426,15 @@ export const useAppStore = defineStore('app', {
       this.assertCourseGateForEmployee(data.employeeId, 'schedule')
       const slot = this.grabShiftSlots.find((s) => s.id === data.slotId)
       if (!slot) throw new Error('抢班班次不存在')
+      if (slot.publishStatus === 'pending' || slot.publishStatus === 'rejected') {
+        throw new Error('该班次尚未通过发布审批，暂不可报名')
+      }
       if (slot.status === 'cancelled' || slot.status === 'full') {
         throw new Error('该班次已满或已取消')
+      }
+      const emp = this.employees.find((e) => e.id === data.employeeId)
+      if (isEmployeeUnavailableOnDate(emp, slot.date)) {
+        throw new Error('您已配置请假/不上岗，该日期无法报名抢班')
       }
       const dup = this.grabShiftApplications.find(
         (a) =>
@@ -1789,6 +2525,191 @@ export const useAppStore = defineStore('app', {
       if (idx < 0) throw new Error('白名单记录不存在')
       this.grabShiftWhitelist.splice(idx, 1)
       this.persist('grabShiftWhitelist')
+    },
+
+    getGrabInterviewConfig(enterpriseId: string) {
+      return this.grabInterviewConfigs.find((c) => c.enterpriseId === enterpriseId) ?? null
+    },
+
+    ensureGrabInterviewConfig(enterpriseId: string): GrabInterviewConfig {
+      let cfg = this.grabInterviewConfigs.find((c) => c.enterpriseId === enterpriseId)
+      let dirty = false
+      if (!cfg) {
+        cfg = {
+          id: generateId('gic'),
+          enterpriseId,
+          requireInterview: false,
+          deptRules: [],
+          positionTemplates: [],
+          updatedAt: new Date().toISOString(),
+        }
+        this.grabInterviewConfigs.push(cfg)
+        dirty = true
+      }
+      if (!cfg.positionTemplates) {
+        cfg.positionTemplates = []
+        dirty = true
+      }
+      const needNorm = cfg.deptRules.some(
+        (r) =>
+          !Array.isArray(r.positions) ||
+          !r.departmentSchedule ||
+          !!r.positionName ||
+          r.positions.some((p) => !p.id || !p.profile),
+      )
+      if (needNorm) {
+        cfg.deptRules = cfg.deptRules.map((r) => normalizeDeptInterviewRule(r))
+        dirty = true
+      }
+      if (dirty) {
+        cfg.updatedAt = new Date().toISOString()
+        this.persist('grabInterviewConfigs')
+      }
+      return cfg
+    },
+
+    updateGrabInterviewConfig(
+      enterpriseId: string,
+      data: Partial<
+        Pick<GrabInterviewConfig, 'requireInterview' | 'deptRules' | 'positionTemplates'>
+      >,
+    ) {
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      if (data.requireInterview !== undefined) cfg.requireInterview = data.requireInterview
+      if (data.deptRules) cfg.deptRules = data.deptRules.map((r) => normalizeDeptInterviewRule(r))
+      if (data.positionTemplates) cfg.positionTemplates = data.positionTemplates
+      cfg.updatedAt = new Date().toISOString()
+      this.persist('grabInterviewConfigs')
+      return cfg
+    },
+
+    upsertGrabInterviewDeptRule(enterpriseId: string, rule: GrabInterviewDeptRule) {
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      const normalized = normalizeGrabInterviewDeptRule(rule)
+      const idx = cfg.deptRules.findIndex((r) => r.departmentId === normalized.departmentId)
+      if (idx >= 0) cfg.deptRules[idx] = normalized
+      else cfg.deptRules.push(normalized)
+      cfg.updatedAt = new Date().toISOString()
+      this.persist('grabInterviewConfigs')
+      return cfg
+    },
+
+    removeGrabInterviewDeptRule(enterpriseId: string, departmentId: string) {
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      cfg.deptRules = cfg.deptRules.filter((r) => r.departmentId !== departmentId)
+      cfg.updatedAt = new Date().toISOString()
+      this.persist('grabInterviewConfigs')
+    },
+
+    upsertGrabInterviewPositionTemplate(
+      enterpriseId: string,
+      template: Omit<GrabInterviewPositionTemplate, 'enterpriseId' | 'updatedAt'> & {
+        enterpriseId?: string
+        updatedAt?: string
+      },
+    ) {
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      const next: GrabInterviewPositionTemplate = {
+        ...template,
+        id: template.id || generateId('gitpl'),
+        enterpriseId,
+        updatedAt: new Date().toISOString(),
+      }
+      const list = cfg.positionTemplates ?? (cfg.positionTemplates = [])
+      const idx = list.findIndex((t) => t.id === next.id)
+      if (idx >= 0) list[idx] = next
+      else list.push(next)
+      cfg.updatedAt = new Date().toISOString()
+      this.persist('grabInterviewConfigs')
+      return next
+    },
+
+    removeGrabInterviewPositionTemplate(enterpriseId: string, templateId: string) {
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      cfg.positionTemplates = (cfg.positionTemplates ?? []).filter((t) => t.id !== templateId)
+      cfg.updatedAt = new Date().toISOString()
+      this.persist('grabInterviewConfigs')
+    },
+
+    addGrabInterviewRegistration(
+      data: Omit<GrabInterviewRegistration, 'id' | 'createdAt' | 'status'> & {
+        status?: GrabInterviewRegistration['status']
+      },
+    ) {
+      const item: GrabInterviewRegistration = {
+        ...data,
+        status: data.status ?? 'pending',
+        id: generateId('gir'),
+        createdAt: new Date().toISOString(),
+      }
+      this.grabInterviewRegistrations.unshift(item)
+      this.persist('grabInterviewRegistrations')
+      return item
+    },
+
+    updateGrabInterviewRegistration(id: string, data: Partial<GrabInterviewRegistration>) {
+      const idx = this.grabInterviewRegistrations.findIndex((r) => r.id === id)
+      if (idx < 0) throw new Error('报名记录不存在')
+      this.grabInterviewRegistrations[idx] = {
+        ...this.grabInterviewRegistrations[idx],
+        ...data,
+      }
+      this.persist('grabInterviewRegistrations')
+      return this.grabInterviewRegistrations[idx]
+    },
+
+    /**
+     * 面试反馈：通过则创建/入池到对应部门；不通过则记录原因
+     */
+    submitGrabInterviewFeedback(
+      id: string,
+      result: 'passed' | 'failed',
+      failReason?: string,
+    ) {
+      const reg = this.grabInterviewRegistrations.find((r) => r.id === id)
+      if (!reg) throw new Error('报名记录不存在')
+      if (reg.status !== 'pending') throw new Error('仅待面试记录可反馈')
+      if (result === 'failed') {
+        if (!failReason?.trim()) throw new Error('请填写未通过原因')
+        reg.status = 'failed'
+        reg.failReason = failReason.trim()
+        reg.feedbackAt = new Date().toISOString()
+        this.persist('grabInterviewRegistrations')
+        return reg
+      }
+      let emp = this.employees.find(
+        (e) => e.phone === reg.phone && e.enterpriseId === reg.enterpriseId,
+      )
+      if (emp) {
+        this.updateEmployee(emp.id, {
+          departmentId: reg.departmentId,
+          position: reg.position,
+          status: 'active',
+          onboardingStage: undefined,
+          personnelCategory: 'grab',
+        })
+      } else {
+        emp = this.addEmployee({
+          name: reg.name,
+          phone: reg.phone,
+          employeeNo: `G${Date.now().toString().slice(-6)}`,
+          departmentId: reg.departmentId,
+          enterpriseId: reg.enterpriseId,
+          position: reg.position,
+          hireDate: new Date().toISOString().slice(0, 10),
+          skills: [],
+          preferredShiftIds: [],
+          unavailableDates: [],
+          status: 'active',
+          personnelCategory: 'grab',
+        })
+      }
+      reg.status = 'passed'
+      reg.employeeId = emp.id
+      reg.failReason = undefined
+      reg.feedbackAt = new Date().toISOString()
+      this.persist('grabInterviewRegistrations')
+      return reg
     },
 
     reviewGrabShiftApplication(
@@ -2030,28 +2951,6 @@ export const useAppStore = defineStore('app', {
       this.persist('enterprises')
     },
 
-    updateEnterpriseSettlementConfig(
-      enterpriseId: string,
-      data: Pick<
-        EnterpriseSettlementConfig,
-        'dayShiftRate' | 'nightShiftRate' | 'overtime' | 'weekend' | 'holiday' | 'taskUnitPrice'
-      >,
-    ) {
-      const now = new Date().toISOString()
-      const idx = this.enterpriseSettlementConfigs.findIndex((c) => c.enterpriseId === enterpriseId)
-      const item: EnterpriseSettlementConfig = normalizeEnterpriseSettlementConfig({
-        enterpriseId,
-        ...data,
-        updatedAt: now,
-      })
-      if (idx >= 0) {
-        this.enterpriseSettlementConfigs[idx] = item
-      } else {
-        this.enterpriseSettlementConfigs.push(item)
-      }
-      this.persist('enterpriseSettlementConfigs')
-    },
-
     upsertAttendanceGroupSettlementOverride(
       data: Omit<AttendanceGroupSettlementOverride, 'updatedAt'> & { updatedAt?: string },
     ) {
@@ -2062,6 +2961,7 @@ export const useAppStore = defineStore('app', {
       )
       const item: AttendanceGroupSettlementOverride = {
         ...data,
+        useEnterpriseDefault: data.useEnterpriseDefault ?? false,
         updatedAt: now,
       }
       if (idx >= 0) {
@@ -2081,6 +2981,7 @@ export const useAppStore = defineStore('app', {
       )
       const item: TaskTypeSettlementOverride = {
         ...data,
+        useEnterpriseDefault: data.useEnterpriseDefault ?? false,
         updatedAt: now,
       }
       if (idx >= 0) {
@@ -2225,27 +3126,64 @@ export const useAppStore = defineStore('app', {
         | 'operationLogs'
         | 'attachments'
         | 'currency'
-      > & { currency?: string },
+        | 'versions'
+        | 'currentVersion'
+      > & {
+        currency?: string
+        approvalStatus?: ServiceContract['approvalStatus']
+        submitForApproval?: boolean
+        changeNote?: string
+        attachments?: ServiceContract['attachments']
+      },
     ) {
+      const existing = findContractByPair(this.serviceContracts, data.enterpriseId, data.providerId)
+      if (existing) {
+        throw new Error('该企业与服务商已存在合同，请在原合同上改版，不可重复新建')
+      }
       const seq = this.serviceContracts.length + 158
       const now = new Date().toISOString()
+      const { submitForApproval, changeNote, attachments, ...rest } = data
+      const submit = submitForApproval === true
+      const approvalStatus = submit ? 'pending' : rest.approvalStatus ?? 'draft'
       const item: ServiceContract = {
-        ...data,
+        ...rest,
         id: generateId('sc'),
         contractNo: generateContractNo(seq),
-        currency: data.currency ?? 'CNY',
-        status: 'active',
-        attachments: [],
+        currency: rest.currency ?? 'CNY',
+        status: approvalStatus === 'approved' ? 'active' : 'draft',
+        approvalStatus,
+        submittedBy: submit ? '平台操作员' : undefined,
+        submittedAt: submit ? now : undefined,
+        attachments: attachments?.length ? [...attachments] : [],
         operationLogs: [
           {
             id: generateId('log'),
-            operator: '平台运营',
-            action: '创建了合约',
+            operator: '平台操作员',
+            action: submit ? '创建并提交合同审批' : '创建合同草稿',
             createdAt: new Date().toLocaleString('zh-CN'),
           },
         ],
+        currentVersion: 0,
+        versions: [],
         createdAt: now,
         updatedAt: now,
+      }
+      const versionStatus =
+        approvalStatus === 'pending'
+          ? 'pending'
+          : approvalStatus === 'approved'
+            ? 'effective'
+            : 'draft'
+      const version = createContractVersion(item, versionStatus, {
+        changeNote: changeNote || '初始版本',
+        submittedBy: item.submittedBy,
+        submittedAt: item.submittedAt,
+      })
+      item.versions = [version]
+      if (versionStatus === 'effective') {
+        item.currentVersion = version.version
+        item.approvedBy = item.approvedBy || '平台负责人'
+        item.approvedAt = item.approvedAt || now
       }
       this.serviceContracts.unshift(item)
       this.persist('serviceContracts')
@@ -2255,19 +3193,271 @@ export const useAppStore = defineStore('app', {
     updateServiceContract(
       id: string,
       data: Partial<
-        Omit<ServiceContract, 'id' | 'contractNo' | 'createdAt' | 'operationLogs' | 'attachments'>
+        Omit<
+          ServiceContract,
+          | 'id'
+          | 'contractNo'
+          | 'createdAt'
+          | 'operationLogs'
+          | 'versions'
+          | 'currentVersion'
+          | 'enterpriseId'
+          | 'providerId'
+        >
       >,
+      options?: { keepApproval?: boolean; operator?: string; changeNote?: string },
     ) {
       const contract = this.serviceContracts.find((c) => c.id === id)
       if (!contract) throw new Error('合约不存在')
-      Object.assign(contract, data, { updatedAt: new Date().toISOString() })
+      ensureContractVersions(contract)
+      const operator = options?.operator ?? '平台操作员'
+      const prevApproval = contract.approvalStatus ?? 'approved'
+      const now = new Date().toISOString()
+      const { attachments: nextAttachments, ...configPatch } = data
+
+      const effective = getEffectiveVersion(contract)
+      const existingWorking = (contract.versions ?? []).find(
+        (v) => v.status === 'draft' || v.status === 'pending' || v.status === 'rejected',
+      )
+      const baseConfig = existingWorking
+        ? pickContractConfig(existingWorking)
+        : effective
+          ? pickContractConfig(effective)
+          : pickContractConfig(getWorkingVersion(contract) ?? contract)
+      const nextConfig = pickContractConfig({
+        ...baseConfig,
+        ...configPatch,
+        currency: configPatch.currency || baseConfig.currency || 'CNY',
+      })
+
+      if (nextAttachments) {
+        contract.attachments = nextAttachments
+      }
+
+      if (!options?.keepApproval && contract.status !== 'terminated') {
+        const wasApproved = prevApproval === 'approved'
+        contract.approvalStatus = 'draft'
+        contract.submittedBy = undefined
+        contract.submittedAt = undefined
+        contract.approvedBy = undefined
+        contract.approvedAt = undefined
+        contract.approvalRemark = undefined
+
+        let working = existingWorking
+        if (!working) {
+          working = createContractVersion(contract, 'draft', {
+            changeNote: options?.changeNote || '改版草稿',
+            config: nextConfig,
+          })
+          contract.versions = [...(contract.versions ?? []), working]
+        } else {
+          Object.assign(working, nextConfig, {
+            status: 'draft' as const,
+            changeNote: options?.changeNote || working.changeNote || '改版草稿',
+            submittedBy: undefined,
+            submittedAt: undefined,
+            approvedBy: undefined,
+            approvedAt: undefined,
+            approvalRemark: undefined,
+            updatedAt: now,
+          })
+        }
+
+        // 审批通过前主档仍展示原生效配置
+        if (!restoreEffectiveConfig(contract)) {
+          applyContractConfig(contract, working)
+          contract.status = 'draft'
+        }
+
+        contract.updatedAt = now
+        contract.operationLogs = [
+          ...(contract.operationLogs ?? []),
+          {
+            id: generateId('log'),
+            operator,
+            action: wasApproved
+              ? `修改合同配置并生成改版草稿（V${working.version}），生效配置仍为原版本，需重新提交审批`
+              : `更新改版草稿（V${working.version}）`,
+            createdAt: new Date().toLocaleString('zh-CN'),
+          },
+        ]
+      } else {
+        const working = (contract.versions ?? []).find(
+          (v) => v.status === 'draft' || v.status === 'pending' || v.status === 'rejected',
+        )
+        if (working) {
+          Object.assign(working, nextConfig, { updatedAt: now })
+          if (!restoreEffectiveConfig(contract)) {
+            applyContractConfig(contract, working)
+          }
+        } else if (effective) {
+          Object.assign(effective, nextConfig, { updatedAt: now })
+          applyContractConfig(contract, effective)
+        } else {
+          applyContractConfig(contract, nextConfig)
+        }
+        contract.updatedAt = now
+        contract.operationLogs = [
+          ...(contract.operationLogs ?? []),
+          {
+            id: generateId('log'),
+            operator,
+            action: '修改了合同配置',
+            createdAt: new Date().toLocaleString('zh-CN'),
+          },
+        ]
+      }
+      this.persist('serviceContracts')
+      return contract
+    },
+
+    submitServiceContractForApproval(id: string, operator = '平台操作员') {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合同不存在')
+      ensureContractVersions(contract)
+      if (contract.status === 'terminated') throw new Error('已终止合同不可提交审批')
+      const approval = contract.approvalStatus ?? 'approved'
+      if (approval === 'pending') throw new Error('合同已在审批中')
+      if (approval === 'approved') {
+        const hasDraft = (contract.versions ?? []).some(
+          (v) => v.status === 'draft' || v.status === 'rejected',
+        )
+        if (!hasDraft) {
+          throw new Error('合同已生效，请先编辑或续约后再提交审批')
+        }
+      }
+      const now = new Date().toISOString()
+      contract.approvalStatus = 'pending'
+      contract.submittedBy = operator
+      contract.submittedAt = now
+      contract.approvedBy = undefined
+      contract.approvedAt = undefined
+      contract.approvalRemark = undefined
+      contract.updatedAt = now
+
+      let working = (contract.versions ?? []).find(
+        (v) => v.status === 'draft' || v.status === 'pending' || v.status === 'rejected',
+      )
+      if (!working) {
+        working = createContractVersion(contract, 'pending', {
+          changeNote: '提交审批版本',
+          submittedBy: operator,
+          submittedAt: now,
+        })
+        contract.versions = [...(contract.versions ?? []), working]
+      } else {
+        working.status = 'pending'
+        working.submittedBy = operator
+        working.submittedAt = now
+        working.approvedBy = undefined
+        working.approvedAt = undefined
+        working.approvalRemark = undefined
+        working.updatedAt = now
+      }
+
+      // 待审期间运行配置仍为原生效版本
+      if (!restoreEffectiveConfig(contract)) {
+        contract.status = 'draft'
+      }
+
       contract.operationLogs = [
         ...(contract.operationLogs ?? []),
         {
           id: generateId('log'),
-          operator: '平台运营',
-          action: '修改了合约配置',
+          operator,
+          action: `提交合同审批（V${working.version}）；审批通过前仍沿用原生效配置`,
           createdAt: new Date().toLocaleString('zh-CN'),
+        },
+      ]
+      this.persist('serviceContracts')
+      return contract
+    },
+
+    approveServiceContract(id: string, remark?: string, operator = '平台负责人') {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合同不存在')
+      ensureContractVersions(contract)
+      if ((contract.approvalStatus ?? 'approved') !== 'pending') {
+        throw new Error('仅待审批合同可通过')
+      }
+      const now = new Date().toISOString()
+      const timeLabel = new Date(now).toLocaleString('zh-CN')
+      const working = (contract.versions ?? []).find((v) => v.status === 'pending')
+      if (!working) {
+        throw new Error('未找到待审批版本')
+      }
+
+      for (const v of contract.versions ?? []) {
+        if (v.status === 'effective') {
+          v.status = 'history'
+          v.updatedAt = now
+        }
+      }
+
+      working.status = 'effective'
+      working.approvedBy = operator
+      working.approvedAt = now
+      working.approvalRemark = remark?.trim() || undefined
+      working.updatedAt = now
+
+      applyContractConfig(contract, working)
+      contract.approvalStatus = 'approved'
+      contract.status = 'active'
+      contract.approvedBy = operator
+      contract.approvedAt = now
+      contract.approvalRemark = remark?.trim() || undefined
+      contract.currentVersion = working.version
+      contract.updatedAt = now
+      contract.operationLogs = [
+        ...(contract.operationLogs ?? []),
+        {
+          id: generateId('log'),
+          operator,
+          action: remark?.trim()
+            ? `审批通过 V${working.version}（${operator} · ${timeLabel}）：${remark.trim()}`
+            : `审批通过 V${working.version}（${operator} · ${timeLabel}）`,
+          createdAt: timeLabel,
+        },
+      ]
+      this.persist('serviceContracts')
+      return contract
+    },
+
+    rejectServiceContract(id: string, remark: string, operator = '平台负责人') {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合同不存在')
+      ensureContractVersions(contract)
+      if ((contract.approvalStatus ?? 'approved') !== 'pending') {
+        throw new Error('仅待审批合同可驳回')
+      }
+      const reason = remark.trim()
+      if (!reason) throw new Error('请填写驳回原因')
+      const now = new Date().toISOString()
+      const timeLabel = new Date(now).toLocaleString('zh-CN')
+      const working = (contract.versions ?? []).find((v) => v.status === 'pending')
+      if (working) {
+        working.status = 'rejected'
+        working.approvedBy = operator
+        working.approvedAt = now
+        working.approvalRemark = reason
+        working.updatedAt = now
+      }
+      contract.approvalStatus = 'rejected'
+      contract.approvedBy = operator
+      contract.approvedAt = now
+      contract.approvalRemark = reason
+      contract.updatedAt = now
+      // 驳回后运行配置仍为原生效版
+      if (!restoreEffectiveConfig(contract)) {
+        contract.status = 'draft'
+      }
+      contract.operationLogs = [
+        ...(contract.operationLogs ?? []),
+        {
+          id: generateId('log'),
+          operator,
+          action: `审批驳回 V${working?.version ?? '-'}（${operator} · ${timeLabel}）：${reason}`,
+          createdAt: timeLabel,
         },
       ]
       this.persist('serviceContracts')
@@ -2277,8 +3467,20 @@ export const useAppStore = defineStore('app', {
     terminateServiceContract(id: string) {
       const contract = this.serviceContracts.find((c) => c.id === id)
       if (!contract) throw new Error('合约不存在')
+      ensureContractVersions(contract)
+      if (contract.status === 'terminated') throw new Error('合同已终止')
+      if ((contract.approvalStatus ?? 'approved') !== 'approved') {
+        throw new Error('仅已通过审批的合同可终止')
+      }
       contract.status = 'terminated'
       contract.updatedAt = new Date().toISOString()
+      for (const v of contract.versions ?? []) {
+        if (v.status === 'effective') {
+          v.status = 'history'
+          v.updatedAt = contract.updatedAt
+        }
+      }
+      contract.currentVersion = 0
       contract.operationLogs = [
         ...(contract.operationLogs ?? []),
         {
@@ -2291,24 +3493,94 @@ export const useAppStore = defineStore('app', {
       this.persist('serviceContracts')
     },
 
-    renewServiceContract(id: string) {
+    /** 列表续约：按周期延长到期日（不走改版审批） */
+    extendServiceContract(id: string, period: ContractRenewPeriod) {
       const contract = this.serviceContracts.find((c) => c.id === id)
       if (!contract) throw new Error('合约不存在')
-      const base = contract.expiryDate ? new Date(contract.expiryDate) : new Date()
-      base.setFullYear(base.getFullYear() + 1)
-      contract.expiryDate = base.toISOString().slice(0, 10)
-      contract.status = 'active'
-      contract.updatedAt = new Date().toISOString()
+      ensureContractVersions(contract)
+      if (contract.status === 'terminated') throw new Error('已终止合同不可续约')
+      const label = contractRenewPeriodOptions.find((item) => item.value === period)?.label ?? period
+      const baseDate = resolveContractRenewBaseDate(contract.expiryDate)
+      const nextExpiry = addContractRenewPeriod(baseDate, period)
+      const now = new Date().toISOString()
+      contract.expiryDate = nextExpiry
+      contract.updatedAt = now
+      if (contract.status === 'expired' || contract.status === 'expiring') {
+        contract.status = 'active'
+      }
+      const effective = getEffectiveVersion(contract)
+      if (effective) {
+        effective.expiryDate = nextExpiry
+        effective.updatedAt = now
+      }
       contract.operationLogs = [
         ...(contract.operationLogs ?? []),
         {
           id: generateId('log'),
           operator: '平台运营',
-          action: '完成合约续约，到期日已延长一年',
+          action: `续约延期 ${label}，到期日调整为 ${nextExpiry}`,
           createdAt: new Date().toLocaleString('zh-CN'),
         },
       ]
       this.persist('serviceContracts')
+      return contract
+    },
+
+    restoreServiceContract(id: string) {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合约不存在')
+      ensureContractVersions(contract)
+      if (contract.status !== 'terminated') throw new Error('仅已终止合同可恢复')
+      const today = new Date().toISOString().slice(0, 10)
+      if (!contract.expiryDate || contract.expiryDate < today) {
+        throw new Error('合同已到期，无法恢复')
+      }
+      const versions = [...(contract.versions ?? [])].sort((a, b) => b.version - a.version)
+      const restoreVersion =
+        versions.find((v) => v.status === 'history') ||
+        versions.find((v) => v.status !== 'pending' && v.status !== 'draft' && v.status !== 'rejected')
+      if (!restoreVersion) throw new Error('未找到可恢复的历史版本')
+      for (const v of contract.versions ?? []) {
+        if (v.status === 'effective') {
+          v.status = 'history'
+          v.updatedAt = new Date().toISOString()
+        }
+      }
+      const now = new Date().toISOString()
+      restoreVersion.status = 'effective'
+      restoreVersion.updatedAt = now
+      applyContractConfig(contract, restoreVersion)
+      contract.status = 'active'
+      contract.currentVersion = restoreVersion.version
+      contract.approvalStatus = contract.approvalStatus ?? 'approved'
+      contract.updatedAt = now
+      contract.operationLogs = [
+        ...(contract.operationLogs ?? []),
+        {
+          id: generateId('log'),
+          operator: '平台运营',
+          action: `恢复合同至生效状态（V${restoreVersion.version}）`,
+          createdAt: new Date().toLocaleString('zh-CN'),
+        },
+      ]
+      this.persist('serviceContracts')
+      return contract
+    },
+
+    updateEnterpriseAuthorizedDepartments(enterpriseId: string, departmentIds: string[]) {
+      const ent = this.enterprises.find((e) => e.id === enterpriseId)
+      if (!ent) throw new Error('企业不存在')
+      ent.authorizedDepartmentIds = [...new Set(departmentIds)]
+      this.persist('enterprises')
+      return ent
+    },
+
+    updateDepartmentAuthorizedDepartments(departmentId: string, departmentIds: string[]) {
+      const dept = this.departments.find((d) => d.id === departmentId)
+      if (!dept) throw new Error('部门不存在')
+      dept.authorizedDepartmentIds = [...new Set(departmentIds)]
+      this.persist('departments')
+      return dept
     },
 
     addServiceProvider(
@@ -2422,7 +3694,6 @@ export const useAppStore = defineStore('app', {
         | 'enterpriseId'
         | 'enterpriseName'
         | 'taskTypeName'
-        | 'workflowId'
         | 'status'
         | 'acceptedCount'
         | 'completedCount'
@@ -2431,18 +3702,24 @@ export const useAppStore = defineStore('app', {
       >,
     ) {
       const ent = this.enterprises.find((e) => e.id === enterpriseId)
-      const tt = this.taskTypes.find((t) => t.id === data.taskTypeId)
       if (!ent) throw new Error('企业不存在')
-      if (!tt || tt.enterpriseId !== enterpriseId) throw new Error('任务类型不存在')
-      if (tt.status !== 'published') throw new Error('请选择已发布的任务类型')
+      const wf = this.taskWorkflows.find((w) => w.id === data.workflowId)
+      if (!wf || wf.status !== 'enabled') throw new Error('请选择已启用的任务流程')
+      if (
+        wf.enterpriseScope === 'specific' &&
+        !(wf.enterpriseIds ?? []).includes(enterpriseId)
+      ) {
+        throw new Error('该流程不适用于当前企业')
+      }
+      if (!data.pricingMode) throw new Error('请配置任务定价')
 
       const item: Task = {
         ...data,
         id: generateId('task'),
         enterpriseId,
         enterpriseName: ent.name,
-        taskTypeName: tt.name,
-        workflowId: tt.workflowId,
+        taskTypeName: wf.name,
+        workflowId: wf.id,
         status: 'draft',
         acceptedCount: 0,
         completedCount: 0,
@@ -2457,31 +3734,116 @@ export const useAppStore = defineStore('app', {
     updateEnterpriseTask(id: string, data: Partial<Task>) {
       const task = this.tasks.find((t) => t.id === id)
       if (!task) throw new Error('任务不存在')
-      if (task.status !== 'draft') throw new Error('仅未发布任务可编辑')
-      if (data.taskTypeId && data.taskTypeId !== task.taskTypeId) {
-        const tt = this.taskTypes.find((t) => t.id === data.taskTypeId)
-        if (!tt || tt.enterpriseId !== task.enterpriseId || tt.status !== 'published') {
-          throw new Error('无效的任务类型')
+      if (task.status !== 'draft' && task.status !== 'rejected') {
+        throw new Error('仅未发布或已驳回任务可编辑')
+      }
+      if (data.workflowId && data.workflowId !== task.workflowId) {
+        const wf = this.taskWorkflows.find((w) => w.id === data.workflowId)
+        if (!wf || wf.status !== 'enabled') throw new Error('无效的任务流程')
+        if (
+          wf.enterpriseScope === 'specific' &&
+          !(wf.enterpriseIds ?? []).includes(task.enterpriseId)
+        ) {
+          throw new Error('该流程不适用于当前企业')
         }
-        task.taskTypeId = tt.id
-        task.taskTypeName = tt.name
-        task.workflowId = tt.workflowId
+        task.workflowId = wf.id
+        task.taskTypeName = wf.name
       }
       Object.assign(task, data)
+      if (task.status === 'rejected') task.status = 'draft'
       this.persist('tasks')
     },
 
     publishEnterpriseTask(id: string) {
       const task = this.tasks.find((t) => t.id === id)
       if (!task) throw new Error('任务不存在')
-      if (task.status !== 'draft') throw new Error('任务已发布')
-      task.status = 'active'
+      if (task.status !== 'draft' && task.status !== 'rejected') {
+        throw new Error('任务已提交或已上线')
+      }
+      task.status = 'pending'
+      task.reviewNote = undefined
+      task.reviewedAt = undefined
+      task.reviewedBy = undefined
       this.persist('tasks')
       this.pushNotification({
-        title: '新任务发布',
-        content: `${task.enterpriseName} 发布了任务「${task.name}」`,
-        type: 'system',
+        title: '任务待审批',
+        content: `${task.enterpriseName} 提交了任务「${task.name}」，待平台审核`,
+        type: 'approval',
       })
+    },
+
+    /** 平台审核企业发布的任务：可通过前修改发布内容与结算价，通过后进入任务大厅 */
+    reviewEnterpriseTask(
+      id: string,
+      approved: boolean,
+      reviewNote = '',
+      reviewedBy = '运营-李芳',
+      edits?: Partial<
+        Pick<
+          Task,
+          | 'name'
+          | 'description'
+          | 'region'
+          | 'plannedTotal'
+          | 'unlimitedQuantity'
+          | 'incentive'
+          | 'trainingCourseId'
+          | 'pricingMode'
+          | 'fixedPrice'
+          | 'tieredPrices'
+          | 'settlementUnitPrice'
+          | 'departmentId'
+          | 'departmentName'
+          | 'startTime'
+          | 'endTime'
+          | 'longTerm'
+          | 'maxPerPerson'
+          | 'dispatchMode'
+          | 'assigneeIds'
+          | 'workflowId'
+          | 'taskTypeName'
+        >
+      >,
+    ) {
+      const task = this.tasks.find((t) => t.id === id)
+      if (!task) throw new Error('任务不存在')
+      if (task.status !== 'pending') throw new Error('任务不在待审核状态')
+      if (approved && edits) {
+        if (edits.workflowId && edits.workflowId !== task.workflowId) {
+          const wf = this.taskWorkflows.find((w) => w.id === edits.workflowId)
+          if (!wf || wf.status !== 'enabled') throw new Error('无效的任务流程')
+          edits.taskTypeName = wf.name
+        }
+        Object.assign(task, edits)
+        if (task.settlementUnitPrice == null) {
+          const customer =
+            task.pricingMode === 'tiered'
+              ? task.tieredPrices?.[0]?.unitPrice
+              : task.fixedPrice
+          if (customer != null) task.settlementUnitPrice = customer
+        }
+      }
+      const now = new Date().toISOString()
+      task.reviewedBy = reviewedBy
+      task.reviewedAt = now
+      task.reviewNote = reviewNote.trim() || undefined
+      if (approved) {
+        task.status = 'active'
+        this.pushNotification({
+          title: '任务审核通过',
+          content: `任务「${task.name}」已通过审核，已进入任务大厅`,
+          type: 'system',
+        })
+      } else {
+        task.status = 'rejected'
+        this.pushNotification({
+          title: '任务审核驳回',
+          content: `任务「${task.name}」未通过审核${reviewNote ? `：${reviewNote}` : ''}`,
+          type: 'system',
+        })
+      }
+      this.persist('tasks')
+      return task
     },
 
     cancelEnterpriseTask(id: string) {
@@ -2701,6 +4063,10 @@ export const useAppStore = defineStore('app', {
       if (!emp) throw new Error('灵工不存在')
       if (emp.id === instance.workerId) throw new Error('请选择不同的灵工')
       this.assertCourseGateForEmployee(newWorkerId, 'task')
+      const task = this.tasks.find((t) => t.id === instance.taskId)
+      if (task && isEmployeeUnavailableInRange(emp, task.startTime, task.endTime)) {
+        throw new Error('该灵工已配置请假/不上岗，任务期限内无法指派')
+      }
 
       const now = new Date().toISOString()
       const prevWorker = instance.workerName
@@ -2763,8 +4129,10 @@ export const useAppStore = defineStore('app', {
       this.persist('tasks')
     },
 
-    suggestTaskName(taskTypeId: string) {
-      const tt = this.taskTypes.find((t) => t.id === taskTypeId)
+    suggestTaskName(workflowId: string) {
+      const wf = this.taskWorkflows.find((w) => w.id === workflowId)
+      if (wf) return generateTaskName(wf.name)
+      const tt = this.taskTypes.find((t) => t.id === workflowId)
       return tt ? generateTaskName(tt.name) : ''
     },
 
@@ -3038,34 +4406,70 @@ export const useAppStore = defineStore('app', {
       )
     },
 
+    getShiftDemandPlanById(id: string) {
+      return this.weeklyShiftDemandPlans.find((p) => p.id === id)
+    },
+
     saveWeeklyShiftDemandPlan(data: {
       teamId: string
       weekStart: string
       weekEnd: string
       cells: ShiftDemandDayCell[]
       status: WeeklyShiftDemandPlan['status']
+      commonConfig?: WeeklyShiftDemandPlan['commonConfig']
+      id?: string
     }) {
       const now = new Date().toISOString()
-      const existing = this.getWeeklyShiftDemandPlan(data.teamId, data.weekStart)
+      const existing = data.id
+        ? this.getShiftDemandPlanById(data.id)
+        : this.getWeeklyShiftDemandPlan(data.teamId, data.weekStart)
+      const status = data.status === 'confirmed' ? 'published' : data.status
       if (existing) {
         existing.cells = data.cells.map((c) => ({ ...c }))
-        existing.status = data.status
+        existing.status = status
+        existing.weekStart = data.weekStart
         existing.weekEnd = data.weekEnd
+        existing.commonConfig = data.commonConfig
+          ? JSON.parse(JSON.stringify(data.commonConfig))
+          : existing.commonConfig
         existing.updatedAt = now
-      } else {
-        const item: WeeklyShiftDemandPlan = {
-          id: generateId('wdp'),
-          teamId: data.teamId,
-          weekStart: data.weekStart,
-          weekEnd: data.weekEnd,
-          cells: data.cells.map((c) => ({ ...c })),
-          status: data.status,
-          createdAt: now,
-          updatedAt: now,
+        if (status === 'published') {
+          existing.publishedAt = now
+          existing.publishedBy = existing.publishedBy || '平台运营'
         }
-        this.weeklyShiftDemandPlans.push(item)
+        this.persist('weeklyShiftDemandPlans')
+        return existing
       }
+      const item: WeeklyShiftDemandPlan = {
+        id: generateId('wdp'),
+        teamId: data.teamId,
+        weekStart: data.weekStart,
+        weekEnd: data.weekEnd,
+        cells: data.cells.map((c) => ({ ...c })),
+        status,
+        commonConfig: data.commonConfig
+          ? JSON.parse(JSON.stringify(data.commonConfig))
+          : undefined,
+        publishedAt: status === 'published' ? now : undefined,
+        publishedBy: status === 'published' ? '平台运营' : undefined,
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.weeklyShiftDemandPlans.push(item)
       this.persist('weeklyShiftDemandPlans')
+      return item
+    },
+
+    publishShiftDemandPlan(id: string, operator = '平台运营') {
+      const plan = this.getShiftDemandPlanById(id)
+      if (!plan) throw new Error('班次需求计划不存在')
+      const now = new Date().toISOString()
+      plan.status = 'published'
+      plan.publishedAt = now
+      plan.publishedBy = operator
+      plan.updatedAt = now
+      this.persist('weeklyShiftDemandPlans')
+      return plan
     },
 
     getTeamCycleScheduleRules(teamId: string) {
@@ -3324,6 +4728,10 @@ export const useAppStore = defineStore('app', {
           emp.status = 'pending'
           changed = true
         }
+        if (isUnassignedDepartment(emp.departmentId) && emp.status === 'pending' && !emp.onboardingStage) {
+          emp.onboardingStage = 'awaiting_apply'
+          changed = true
+        }
         const seed = seedEmployees.find((s) => s.id === emp.id)
         if (seed && seed.realNameVerified != null && emp.realNameVerified !== seed.realNameVerified) {
           emp.realNameVerified = seed.realNameVerified
@@ -3417,10 +4825,17 @@ export const useAppStore = defineStore('app', {
       })
     },
 
-    confirmSettlementBill(id: string) {
+    confirmSettlementBill(
+      id: string,
+      opts?: { payerEnterpriseName?: string; payerCreditCode?: string },
+    ) {
       const bill = this.settlementBills.find((b) => b.id === id)
       if (!bill) throw new Error('账单不存在')
       if (bill.status !== 'pending_confirm') throw new Error('当前状态不可确认')
+      if (opts) {
+        bill.payerEnterpriseName = opts.payerEnterpriseName?.trim() || undefined
+        bill.payerCreditCode = opts.payerCreditCode?.trim() || undefined
+      }
       bill.status = 'pending_payment'
       bill.confirmedAt = new Date().toISOString()
       bill.updatedAt = new Date().toISOString()
@@ -3429,6 +4844,11 @@ export const useAppStore = defineStore('app', {
 
     createSettlementBill(input: {
       enterpriseId: string
+      departmentScope: 'all' | 'department'
+      departmentId?: string
+      departmentName: string
+      payerEnterpriseName?: string
+      payerCreditCode?: string
       periodStart: string
       periodEnd: string
       sourceType: SettlementBillSourceType
@@ -3447,18 +4867,32 @@ export const useAppStore = defineStore('app', {
     }) {
       const enterprise = this.enterprises.find((e) => e.id === input.enterpriseId)
       if (!enterprise) throw new Error('企业不存在')
+      if (!input.departmentName?.trim()) throw new Error('请选择部门')
+      if (input.departmentScope === 'department' && !input.departmentId) {
+        throw new Error('请选择部门')
+      }
       const provider = resolveServiceProviderForEnterprise(
         input.enterpriseId,
         this.serviceProviders,
         this.serviceContracts,
       )
+      const taxFlags = resolveBillTaxFlagsFromContract(
+        input.enterpriseId,
+        provider?.id,
+        this.serviceContracts,
+      )
       const now = new Date().toISOString()
-      const totalPayable = input.payrollTotal + input.serviceFee
+      const totalPayable = Math.max(0, Math.round((input.payrollTotal + input.serviceFee) * 100) / 100)
       const bill: SettlementBill = {
         id: generateId('bill'),
         billNo: generateBillNo(this.settlementBills),
         enterpriseId: input.enterpriseId,
         enterpriseName: enterprise.name,
+        departmentScope: input.departmentScope,
+        departmentId: input.departmentScope === 'department' ? input.departmentId : undefined,
+        departmentName: input.departmentName.trim(),
+        payerEnterpriseName: input.payerEnterpriseName?.trim() || undefined,
+        payerCreditCode: input.payerCreditCode?.trim() || undefined,
         serviceProviderId: provider?.id,
         serviceProviderName: provider?.name ?? '未关联服务商',
         periodStart: input.periodStart,
@@ -3476,6 +4910,8 @@ export const useAppStore = defineStore('app', {
         importTemplateId: input.importTemplateId,
         importTemplateName: input.importTemplateName,
         serviceFeeRate: input.serviceFeeRate,
+        serviceFeeIncludesTax: taxFlags.serviceFeeIncludesTax,
+        unitPriceIncludesTax: taxFlags.unitPriceIncludesTax,
         summary: input.summary,
         pushedAt: input.submit ? now : undefined,
         remark: input.remark,
@@ -3508,6 +4944,79 @@ export const useAppStore = defineStore('app', {
         content: `账单 ${bill.billNo} 已推送至 ${bill.enterpriseName} 待确认`,
         type: 'approval',
       })
+    },
+
+    /** 待提交账单：减免服务费（录入总计金额，口径同服务费含税/不含税） */
+    applySettlementBillServiceFeeWaiver(
+      id: string,
+      input: {
+        mode?: 'by_quantity' | 'by_amount'
+        workerCount?: number
+        workHours?: number
+        amount?: number
+        note?: string
+      },
+    ) {
+      const bill = this.settlementBills.find((b) => b.id === id)
+      if (!bill) throw new Error('账单不存在')
+      if (bill.status !== 'pending_submit') throw new Error('仅待提交账单可减免服务费')
+
+      let amount = 0
+      let unitRate: number | undefined
+      const mode = input.mode === 'by_quantity' ? 'by_quantity' : 'by_amount'
+      if (mode === 'by_quantity') {
+        const workerCount = Math.max(0, Number(input.workerCount) || 0)
+        const workHours = Math.max(0, Number(input.workHours) || 0)
+        if (workerCount <= 0 || workHours <= 0) {
+          throw new Error('请填写有效的减免人数与工时')
+        }
+        const estimated = estimateServiceFeeWaiverByQuantity(bill, workerCount, workHours)
+        amount = estimated.amount
+        unitRate = estimated.unitRate
+        bill.serviceFeeWaiverMeta = {
+          mode: 'by_quantity',
+          workerCount,
+          workHours,
+          unitRate,
+          note: input.note?.trim() || undefined,
+          appliedAt: new Date().toISOString(),
+        }
+      } else {
+        amount = Math.max(0, Math.round((Number(input.amount) || 0) * 100) / 100)
+        if (amount <= 0) throw new Error('请填写有效的总计金额')
+        bill.serviceFeeWaiverMeta = {
+          mode: 'by_amount',
+          note: input.note?.trim() || undefined,
+          appliedAt: new Date().toISOString(),
+        }
+      }
+
+      if (amount > bill.serviceFee) {
+        throw new Error('减免金额不能超过服务费总计')
+      }
+
+      bill.serviceFeeWaiver = amount
+      bill.totalPayable = Math.max(
+        0,
+        Math.round((bill.payrollTotal + bill.serviceFee - amount) * 100) / 100,
+      )
+      bill.updatedAt = new Date().toISOString()
+      this.persist('settlementBills')
+      return bill
+    },
+
+    clearSettlementBillServiceFeeWaiver(id: string) {
+      const bill = this.settlementBills.find((b) => b.id === id)
+      if (!bill) throw new Error('账单不存在')
+      if (bill.status !== 'pending_submit') throw new Error('仅待提交账单可调整减免')
+      bill.serviceFeeWaiver = 0
+      bill.serviceFeeWaiverMeta = undefined
+      bill.totalPayable = Math.max(
+        0,
+        Math.round((bill.payrollTotal + bill.serviceFee) * 100) / 100,
+      )
+      bill.updatedAt = new Date().toISOString()
+      this.persist('settlementBills')
     },
 
     voidSettlementBill(id: string, reason?: string) {
@@ -3713,14 +5222,67 @@ export const useAppStore = defineStore('app', {
       return item
     },
 
-    saveEnterpriseInvoiceProfile(data: EnterpriseInvoiceProfile) {
-      const idx = this.enterpriseInvoiceProfiles.findIndex(
-        (item) => item.enterpriseId === data.enterpriseId,
+    saveEnterpriseInvoiceProfile(
+      data: Omit<EnterpriseInvoiceProfile, 'id'> & { id?: string },
+    ) {
+      if (!data.enterpriseId) throw new Error('企业不能为空')
+      if (!data.title.trim()) throw new Error('请填写抬头名称')
+      if (!data.taxNo.trim()) throw new Error('请填写纳税人识别号')
+
+      const nowId = data.id || generateId('eip')
+      const existingIdx = this.enterpriseInvoiceProfiles.findIndex((item) => item.id === nowId)
+      const scoped = this.enterpriseInvoiceProfiles.filter(
+        (item) => item.enterpriseId === data.enterpriseId && item.id !== nowId,
       )
-      if (idx >= 0) this.enterpriseInvoiceProfiles[idx] = data
-      else this.enterpriseInvoiceProfiles.push(data)
+      const makeDefault = data.isDefault || scoped.length === 0
+      if (makeDefault) {
+        for (const item of this.enterpriseInvoiceProfiles) {
+          if (item.enterpriseId === data.enterpriseId) item.isDefault = false
+        }
+      }
+
+      const profile: EnterpriseInvoiceProfile = {
+        id: nowId,
+        enterpriseId: data.enterpriseId,
+        title: data.title.trim(),
+        taxNo: data.taxNo.trim(),
+        address: data.address.trim(),
+        phone: data.phone.trim(),
+        bankName: data.bankName.trim(),
+        bankAccount: data.bankAccount.trim(),
+        defaultInvoiceType: data.defaultInvoiceType,
+        isDefault: makeDefault,
+        remark: data.remark?.trim() || undefined,
+      }
+
+      if (existingIdx >= 0) this.enterpriseInvoiceProfiles[existingIdx] = profile
+      else this.enterpriseInvoiceProfiles.push(profile)
       this.persist('enterpriseInvoiceProfiles')
-      return data
+      return profile
+    },
+
+    deleteEnterpriseInvoiceProfile(id: string) {
+      const idx = this.enterpriseInvoiceProfiles.findIndex((item) => item.id === id)
+      if (idx < 0) throw new Error('抬头不存在')
+      const [removed] = this.enterpriseInvoiceProfiles.splice(idx, 1)
+      if (removed.isDefault) {
+        const next = this.enterpriseInvoiceProfiles.find(
+          (item) => item.enterpriseId === removed.enterpriseId,
+        )
+        if (next) next.isDefault = true
+      }
+      this.persist('enterpriseInvoiceProfiles')
+    },
+
+    setDefaultEnterpriseInvoiceProfile(id: string) {
+      const profile = this.enterpriseInvoiceProfiles.find((item) => item.id === id)
+      if (!profile) throw new Error('抬头不存在')
+      for (const item of this.enterpriseInvoiceProfiles) {
+        if (item.enterpriseId === profile.enterpriseId) {
+          item.isDefault = item.id === id
+        }
+      }
+      this.persist('enterpriseInvoiceProfiles')
     },
 
     nextInvoiceApplicationNo() {
@@ -3921,6 +5483,70 @@ export const useAppStore = defineStore('app', {
       return slip
     },
 
+    createImportPayrollSlip(input: {
+      enterpriseId: string
+      enterpriseName: string
+      lines: {
+        phone: string
+        employeeName: string
+        amount: number
+        employeeId?: string
+        employeeNo?: string
+        departmentName?: string
+      }[]
+    }) {
+      if (!input.enterpriseId) throw new Error('请选择企业')
+      if (!input.lines.length) throw new Error('请至少添加一条发薪明细')
+      for (const line of input.lines) {
+        if (!line.phone?.trim()) throw new Error('明细手机号不能为空')
+        if (!line.employeeName?.trim()) throw new Error('明细姓名不能为空')
+        if (!Number.isFinite(line.amount) || line.amount < 0) throw new Error('发薪金额无效')
+      }
+
+      const now = new Date().toISOString()
+      const day = now.slice(0, 10)
+      const slipLines: SettlementSlipLine[] = input.lines.map((line, idx) => ({
+        orderId: 'import',
+        orderNo: 'IMPORT',
+        orderName: '导入发薪',
+        lineId: `imp_${idx + 1}`,
+        enterpriseId: input.enterpriseId,
+        enterpriseName: input.enterpriseName,
+        employeeId: line.employeeId || `phone_${line.phone}`,
+        employeeName: line.employeeName.trim(),
+        employeeNo: line.employeeNo,
+        phone: line.phone.trim(),
+        departmentName: line.departmentName,
+        quantity: 1,
+        unitPrice: line.amount,
+        amount: line.amount,
+        periodStart: day,
+        periodEnd: day,
+      }))
+
+      const slipNo = `STL${day.replace(/-/g, '')}${String(this.settlementSlips.length + 1).padStart(3, '0')}`
+      const slip: SettlementSlip = {
+        id: generateId('sms'),
+        slipNo,
+        type: 'import',
+        workerCount: slipLines.length,
+        totalQuantity: slipLines.length,
+        totalAmount: slipLines.reduce((sum, line) => sum + line.amount, 0),
+        lines: slipLines,
+        settledAt: now,
+        createdAt: now,
+      }
+
+      this.settlementSlips.unshift(slip)
+      this.persist('settlementSlips')
+      this.pushNotification({
+        title: '导入发薪结算单已生成',
+        content: `${slipNo} 已发薪 ${slip.workerCount} 人，合计 ¥${slip.totalAmount.toLocaleString()}`,
+        type: 'system',
+      })
+      return slip
+    },
+
     generateTaxDeclaration(serviceProviderId: string, month: string) {
       const provider = this.serviceProviders.find((item) => item.id === serviceProviderId)
       if (!provider) throw new Error('服务商不存在')
@@ -4061,6 +5687,41 @@ export const useAppStore = defineStore('app', {
     getMaterialReferenceCount(materialId: string) {
       return countMaterialReferences(this.trainingCourses, materialId)
     },
+    addTrainingMaterialCategory(data: { name: string; enterpriseId: string | null }) {
+      const name = data.name.trim()
+      if (!name) throw new Error('请填写分类名称')
+      const dup = this.trainingMaterialCategories.find(
+        (c) => c.name === name && (c.enterpriseId ?? null) === (data.enterpriseId ?? null),
+      )
+      if (dup) throw new Error('同名分类已存在')
+      const item: TrainingMaterialCategoryItem = {
+        id: generateId('tmc'),
+        name,
+        enterpriseId: data.enterpriseId,
+        builtin: false,
+        createdAt: new Date().toISOString(),
+      }
+      this.trainingMaterialCategories.push(item)
+      this.persist('trainingMaterialCategories')
+      return item
+    },
+    updateTrainingMaterialCategory(id: string, name: string) {
+      const item = this.trainingMaterialCategories.find((c) => c.id === id)
+      if (!item) throw new Error('分类不存在')
+      const next = name.trim()
+      if (!next) throw new Error('请填写分类名称')
+      item.name = next
+      this.persist('trainingMaterialCategories')
+    },
+    removeTrainingMaterialCategory(id: string) {
+      const item = this.trainingMaterialCategories.find((c) => c.id === id)
+      if (!item) throw new Error('分类不存在')
+      if (item.builtin) throw new Error('内置分类不可删除')
+      const used = this.trainingMaterials.some((m) => m.category === id || m.category === item.name)
+      if (used) throw new Error('仍有资料使用该分类，不可删除')
+      this.trainingMaterialCategories = this.trainingMaterialCategories.filter((c) => c.id !== id)
+      this.persist('trainingMaterialCategories')
+    },
 
     // ── 课程 ──
     addTrainingCourse(data: Omit<TrainingCourse, 'id' | 'createdAt' | 'updatedAt'>) {
@@ -4074,6 +5735,7 @@ export const useAppStore = defineStore('app', {
       const course = this.trainingCourses.find((c) => c.id === id)
       if (!course) throw new Error('课程不存在')
       if (course.status === 'published') throw new Error('已发布课程不可编辑')
+      // offline / draft / closed 可编辑
       const prevExamId = course.examId
       Object.assign(course, data, { updatedAt: new Date().toISOString() })
       if (data.examId !== undefined && data.examId !== prevExamId) {
@@ -4092,6 +5754,26 @@ export const useAppStore = defineStore('app', {
     publishTrainingCourse(id: string) {
       const course = this.trainingCourses.find((c) => c.id === id)
       if (!course) throw new Error('课程不存在')
+      if (course.materialIds.length === 0) throw new Error('请至少关联一项培训资料')
+      course.status = 'published'
+      course.publishedAt = new Date().toISOString()
+      course.updatedAt = course.publishedAt
+      this.persist('trainingCourses')
+    },
+    offlineTrainingCourse(id: string) {
+      const course = this.trainingCourses.find((c) => c.id === id)
+      if (!course) throw new Error('课程不存在')
+      if (course.status !== 'published') throw new Error('仅已发布课程可下架')
+      course.status = 'offline'
+      course.updatedAt = new Date().toISOString()
+      this.persist('trainingCourses')
+    },
+    republishTrainingCourse(id: string) {
+      const course = this.trainingCourses.find((c) => c.id === id)
+      if (!course) throw new Error('课程不存在')
+      if (course.status !== 'offline' && course.status !== 'draft') {
+        throw new Error('当前状态不可上架')
+      }
       if (course.materialIds.length === 0) throw new Error('请至少关联一项培训资料')
       course.status = 'published'
       course.publishedAt = new Date().toISOString()
@@ -4167,6 +5849,49 @@ export const useAppStore = defineStore('app', {
       exam.publishedAt = new Date().toISOString()
       exam.updatedAt = exam.publishedAt
       this.persist('trainingExams')
+    },
+    offlineTrainingExam(id: string) {
+      const exam = this.trainingExams.find((e) => e.id === id)
+      if (!exam) throw new Error('考核不存在')
+      if (exam.status !== 'published') throw new Error('仅已发布考核可下架')
+      const now = new Date().toISOString()
+      exam.status = 'offline'
+      exam.offlineAt = now
+      exam.updatedAt = now
+      const courseId = exam.courseId
+      if (courseId) {
+        for (const rec of this.courseLearningRecords) {
+          if (rec.courseId !== courseId) continue
+          const taken = this.examAttempts.some(
+            (a) => a.examId === id && a.employeeId === rec.employeeId,
+          )
+          if (taken || rec.examPassed != null) {
+            rec.historicalExam = true
+            rec.updatedAt = now
+          }
+        }
+        this.persist('courseLearningRecords')
+      }
+      this.persist('trainingExams')
+    },
+    importExamQuestionsFromDocument(
+      examId: string,
+      questions: Omit<ExamQuestion, 'id' | 'createdAt' | 'examId' | 'source'>[],
+    ) {
+      const exam = this.trainingExams.find((e) => e.id === examId)
+      if (!exam) throw new Error('考核不存在')
+      if (exam.status === 'published') throw new Error('已发布考核不可导入题目')
+      const createdAt = new Date().toISOString()
+      const items: ExamQuestion[] = questions.map((q) => ({
+        ...q,
+        examId,
+        source: 'manual',
+        id: generateId('eq'),
+        createdAt,
+      }))
+      this.examQuestions.push(...items)
+      this.persist('examQuestions')
+      return items
     },
     addExamQuestion(data: Omit<ExamQuestion, 'id' | 'createdAt'>) {
       const exam = this.trainingExams.find((e) => e.id === data.examId)
@@ -4366,6 +6091,7 @@ export const useAppStore = defineStore('app', {
       if (rec) {
         rec.examPassed = passed
         rec.examScore = score
+        rec.historicalExam = false
         rec.updatedAt = now
         this.persist('courseLearningRecords')
       }
@@ -4401,6 +6127,9 @@ export const useAppStore = defineStore('app', {
       const emp = this.employees.find((e) => e.id === employeeId)
       if (!emp) throw new Error('人员不存在')
       this.assertCourseGateForEmployee(employeeId, 'task')
+      if (isEmployeeUnavailableInRange(emp, task.startTime, task.endTime)) {
+        throw new Error('您已配置请假/不上岗，任务期限内无法领取')
+      }
       const q = Math.max(1, Math.floor(quantity))
       const myClaimed = getWorkerClaimedQuantity(this.taskInstances, taskId, employeeId)
       if (task.maxPerPerson && myClaimed + q > task.maxPerPerson) {
@@ -4409,14 +6138,20 @@ export const useAppStore = defineStore('app', {
       if (task.plannedTotal != null && task.acceptedCount + q > task.plannedTotal) {
         throw new Error('任务名额不足')
       }
-      const taskType = this.taskTypes.find((t) => t.id === task.taskTypeId)
+      const pricing = resolveTaskPricing(task, this.taskTypes)
       const workflow = this.taskWorkflows.find((w) => w.id === task.workflowId)
       if (!workflow) throw new Error('工作流不存在')
       const startNode = workflow.nodes.find((n) => n.nodeType === 'start')
       const execNode = getWorkerExecutingNode(workflow)
       const node = startNode ?? execNode
       if (!node) throw new Error('工作流节点异常')
-      const amount = taskType ? calcTaskClaimAmount(taskType, q) : 50 * q
+      const settlementUnit =
+        task.settlementUnitPrice != null
+          ? task.settlementUnitPrice
+          : pricing?.pricingMode === 'fixed'
+            ? (pricing.fixedPrice ?? 0)
+            : (pricing?.tieredPrices?.[0]?.unitPrice ?? 0)
+      const amount = Math.round(settlementUnit * q * 100) / 100
       const now = new Date().toISOString()
       const item = {
         id: generateId('ti'),
@@ -4585,9 +6320,41 @@ export const useAppStore = defineStore('app', {
     signWorkerAgreement(id: string, employeeId: string) {
       const agr = this.workerAgreements.find((a) => a.id === id && a.employeeId === employeeId)
       if (!agr) throw new Error('协议不存在')
-      if (agr.signed) return agr
+      if (agr.signed || agr.status === 'terminated') return agr
       agr.signed = true
       agr.signedAt = new Date().toISOString()
+      agr.status = 'signed'
+      if (!agr.effectiveDate) {
+        agr.effectiveDate = agr.signedAt.slice(0, 10)
+      }
+      this.persist('workerAgreements')
+      return agr
+    },
+
+    createWorkerAgreement(
+      data: Omit<WorkerAgreement, 'id' | 'signed' | 'signedAt' | 'status' | 'createdAt' | 'contractNo'> & {
+        contractNo?: string
+      },
+    ) {
+      const seq = this.workerAgreements.length + 1
+      const item: WorkerAgreement = {
+        ...data,
+        id: `agr_${Date.now()}`,
+        contractNo: data.contractNo || `WA-${new Date().getFullYear()}-${String(seq).padStart(5, '0')}`,
+        signed: false,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      }
+      this.workerAgreements.unshift(item)
+      this.persist('workerAgreements')
+      return item
+    },
+
+    terminateWorkerAgreement(id: string) {
+      const agr = this.workerAgreements.find((a) => a.id === id)
+      if (!agr) throw new Error('协议不存在')
+      if (agr.status === 'terminated') return agr
+      agr.status = 'terminated'
       this.persist('workerAgreements')
       return agr
     },
@@ -4619,6 +6386,7 @@ export const useAppStore = defineStore('app', {
           certificates: [],
           faceVerifyStatus: 'unverified',
           schedulePreferences: [],
+          unavailablePeriods: [],
           partTimePreference: {},
           basicProofs: [
             { type: 'real_name', status: 'missing' },
@@ -4689,6 +6457,43 @@ export const useAppStore = defineStore('app', {
       return this.updateWorkerProfileExt(employeeId, { schedulePreferences: list })
     },
 
+    syncEmployeeUnavailableDates(employeeId: string) {
+      const profile = this.ensureWorkerProfileExt(employeeId)
+      const dates = expandUnavailablePeriods(profile.unavailablePeriods ?? [])
+      const emp = this.employees.find((e) => e.id === employeeId)
+      if (!emp) return dates
+      emp.unavailableDates = dates
+      this.persist('employees')
+      return dates
+    },
+
+    upsertWorkerUnavailablePeriod(employeeId: string, period: WorkerUnavailablePeriod) {
+      if (!period.startDate || !period.endDate) throw new Error('请选择起止日期')
+      if (period.endDate < period.startDate) throw new Error('结束日期不能早于开始日期')
+      const profile = this.ensureWorkerProfileExt(employeeId)
+      const list = [...(profile.unavailablePeriods ?? [])]
+      const idx = list.findIndex((p) => p.id === period.id)
+      const normalized: WorkerUnavailablePeriod = {
+        id: period.id,
+        type: period.type,
+        startDate: period.startDate,
+        endDate: period.endDate,
+        reason: period.reason?.trim() || undefined,
+      }
+      if (idx >= 0) list[idx] = normalized
+      else list.unshift(normalized)
+      this.updateWorkerProfileExt(employeeId, { unavailablePeriods: list })
+      this.syncEmployeeUnavailableDates(employeeId)
+      return normalized
+    },
+
+    removeWorkerUnavailablePeriod(employeeId: string, periodId: string) {
+      const profile = this.ensureWorkerProfileExt(employeeId)
+      const list = (profile.unavailablePeriods ?? []).filter((p) => p.id !== periodId)
+      this.updateWorkerProfileExt(employeeId, { unavailablePeriods: list })
+      this.syncEmployeeUnavailableDates(employeeId)
+    },
+
     updateWorkerPartTimePreference(employeeId: string, pref: Partial<WorkerPartTimePreference>) {
       const profile = this.ensureWorkerProfileExt(employeeId)
       return this.updateWorkerProfileExt(employeeId, {
@@ -4733,6 +6538,57 @@ export const useAppStore = defineStore('app', {
       this.persist('employees')
       this.ensureWorkerProfileExt(id)
       return { employeeId: id, employee }
+    },
+
+    addReminderRule(
+      data: Omit<ReminderRule, 'id' | 'createdAt' | 'updatedAt' | 'status'> & {
+        status?: ReminderRule['status']
+      },
+    ) {
+      const now = new Date().toISOString()
+      const item: ReminderRule = {
+        ...data,
+        id: `rr_${Date.now()}`,
+        status: data.status ?? 'active',
+        createdAt: now,
+        updatedAt: now,
+      }
+      this.reminderRules.unshift(item)
+      this.persist('reminderRules')
+      return item
+    },
+
+    updateReminderRule(id: string, data: Partial<Omit<ReminderRule, 'id' | 'createdAt'>>) {
+      const rule = this.reminderRules.find((r) => r.id === id)
+      if (!rule) throw new Error('提醒规则不存在')
+      Object.assign(rule, data, { updatedAt: new Date().toISOString() })
+      this.persist('reminderRules')
+      return rule
+    },
+
+    setReminderRuleStatus(id: string, status: ReminderRule['status']) {
+      return this.updateReminderRule(id, { status })
+    },
+
+    batchSetReminderRuleStatus(ids: string[], status: ReminderRule['status']) {
+      const now = new Date().toISOString()
+      let count = 0
+      for (const id of ids) {
+        const rule = this.reminderRules.find((r) => r.id === id)
+        if (!rule) continue
+        rule.status = status
+        rule.updatedAt = now
+        count += 1
+      }
+      if (count) this.persist('reminderRules')
+      return count
+    },
+
+    removeReminderRule(id: string) {
+      const idx = this.reminderRules.findIndex((r) => r.id === id)
+      if (idx < 0) throw new Error('提醒规则不存在')
+      this.reminderRules.splice(idx, 1)
+      this.persist('reminderRules')
     },
   },
 })

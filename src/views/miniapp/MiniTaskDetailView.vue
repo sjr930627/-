@@ -4,26 +4,28 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Clock, OfficeBuilding, Document, Share } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
-import { formatTaskUnitPrice, getTaskPricingUnit, taskPricingUnitMap } from '@/services/miniTask'
+import { formatTaskUnitPrice, getTaskPricingUnit, resolvePricingForTask, taskPricingUnitMap } from '@/services/miniTask'
 import { getTaskDetailExtra, getTaskHallExtra } from '@/mock/miniTaskHallSeed'
 import MiniTaskWorkflowSteps from '@/components/miniapp/MiniTaskWorkflowSteps.vue'
 import { buildTaskWorkflowSteps } from '@/services/miniTaskWorkflow'
+import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
+const { ensureActionAllowed } = useMiniAppActionGate()
 
 const task = computed(() => store.tasks.find((t) => t.id === route.params.taskId))
-const taskType = computed(() =>
-  task.value ? store.taskTypes.find((t) => t.id === task.value!.taskTypeId) : undefined,
+const pricing = computed(() =>
+  task.value ? resolvePricingForTask(task.value, store.taskTypes) : undefined,
 )
 const extra = computed(() => (task.value ? getTaskHallExtra(task.value.id) : { tags: [] }))
 const detail = computed(() => (task.value ? getTaskDetailExtra(task.value.id) : null))
 
-const unitLabel = computed(() => taskPricingUnitMap[getTaskPricingUnit(taskType.value)])
+const unitLabel = computed(() => taskPricingUnitMap[getTaskPricingUnit(pricing.value)])
 
 const priceLabel = computed(
-  () => extra.value.priceRange ?? formatTaskUnitPrice(taskType.value).replace('/单', `/${unitLabel.value}`),
+  () => extra.value.priceRange ?? formatTaskUnitPrice(pricing.value).replace('/单', `/${unitLabel.value}`),
 )
 
 const remainText = computed(() => {
@@ -36,8 +38,15 @@ const workflowSteps = computed(() =>
   detail.value ? buildTaskWorkflowSteps(detail.value.processSteps) : [],
 )
 
-function goClaim() {
+async function goClaim() {
   if (!task.value) return
+  const allowed = await ensureActionAllowed({
+    requireDepartment: true,
+    enterpriseId: task.value.enterpriseId,
+    from: 'claim',
+    redirectAfterFace: `/miniapp/task-hall/task/${task.value.id}/claim`,
+  })
+  if (!allowed) return
   router.push(`/miniapp/task-hall/task/${task.value.id}/claim`)
 }
 </script>

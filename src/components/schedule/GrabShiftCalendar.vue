@@ -12,6 +12,7 @@ export interface GrabShiftCalendarItem extends GrabShiftSlot {
   statusLabel: string
   statusType: 'success' | 'warning' | 'danger' | 'info'
   pendingApps: number
+  positionName?: string
 }
 
 const props = defineProps<{
@@ -201,7 +202,7 @@ function statusClass(status: GrabShiftSlot['status']) {
             <el-tag :type="slot.statusType" size="small">{{ slot.statusLabel }}</el-tag>
           </div>
           <div class="detail-card-meta text-muted">
-            {{ slot.groupName }} · {{ slot.scopeLabel }} · {{ slot.startTime.slice(0, 5) }}-{{ slot.endTime.slice(0, 5) }}
+            {{ slot.groupName }} · {{ slot.positionName || slot.scopeLabel }} · {{ slot.startTime.slice(0, 5) }}-{{ slot.endTime.slice(0, 5) }}
           </div>
           <div class="detail-card-foot">
             <span>已抢 {{ slot.grabbedCount }}/{{ slot.requiredCount }}</span>
