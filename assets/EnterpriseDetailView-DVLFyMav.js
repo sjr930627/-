@@ -1,0 +1,1 @@
+import e from"./EnterpriseFormView-B-u6L8P1.js";import{d as r,e as o,o as t}from"./index-w4RzLMwD.js";import"./EnterpriseOwnerPicker-CU8HLoLt.js";const c=r({__name:"EnterpriseDetailView",setup(n){return(a,p)=>(t(),o(e,{readonly:""}))}});export{c as default};
