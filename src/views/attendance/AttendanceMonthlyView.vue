@@ -192,7 +192,7 @@ function getSummaries({ columns, data }: { columns: { property?: string }[]; dat
     if (index === 0 || col.property === 'enterpriseName') return '合计'
     const key = col.property
     if (!key || !summaryNumberKeys.includes(key as (typeof summaryNumberKeys)[number])) return ''
-    const sum = data.reduce((s, r) => s + (Number((r as Record<string, number>)[key]) || 0), 0)
+    const sum = data.reduce((s, r) => s + (Number((r as unknown as Record<string, number>)[key]) || 0), 0)
     if (key === 'overtimeHours' || key === 'totalWorkHours') return Math.round(sum * 10) / 10
     return sum
   })

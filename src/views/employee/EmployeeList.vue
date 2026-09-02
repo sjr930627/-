@@ -612,8 +612,8 @@ function handleBatchAssigned() {
               </el-table-column>
               <el-table-column v-if="isUnassignedDept" label="数据来源" width="110">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="employeeDataSourceTagType[row.dataSource]">
-                    {{ employeeDataSourceMap[row.dataSource] }}
+                  <el-tag size="small" :type="employeeDataSourceTagType[row.dataSource as keyof typeof employeeDataSourceTagType]">
+                    {{ employeeDataSourceMap[row.dataSource as keyof typeof employeeDataSourceMap] }}
                   </el-tag>
                 </template>
               </el-table-column>

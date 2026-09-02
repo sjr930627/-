@@ -53,7 +53,8 @@ function departmentChain(departments: Department[], departmentId: string) {
   while (current && guard < 8) {
     names.unshift(current.name)
     if (!current.parentId) break
-    current = departments.find((d) => d.id === current.parentId)
+    const parentId = current.parentId
+    current = departments.find((d) => d.id === parentId)
     guard += 1
   }
   return names
@@ -99,6 +100,7 @@ export function listWorkerCurrentOrgs(
   teams: Team[],
 ): WorkerJoinOrgDisplay[] {
   if (!employee) return []
+  const emp = employee
 
   const items: WorkerJoinOrgDisplay[] = []
   const seen = new Set<string>()
@@ -116,7 +118,7 @@ export function listWorkerCurrentOrgs(
     const key = params.departmentId
     if (seen.has(key)) return
     seen.add(key)
-    const team = teams.find((t) => t.memberIds.includes(employee.id) && t.departmentId === params.departmentId)
+    const team = teams.find((t) => t.memberIds.includes(emp.id) && t.departmentId === params.departmentId)
     items.push({
       key,
       enterpriseId: params.enterpriseId,
@@ -131,26 +133,26 @@ export function listWorkerCurrentOrgs(
     })
   }
 
-  if (employee.status === 'active') {
+  if (emp.status === 'active') {
     const enterpriseId =
-      employee.enterpriseId ||
-      resolveEnterpriseIdByDepartment(employee.departmentId, departments) ||
+      emp.enterpriseId ||
+      resolveEnterpriseIdByDepartment(emp.departmentId, departments) ||
       ''
     pushOrg({
       enterpriseId,
-      departmentId: employee.departmentId,
-      position: employee.position,
-      hireDate: employee.hireDate,
+      departmentId: emp.departmentId,
+      position: emp.position,
+      hireDate: emp.hireDate,
       primary: true,
     })
   }
 
   for (const app of applications) {
-    if (app.employeeId !== employee.id || app.status !== 'approved') continue
+    if (app.employeeId !== emp.id || app.status !== 'approved') continue
     pushOrg({
       enterpriseId: app.enterpriseId,
       departmentId: app.assignedDepartmentId || app.departmentId,
-      position: app.assignedPosition || employee.position,
+      position: app.assignedPosition || emp.position,
       hireDate: app.reviewedAt?.slice(0, 10) || app.appliedAt.slice(0, 10),
       primary: false,
     })
