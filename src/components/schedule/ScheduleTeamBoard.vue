@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { WarningFilled } from '@element-plus/icons-vue'
-import { cellKey, normalizeConfirmStatus, confirmStatusMap, getAssignmentDisplayLabel, getAssignmentDisplayColor, getAssignmentWorkHours, isAssignmentConfirmedLocked } from '@/constants/schedule'
+import { cellKey, normalizeConfirmStatus, confirmStatusMap, getAssignmentDisplayLabel, getAssignmentDisplayColor, getAssignmentWorkHours, isAssignmentConfirmedLocked, isScheduleHistoryDate } from '@/constants/schedule'
 import { getWeekday, isWeekend } from '@/utils'
 import type { Employee, ScheduleAssignment, Shift } from '@/types'
 
@@ -113,7 +113,7 @@ const flatEmployees = computed(() =>
           <th
             v-for="date in dates"
             :key="date"
-            :class="{ weekend: isWeekend(date) }"
+            :class="{ weekend: isWeekend(date), history: isScheduleHistoryDate(date) }"
           >
             <div class="day-label">{{ date.slice(5) }}/周{{ getWeekday(date) }}</div>
           </th>
@@ -241,6 +241,11 @@ const flatEmployees = computed(() =>
 .team-board th.weekend,
 .team-board td.weekend {
   background: #fafafa;
+}
+
+.team-board th.history {
+  color: #909399;
+  background: #f5f7fa;
 }
 
 .sticky-col {

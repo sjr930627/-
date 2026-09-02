@@ -149,9 +149,9 @@ async function remove() {
 }
 
 .chip.active {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  color: #3b82f6;
+  border-color: #4FD1C5;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-weight: 600;
 }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
@@ -29,6 +29,7 @@ import {
 import type { PunchMethod } from '@/types'
 
 const router = useRouter()
+const route = useRoute()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const { ensureActionAllowed } = useMiniAppActionGate()
@@ -42,6 +43,13 @@ const qrScanning = ref(false)
 const selectedTargetId = ref<string | null>(null)
 const insuranceDialogVisible = ref(false)
 const insuranceDialogInfo = ref<InsuranceSuccessInfo | null>(null)
+
+const fromTaskInstanceId = computed(() => route.query.fromTask as string | undefined)
+const fromTaskInstance = computed(() =>
+  fromTaskInstanceId.value
+    ? store.taskInstances.find((i) => i.id === fromTaskInstanceId.value)
+    : undefined,
+)
 
 const attendanceGroup = computed(() => getEmployeeAttendanceGroup(store, employeeId.value))
 const punchTargets = computed(() => buildPunchTargets(attendanceGroup.value))
@@ -162,6 +170,14 @@ function buildInsuranceDialogInfo(
   }
 }
 
+function returnToTaskIfNeeded() {
+  const taskId = fromTaskInstanceId.value
+  if (!taskId) return false
+  ElMessage.success('打卡成功，请继续完成任务')
+  router.push(`/miniapp/tasks/${taskId}`)
+  return true
+}
+
 async function submitPunch() {
   if (!canPunch.value || !nextPunchType.value) return
   const allowed = await ensureActionAllowed({ from: 'punch' })
@@ -199,6 +215,7 @@ async function submitPunch() {
       insuranceDialogVisible.value = true
     } else {
       ElMessage.success(`${action}打卡成功`)
+      returnToTaskIfNeeded()
     }
     if (method === 'field') fieldRemark.value = ''
     if (method === 'qrcode') qrScanned.value = false
@@ -209,6 +226,7 @@ async function submitPunch() {
 
 function closeInsuranceDialog() {
   insuranceDialogVisible.value = false
+  returnToTaskIfNeeded()
 }
 
 function openInsuranceDetail() {
@@ -225,10 +243,20 @@ function methodPunchLabel(method?: PunchMethod) {
 <template>
   <div class="mp-page">
     <div class="mini-nav-bar mp-nav">
-      <MiniNavBack fallback="/miniapp/workbench" />
+      <MiniNavBack :fallback="fromTaskInstance ? `/miniapp/tasks/${fromTaskInstance.id}` : '/miniapp/workbench'" />
       <div class="mini-nav-title">打卡</div>
       <button class="mp-refresh" type="button" :disabled="locating" @click="refreshLocation">
         {{ locating ? '…' : '重新定位' }}
+      </button>
+    </div>
+
+    <div v-if="fromTaskInstance" class="mp-from-task">
+      <div>
+        <div class="mp-from-task-label">来自任务</div>
+        <div class="mp-from-task-name">{{ fromTaskInstance.taskName }}</div>
+      </div>
+      <button type="button" class="mp-from-task-back" @click="router.push(`/miniapp/tasks/${fromTaskInstance.id}`)">
+        返回任务
       </button>
     </div>
 
@@ -387,9 +415,44 @@ function methodPunchLabel(method?: PunchMethod) {
   border: none;
   background: none;
   font-size: 13px;
-  color: #3b82f6;
+  color: #4FD1C5;
   cursor: pointer;
   padding: 8px;
+}
+
+.mp-from-task {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+}
+
+.mp-from-task-label {
+  font-size: 11px;
+  color: #9a3412;
+}
+
+.mp-from-task-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #c2410c;
+}
+
+.mp-from-task-back {
+  border: none;
+  background: #fff;
+  color: #ea580c;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .mp-map-wrap {
@@ -399,7 +462,7 @@ function methodPunchLabel(method?: PunchMethod) {
 
 .mp-map {
   height: 180px;
-  background: linear-gradient(160deg, #dbeafe 0%, #eff6ff 50%, #f0fdf4 100%);
+  background: linear-gradient(160deg, #CCFBF1 0%, #E6FFFA 50%, #f0fdf4 100%);
   position: relative;
   overflow: hidden;
 }
@@ -408,8 +471,8 @@ function methodPunchLabel(method?: PunchMethod) {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(59, 130, 246, 0.06) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(59, 130, 246, 0.06) 1px, transparent 1px);
+    linear-gradient(rgba(79, 209, 197, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79, 209, 197, 0.06) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 
@@ -438,7 +501,7 @@ function methodPunchLabel(method?: PunchMethod) {
 }
 
 .mp-map-target.active {
-  background: #3b82f6;
+  background: #4FD1C5;
   color: #fff;
 }
 
@@ -503,9 +566,9 @@ function methodPunchLabel(method?: PunchMethod) {
 }
 
 .mp-method-btn.active {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  color: #3b82f6;
+  border-color: #4FD1C5;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-weight: 600;
 }
 
@@ -541,8 +604,8 @@ function methodPunchLabel(method?: PunchMethod) {
 }
 
 .mp-target-item.active {
-  border-color: #3b82f6;
-  background: #eff6ff;
+  border-color: #4FD1C5;
+  background: #E6FFFA;
 }
 
 .mp-target-item-name {
@@ -559,7 +622,7 @@ function methodPunchLabel(method?: PunchMethod) {
 
 .mp-target-range {
   font-size: 11px;
-  color: #3b82f6;
+  color: #4FD1C5;
   flex-shrink: 0;
 }
 
@@ -594,7 +657,7 @@ function methodPunchLabel(method?: PunchMethod) {
 .mp-link-btn {
   border: none;
   background: none;
-  color: #3b82f6;
+  color: #4FD1C5;
   font-size: 13px;
   cursor: pointer;
   padding: 0;
@@ -633,7 +696,7 @@ function methodPunchLabel(method?: PunchMethod) {
 .mp-qr-frame {
   width: 160px;
   height: 160px;
-  border: 2px dashed #3b82f6;
+  border: 2px dashed #4FD1C5;
   border-radius: 12px;
   display: flex;
   align-items: center;
@@ -644,13 +707,13 @@ function methodPunchLabel(method?: PunchMethod) {
 }
 
 .mp-qr-done { color: #52c41a; font-weight: 700; font-size: 18px; }
-.mp-qr-scanning { color: #3b82f6; }
+.mp-qr-scanning { color: #4FD1C5; }
 
 .mp-qr-btn {
   padding: 10px 32px;
   border: none;
   border-radius: 22px;
-  background: #3b82f6;
+  background: #4FD1C5;
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -681,14 +744,14 @@ function methodPunchLabel(method?: PunchMethod) {
   height: 168px;
   border-radius: 50%;
   border: none;
-  background: linear-gradient(145deg, #3b82f6, #2563eb);
+  background: linear-gradient(145deg, #4FD1C5, #38B2AC);
   color: #fff;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 12px 32px rgba(59, 130, 246, 0.45);
+  box-shadow: 0 12px 32px rgba(79, 209, 197, 0.45);
 }
 
 .mp-punch-circle.out {
@@ -760,7 +823,7 @@ function methodPunchLabel(method?: PunchMethod) {
   font-weight: 500;
 }
 
-.mp-record-type.clock_in { background: #e8f4ff; color: #3b82f6; }
+.mp-record-type.clock_in { background: #E6FFFA; color: #4FD1C5; }
 .mp-record-type.clock_out { background: #e8f8ef; color: #52c41a; }
 
 .mp-record-time {

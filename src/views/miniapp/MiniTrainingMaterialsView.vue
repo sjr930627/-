@@ -105,15 +105,15 @@ function completeCourse(courseId: string) {
 .course-meta { font-size: 12px; color: #999; margin-bottom: 10px; }
 .progress-labels { display: flex; justify-content: space-between; font-size: 12px; color: #666; margin-bottom: 4px; }
 .progress-bar { height: 6px; background: #f0f0f0; border-radius: 3px; overflow: hidden; }
-.progress-fill { height: 100%; background: #e60012; border-radius: 3px; }
+.progress-fill { height: 100%; background: var(--mini-primary); border-radius: 3px; }
 .complete-btn {
   width: 100%;
   margin-top: 10px;
   padding: 8px;
-  border: 1px dashed #e60012;
+  border: 1px dashed var(--mini-primary);
   border-radius: 8px;
-  background: #fff5f5;
-  color: #e60012;
+  background: var(--mini-primary-light);
+  color: var(--mini-primary);
   font-size: 12px;
   cursor: pointer;
 }

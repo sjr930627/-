@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import {
   instanceWorkflowStatusMap,
@@ -9,12 +9,19 @@ import {
 import type { TaskInstance } from '@/types'
 
 const store = useAppStore()
+const route = useRoute()
 const router = useRouter()
 
 const keyword = ref('')
+const workerIdFilter = ref('')
 const enterpriseFilter = ref('')
 const taskFilter = ref('')
 const instanceStatusFilter = ref<'all' | 'running' | 'completed' | 'cancelled'>('all')
+
+onMounted(() => {
+  if (typeof route.query.worker === 'string') workerIdFilter.value = route.query.worker
+  if (typeof route.query.keyword === 'string') keyword.value = route.query.keyword
+})
 
 const enterpriseOptions = computed(() =>
   [...new Set(store.tasks.map((t) => t.enterpriseName))].map((name) => ({
@@ -31,6 +38,7 @@ function enrichInstance(i: TaskInstance) {
   const worker = store.employees.find((e) => e.id === i.workerId)
   return {
     ...i,
+    workflowName: workflow?.name ?? '—',
     phone: worker?.phone || '—',
     workflowStatus,
     statusLabel: statusMeta.label,
@@ -55,13 +63,17 @@ const summary = computed(() => {
 const detailData = computed(() =>
   store.taskInstances
     .filter((i) => {
+      if (workerIdFilter.value && i.workerId !== workerIdFilter.value) return false
       if (taskFilter.value && i.taskId !== taskFilter.value) return false
       if (enterpriseFilter.value && i.enterpriseName !== enterpriseFilter.value) return false
       if (!keyword.value.trim()) return true
       const kw = keyword.value.trim()
+      const task = store.tasks.find((t) => t.id === i.taskId)
+      const workflowName =
+        store.taskWorkflows.find((w) => w.id === task?.workflowId)?.name ?? ''
       return (
         i.taskName.includes(kw) ||
-        i.taskTypeName.includes(kw) ||
+        workflowName.includes(kw) ||
         i.enterpriseName.includes(kw) ||
         i.workerName.includes(kw) ||
         (store.employees.find((e) => e.id === i.workerId)?.phone ?? '').includes(kw)
@@ -72,6 +84,12 @@ const detailData = computed(() =>
       if (instanceStatusFilter.value === 'all') return true
       return i.workflowStatus === instanceStatusFilter.value
     }),
+)
+
+const workerFilterName = computed(() =>
+  workerIdFilter.value
+    ? store.employees.find((e) => e.id === workerIdFilter.value)?.name ?? ''
+    : '',
 )
 
 const taskFilterOptions = computed(() =>
@@ -122,6 +140,9 @@ function openInstanceDetail(row: TaskInstance) {
         clearable
         style="width: 240px"
       />
+      <el-tag v-if="workerFilterName" closable @close="workerIdFilter = ''">
+        灵工：{{ workerFilterName }}
+      </el-tag>
       <el-select v-model="enterpriseFilter" placeholder="企业筛选" clearable style="width: 200px">
         <el-option
           v-for="opt in enterpriseOptions"
@@ -156,7 +177,7 @@ function openInstanceDetail(row: TaskInstance) {
     <el-table :data="detailData" border stripe>
       <el-table-column prop="enterpriseName" label="企业" min-width="140" />
       <el-table-column prop="taskName" label="任务名称" min-width="160" />
-      <el-table-column prop="taskTypeName" label="流程" width="120" />
+      <el-table-column prop="workflowName" label="任务流程" width="120" />
       <el-table-column prop="workerName" label="灵工" width="100" />
       <el-table-column prop="phone" label="手机号" width="130" />
       <el-table-column label="任务状态" width="100">

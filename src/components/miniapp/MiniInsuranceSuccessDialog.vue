@@ -228,7 +228,7 @@ const emit = defineEmits<{
 
 .ins-btn-primary {
   border: none;
-  background: #e60012;
+  background: var(--mini-primary, #4FD1C5);
   color: #fff;
 }
 </style>

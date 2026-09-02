@@ -137,7 +137,7 @@ function calcHours(start: string, end: string) {
 }
 
 .pref-icon.weekday {
-  background: linear-gradient(135deg, #3b82f6, #60a5fa);
+  background: linear-gradient(135deg, #4FD1C5, #81E6D9);
 }
 
 .pref-icon.weekend {

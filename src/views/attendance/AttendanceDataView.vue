@@ -40,21 +40,11 @@ watch(
 
 watch(activeTab, (tab) => {
   if (route.query.tab !== tab) {
-    router.replace({ path: basePath.value, query: { tab } })
+    router.replace({ path: basePath.value, query: { ...route.query, tab } })
   }
 })
 
 onMounted(() => syncTabFromRoute())
-
-watch(
-  () => [route.query.date, route.query.employee] as const,
-  ([date, employeeId]) => {
-    if (typeof date === 'string' || typeof employeeId === 'string') {
-      activeTab.value = 'daily'
-    }
-  },
-  { immediate: true },
-)
 </script>
 
 <template>
@@ -89,6 +79,8 @@ watch(
           embedded
           :enterprise-id="activeEnterpriseId"
           :assignment-source="assignmentSource"
+          :initial-employee-id="typeof route.query.employee === 'string' ? route.query.employee : undefined"
+          :initial-month="typeof route.query.month === 'string' ? route.query.month : undefined"
         />
       </el-tab-pane>
     </el-tabs>

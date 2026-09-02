@@ -103,6 +103,7 @@ function confirmAddPerson() {
         unavailableDates: [],
         status: 'active',
         personnelCategory: 'grab',
+        dataSource: 'manual',
       })
       ElMessage.success('已新增人员到人员池')
     }

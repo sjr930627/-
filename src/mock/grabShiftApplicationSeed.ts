@@ -29,7 +29,7 @@ export const seedGrabShiftApplications: GrabShiftApplication[] = [
     id: 'gsa_004',
     slotId: 'gs_001',
     employeeId: 'emp_001',
-    message: '有2年中石化加油站服务经验，持有中石化安全作业证',
+    message: '有2年中国移动营业厅服务经验，持有中国移动业务合规证',
     status: 'approved',
     createdAt: '2026-07-26T14:00:00.000Z',
     reviewedBy: '排班员',

@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check } from '@element-plus/icons-vue'
+import { Check, Close } from '@element-plus/icons-vue'
 import type { TaskWorkflow } from '@/types'
+import { resolveInstanceWorkflowStatus } from '@/services/task'
 import { sortedWorkflowNodes } from '@/utils/workflow'
 
 const props = defineProps<{
   workflow: TaskWorkflow
   currentNodeId: string
+  currentNodeName?: string
 }>()
 
 const steps = computed(() => {
@@ -18,14 +20,43 @@ const steps = computed(() => {
     (n) => n.id !== cancelEnd?.id && !(n.nodeType === 'end' && n.name.includes('取消')),
   )
 
+  const workflowStatus = resolveInstanceWorkflowStatus(
+    { currentNodeId: props.currentNodeId, currentNodeName: props.currentNodeName ?? '' },
+    props.workflow,
+  )
+
+  if (workflowStatus === 'cancelled') {
+    const cancelStep = cancelEnd ?? {
+      id: props.currentNodeId,
+      name: props.currentNodeName?.includes('取消') ? props.currentNodeName : '已取消',
+    }
+    return [
+      ...mainNodes.map((node) => ({
+        id: node.id,
+        name: node.name,
+        status: 'completed' as const,
+      })),
+      {
+        id: cancelStep.id,
+        name: cancelStep.name,
+        status: 'cancelled' as const,
+      },
+    ]
+  }
+
   const currentIdx = mainNodes.findIndex((n) => n.id === props.currentNodeId)
-  const resolvedIdx = currentIdx >= 0 ? currentIdx : mainNodes.length - 1
+  const resolvedIdx =
+    workflowStatus === 'completed'
+      ? mainNodes.length - 1
+      : currentIdx >= 0
+        ? currentIdx
+        : mainNodes.length - 1
 
   return mainNodes.map((node, index) => ({
     id: node.id,
     name: node.name,
     status:
-      index < resolvedIdx
+      workflowStatus === 'completed' || index < resolvedIdx
         ? ('completed' as const)
         : index === resolvedIdx
           ? ('current' as const)
@@ -45,6 +76,7 @@ const steps = computed(() => {
       <div class="step-track">
         <div class="step-node">
           <el-icon v-if="step.status === 'completed'" :size="14"><Check /></el-icon>
+          <el-icon v-else-if="step.status === 'cancelled'" :size="14"><Close /></el-icon>
           <span v-else-if="step.status === 'current'" class="current-dot" />
         </div>
         <div v-if="index < steps.length - 1" class="step-line" :class="step.status" />
@@ -53,12 +85,14 @@ const steps = computed(() => {
         <div class="step-name">{{ step.name }}</div>
         <el-tag v-if="step.status === 'current'" size="small" type="primary">当前</el-tag>
         <el-tag v-else-if="step.status === 'completed'" size="small" type="success">已完成</el-tag>
+        <el-tag v-else-if="step.status === 'cancelled'" size="small" type="info">已取消</el-tag>
       </div>
     </div>
     <div class="flow-legend">
       <span><i class="dot done" /> 已完成</span>
       <span><i class="dot current" /> 当前节点</span>
       <span><i class="dot pending" /> 待执行</span>
+      <span><i class="dot cancelled" /> 已取消</span>
     </div>
   </div>
 </template>
@@ -111,6 +145,12 @@ const steps = computed(() => {
   box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.2);
 }
 
+.step-row.cancelled .step-node {
+  border-color: #909399;
+  background: #f4f4f5;
+  color: #909399;
+}
+
 .current-dot {
   width: 10px;
   height: 10px;
@@ -126,7 +166,8 @@ const steps = computed(() => {
   background: #e4e7ed;
 }
 
-.step-line.completed {
+.step-line.completed,
+.step-line.cancelled {
   background: #67c23a;
 }
 
@@ -149,12 +190,14 @@ const steps = computed(() => {
   color: #303133;
 }
 
-.step-row.pending .step-name {
+.step-row.pending .step-name,
+.step-row.cancelled .step-name {
   color: #909399;
 }
 
 .flow-legend {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin-top: 12px;
   padding-top: 12px;
@@ -181,5 +224,9 @@ const steps = computed(() => {
 
 .flow-legend .dot.pending {
   background: #dcdfe6;
+}
+
+.flow-legend .dot.cancelled {
+  background: #909399;
 }
 </style>

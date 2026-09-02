@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import DepartmentFormDialog from '@/components/employee/DepartmentFormDialog.vue'
+import PositionManageDialog from '@/components/employee/PositionManageDialog.vue'
 import EmployeeFormDrawer from '@/components/employee/EmployeeFormDrawer.vue'
 import EmployeeImportDialog from '@/components/employee/EmployeeImportDialog.vue'
 import EmployeeBatchAssignDialog from '@/components/employee/EmployeeBatchAssignDialog.vue'
@@ -16,7 +17,11 @@ import {
   enterpriseUnassignedDepartmentId,
   departmentJoinQrImageUrl,
   buildDepartmentJoinQrPayload,
+  employeeDataSourceMap,
+  employeeDataSourceTagType,
+  resolveEmployeeDataSource,
 } from '@/constants/department'
+import { formatDepartmentGap, summarizeDepartmentGaps } from '@/services/departmentGap'
 import {
   buildDepartmentTree,
   countDepartmentEmployees,
@@ -33,6 +38,7 @@ const selectedDeptId = ref('dept_prod_a')
 const personnelTab = ref<EmployeePersonnelCategory>('schedule')
 const batchEditorVisible = ref(false)
 const deptDialogVisible = ref(false)
+const positionManageVisible = ref(false)
 const editingDeptId = ref<string | null>(null)
 const defaultParentId = ref<string | null>(null)
 const employeeDialogVisible = ref(false)
@@ -133,6 +139,20 @@ const directEmployeeCount = computed(() => {
   )
 })
 
+const deptGap = computed(() => {
+  if (!selectedDeptId.value || isUnassignedDept.value) {
+    return { positionGap: 0, shiftGap: 0, total: 0 }
+  }
+  return summarizeDepartmentGaps({
+    departmentId: selectedDeptId.value,
+    departments: scopedDepartments.value,
+    jobRequirements: store.jobRequirements,
+    grabShiftSlots: store.grabShiftSlots,
+    teams: store.teams,
+    attendanceGroups: store.attendanceGroups,
+  })
+})
+
 const deptLevelLabel = computed(() => {
   if (!selectedDept.value) return '-'
   let level = 1
@@ -219,6 +239,7 @@ const employeeTableData = computed(() => {
           ? getDepartmentName(scopedDepartments.value, e.applyDepartmentId)
           : '',
         idCardDisplay: maskIdCard(e.idCardNo),
+        dataSource: resolveEmployeeDataSource(e, store.workerJoinApplications),
         firstWorkDate,
         workCount,
       }
@@ -394,6 +415,7 @@ function handleBatchAssigned() {
         <el-button plain>批量导出</el-button>
         <el-button type="primary" @click="openOrgBatchEditor">编辑组织架构</el-button>
         <el-button @click="openCreateDept(null)">+ 新增部门</el-button>
+        <el-button @click="positionManageVisible = true">岗位管理</el-button>
       </div>
     </div>
 
@@ -493,6 +515,14 @@ function handleBatchAssigned() {
             </el-descriptions-item>
             <el-descriptions-item label="排序">{{ selectedDept.sort }}</el-descriptions-item>
             <el-descriptions-item label="人员规模">{{ deptEmployeeCount }} 人（本部门 {{ directEmployeeCount }} 人）</el-descriptions-item>
+            <el-descriptions-item label="部门缺口">
+              <div class="dept-gap">
+                <el-tag size="small" :type="deptGap.total > 0 ? 'warning' : 'success'">
+                  {{ formatDepartmentGap(deptGap) }}
+                </el-tag>
+                <span class="text-muted">含下属部门岗位缺口与抢班次缺口</span>
+              </div>
+            </el-descriptions-item>
             </template>
           </el-descriptions>
         </div>
@@ -580,6 +610,13 @@ function handleBatchAssigned() {
                   </el-tag>
                 </template>
               </el-table-column>
+              <el-table-column v-if="isUnassignedDept" label="数据来源" width="110">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="employeeDataSourceTagType[row.dataSource]">
+                    {{ employeeDataSourceMap[row.dataSource] }}
+                  </el-tag>
+                </template>
+              </el-table-column>
               <el-table-column v-if="isUnassignedDept" label="申请部门" min-width="120">
                 <template #default="{ row }">{{ row.applyDeptName || '—' }}</template>
               </el-table-column>
@@ -590,9 +627,10 @@ function handleBatchAssigned() {
                 </template>
               </el-table-column>
             </template>
-            <el-table-column label="操作" width="240" fixed="right">
+            <el-table-column label="操作" width="280" fixed="right">
               <template #default="{ row }">
                 <template v-if="isUnassignedDept && personnelTab === 'schedule'">
+                  <el-button link type="primary" @click="openEmployeeDetail(row)">详情</el-button>
                   <el-button
                     v-if="row.onboardingStage === 'applied'"
                     link
@@ -639,6 +677,11 @@ function handleBatchAssigned() {
     :editing-id="editingDeptId"
     :default-parent-id="defaultParentId"
     @saved="handleDeptSaved"
+  />
+
+  <PositionManageDialog
+    v-model:visible="positionManageVisible"
+    :enterprise-id="activeEnterpriseId"
   />
 
   <OrgDeptBatchEditor
@@ -890,6 +933,13 @@ function handleBatchAssigned() {
 
 .dept-info {
   margin-top: 4px;
+}
+
+.dept-gap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .mgr-avatar {

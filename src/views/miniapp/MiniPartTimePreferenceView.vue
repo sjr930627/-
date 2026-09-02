@@ -239,7 +239,7 @@ async function removePeriod(period: WorkerUnavailablePeriod) {
           rows="2"
           placeholder="如：回乡探亲、考试、个人事务"
         />
-        <button type="button" class="submit" @click="savePeriod">保存</button>
+        <button type="button" class="mini-sheet-submit" @click="savePeriod">保存</button>
       </div>
     </div>
   </div>
@@ -314,7 +314,7 @@ async function removePeriod(period: WorkerUnavailablePeriod) {
   flex-shrink: 0;
 }
 .icon.weekday {
-  background: linear-gradient(135deg, #3b82f6, #60a5fa);
+  background: linear-gradient(135deg, #4FD1C5, #81E6D9);
 }
 .icon.weekend {
   background: linear-gradient(135deg, #f97316, #fb923c);
@@ -427,18 +427,9 @@ async function removePeriod(period: WorkerUnavailablePeriod) {
   color: #6b7280;
 }
 .type-row button.active {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  color: #2563eb;
-  font-weight: 600;
-}
-.submit {
-  margin-top: 8px;
-  height: 42px;
-  border: none;
-  border-radius: 10px;
-  background: #3b82f6;
-  color: #fff;
+  border-color: var(--mini-primary);
+  background: var(--mini-primary-light);
+  color: var(--mini-primary-dark);
   font-weight: 600;
 }
 </style>

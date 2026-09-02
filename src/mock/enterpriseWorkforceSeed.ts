@@ -20,7 +20,7 @@ const defaultCompliance = {
 export const seedMultiEnterpriseDepartments: Department[] = [
   {
     id: 'dept_root_ent_china_mobile_agent',
-    name: '中石化北京朝阳分公司',
+    name: '中国移动北京朝阳分公司',
     parentId: null,
     sort: 0,
     enterpriseId: ENT_CM,
@@ -54,11 +54,11 @@ export const seedMultiEnterpriseDepartments: Department[] = [
     nodeType: 'branch',
     attendanceGroupId: 'ag_sales',
     managerEmployeeId: 'emp_005',
-    description: '负责非油促销、会员拉新等外勤任务',
+    description: '负责5G套餐推广、套餐升档等外勤任务',
   },
   {
     id: 'dept_root_ent_pingan_partner',
-    name: '中石化浙江分公司',
+    name: '中国移动浙江分公司',
     parentId: null,
     sort: 0,
     enterpriseId: ENT_PINGAN,
@@ -76,14 +76,14 @@ export const seedMultiEnterpriseDepartments: Department[] = [
   },
   {
     id: 'dept_pj_store',
-    name: '便利店运营部',
+    name: '营业厅运营部',
     parentId: 'dept_root_ent_pingan_partner',
     sort: 1,
     enterpriseId: ENT_PINGAN,
     nodeType: 'branch',
     attendanceGroupId: 'ag_pj_store',
     managerEmployeeId: 'emp_006',
-    description: '浙江区域便利店陈列与推广',
+    description: '浙江区域终端陈列与推广',
   },
   {
     id: 'dept_pj_field',
@@ -96,7 +96,7 @@ export const seedMultiEnterpriseDepartments: Department[] = [
   },
   {
     id: 'dept_root_ent_china_telecom_agent',
-    name: '中石化上海分公司',
+    name: '中国移动上海分公司',
     parentId: null,
     sort: 0,
     enterpriseId: ENT_SH,
@@ -170,6 +170,7 @@ export const seedMultiEnterpriseEmployees: Employee[] = [
     preferredShiftIds: [],
     unavailableDates: [],
     status: 'pending',
+    dataSource: 'recruit',
     phone: '13800002901',
     realNameVerified: false,
   },
@@ -242,7 +243,7 @@ export const seedMultiEnterpriseEmployees: Employee[] = [
     employeeNo: 'G1101',
     departmentId: 'dept_prod_a',
     enterpriseId: ENT_CM,
-    position: '加油站营业员',
+    position: '营业厅营业员',
     hireDate: '2026-06-12',
     skills: ['健康证'],
     preferredShiftIds: [],
@@ -261,7 +262,7 @@ export const seedMultiEnterpriseEmployees: Employee[] = [
     employeeNo: 'G1102',
     departmentId: 'dept_prod_a',
     enterpriseId: ENT_CM,
-    position: '加油站营业员',
+    position: '营业厅营业员',
     hireDate: '2026-05-08',
     skills: ['健康证'],
     preferredShiftIds: [],
@@ -280,7 +281,7 @@ export const seedMultiEnterpriseEmployees: Employee[] = [
     employeeNo: 'G1103',
     departmentId: 'dept_prod_a',
     enterpriseId: ENT_CM,
-    position: '便利店收银',
+    position: '营业厅收银',
     hireDate: '2026-04-20',
     skills: ['健康证'],
     preferredShiftIds: [],
@@ -394,7 +395,7 @@ export const seedMultiEnterpriseEmployees: Employee[] = [
     employeeNo: 'G3101',
     departmentId: 'dept_pj_store',
     enterpriseId: ENT_PINGAN,
-    position: '便利店营业员',
+    position: '终端销售员',
     hireDate: '2026-04-02',
     skills: ['健康证'],
     preferredShiftIds: [],
@@ -431,12 +432,12 @@ export const seedMultiEnterpriseEmployees: Employee[] = [
 export const seedMultiEnterpriseTeams: Team[] = [
   {
     id: 'team_pj_am',
-    name: '浙江便利店早班',
+    name: '浙江营业厅早班',
     departmentId: 'dept_pj_store',
     attendanceGroupId: 'ag_pj_store',
     memberIds: ['emp_006', 'emp_pj_001'],
     hourlyRate: 42,
-    description: '便利店陈列检查早班',
+    description: '终端陈列检查早班',
   },
   {
     id: 'team_sh_hall',
@@ -454,7 +455,7 @@ export const seedMultiEnterpriseTeams: Team[] = [
     attendanceGroupId: 'ag_sales',
     memberIds: ['emp_005', 'emp_007'],
     hourlyRate: 35,
-    description: '非油促销与会员拉新外勤',
+    description: '5G套餐推广与套餐升档外勤',
   },
 ]
 
@@ -462,8 +463,8 @@ const rawExtraGroups = [
   {
     id: 'ag_pj_store',
     code: 'ZJ-ATT-001',
-    name: '浙江便利店考勤组',
-    description: '便利店陈列推广，自由打卡计工时',
+    name: '浙江营业厅考勤组',
+    description: '终端陈列推广，自由打卡计工时',
     status: 'enabled' as const,
     attendanceType: 'free' as const,
     shiftTemplates: [],
@@ -476,8 +477,8 @@ const rawExtraGroups = [
     gpsEnabled: true,
     gpsRadiusMeters: 500,
     punchLocations: [
-      { id: 'loc_pj_hz', name: '杭州西湖便利店', address: '杭州市西湖区文三路' },
-      { id: 'loc_pj_nb', name: '宁波鄞州便利店', address: '宁波市鄞州区' },
+      { id: 'loc_pj_hz', name: '杭州西湖营业厅', address: '杭州市西湖区文三路' },
+      { id: 'loc_pj_nb', name: '宁波鄞州营业厅', address: '宁波市鄞州区' },
     ],
     wifiEnabled: true,
     wifiName: 'Sinopec-Store',
@@ -492,7 +493,7 @@ const rawExtraGroups = [
       weekendWork: true,
     }),
     departmentBindings: [
-      { departmentId: 'dept_pj_store', departmentName: '便利店运营部', headcount: 8, managerName: '陈静' },
+      { departmentId: 'dept_pj_store', departmentName: '营业厅运营部', headcount: 8, managerName: '陈静' },
       { departmentId: 'dept_pj_field', departmentName: '渠道推广组', headcount: 5, managerName: '马强' },
     ],
     payRule: {
@@ -503,7 +504,7 @@ const rawExtraGroups = [
     },
     pricingConfig: createDefaultPricingConfig(42),
     minMonthlyOnlineHours: 160,
-    attendanceArea: '浙江便利店',
+    attendanceArea: '浙江营业厅',
     createdAt: '2026-06-15T08:00:00.000Z',
     updatedAt: '2026-07-18T10:00:00.000Z',
   },
@@ -591,22 +592,22 @@ export function patchBaseWorkforceEnterpriseIds(
     dept_prod_a: {
       enterpriseId: ENT_CM,
       parentId: 'dept_root_ent_china_mobile_agent',
-      name: '中石化朝阳加油站',
+      name: '中国移动朝阳营业厅',
     },
   }
 
   const empPatches: Record<string, Partial<Employee>> = {
-    emp_001: { enterpriseId: ENT_CM },
-    emp_002: { enterpriseId: ENT_CM },
+    emp_001: { enterpriseId: ENT_CM, dataSource: 'qr' },
+    emp_002: { enterpriseId: ENT_CM, dataSource: 'recruit' },
     emp_003: {
       enterpriseId: ENT_CM,
       personnelCategory: 'grab',
-      position: '加油站营业员',
+      position: '营业厅营业员',
     },
     emp_004: {
       enterpriseId: ENT_CM,
       personnelCategory: 'grab',
-      position: '便利店收银',
+      position: '营业厅收银',
     },
     emp_005: {
       enterpriseId: ENT_CM,
@@ -631,11 +632,13 @@ export function patchBaseWorkforceEnterpriseIds(
     emp_pending_001: {
       enterpriseId: ENT_CM,
       departmentId: 'dept_unassigned_ent_china_mobile_agent',
+      dataSource: 'recruit',
     },
     emp_pending_002: {
       enterpriseId: ENT_CM,
       departmentId: 'dept_unassigned_ent_china_mobile_agent',
       applyDepartmentId: 'dept_cm_field',
+      dataSource: 'qr',
     },
   }
 

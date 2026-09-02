@@ -13,7 +13,7 @@ export const miniMessageCategoryTone: Record<
   { bg: string; color: string; tab: 'schedule' | 'system' | 'income' }
 > = {
   income: { bg: '#f0fdf4', color: '#22c55e', tab: 'income' },
-  schedule: { bg: '#eff6ff', color: '#3b82f6', tab: 'schedule' },
+  schedule: { bg: '#E6FFFA', color: '#4FD1C5', tab: 'schedule' },
   task: { bg: '#faf5ff', color: '#a855f7', tab: 'system' },
   withdraw: { bg: '#f0fdf4', color: '#22c55e', tab: 'income' },
   system: { bg: '#faf5ff', color: '#a855f7', tab: 'system' },

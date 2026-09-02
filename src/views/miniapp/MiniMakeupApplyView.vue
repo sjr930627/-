@@ -202,8 +202,8 @@ function submit() {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -253,9 +253,9 @@ function submit() {
 }
 
 .type-btn.active {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  color: #3b82f6;
+  border-color: #4FD1C5;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-weight: 600;
 }
 

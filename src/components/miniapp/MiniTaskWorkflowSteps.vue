@@ -85,7 +85,7 @@ function lineClass(current: TaskWorkflowStepItem) {
 }
 
 .wf-step-line.active {
-  background: linear-gradient(to bottom, #3b82f6 0%, #dbeafe 100%);
+  background: linear-gradient(to bottom, #4FD1C5 0%, #CCFBF1 100%);
 }
 
 .wf-step-line.pending {
@@ -99,9 +99,9 @@ function lineClass(current: TaskWorkflowStepItem) {
 }
 
 .wf-step.active .wf-step-dot {
-  background: #3b82f6;
+  background: #4FD1C5;
   color: #fff;
-  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 0 0 4px rgba(79, 209, 197, 0.15);
 }
 
 .wf-step.pending .wf-step-dot {

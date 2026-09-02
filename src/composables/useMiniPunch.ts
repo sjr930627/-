@@ -14,11 +14,11 @@ export interface PunchTarget {
   lng: number
 }
 
-/** Demo 打卡坐标（中石化朝阳加油站） */
+/** Demo 打卡坐标（中国移动朝阳营业厅） */
 export const DEMO_PUNCH_COORDS = {
   lat: 39.9928,
   lng: 116.4815,
-  address: '北京市朝阳区望京西路88号中石化朝阳加油站',
+  address: '北京市朝阳区望京西路88号中国移动朝阳营业厅',
 }
 
 const TARGET_COORDS: Record<string, { lat: number; lng: number }> = {
@@ -51,7 +51,7 @@ export function buildPunchTargets(group: AttendanceGroup | null): PunchTarget[] 
     return [
       {
         id: 'demo_store',
-        name: '中石化朝阳加油站',
+        name: '中国移动朝阳营业厅',
         address: DEMO_PUNCH_COORDS.address,
         lat: DEMO_PUNCH_COORDS.lat,
         lng: DEMO_PUNCH_COORDS.lng,
@@ -111,7 +111,7 @@ export function useMiniPunchLocation() {
       () => {
         applyDemoCoords()
         locating.value = false
-        locateError.value = '定位失败，已切换为演示位置（中石化朝阳加油站）'
+        locateError.value = '定位失败，已切换为演示位置（中国移动朝阳营业厅）'
       },
       { enableHighAccuracy: true, timeout: 8000 },
     )

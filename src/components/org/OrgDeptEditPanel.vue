@@ -306,7 +306,7 @@ function submit() {
                   清除
                 </el-button>
               </div>
-              <div class="field-hint">非必填，用于部门展示</div>
+              <div class="field-hint">非必填；统一 16:9 横版展示，推荐尺寸 960×540px / 1280×720px</div>
               <img v-if="form.imageUrl" :src="form.imageUrl" alt="部门图片" class="dept-image-preview" />
             </el-form-item>
           </el-form>
@@ -602,11 +602,15 @@ function submit() {
 
 .dept-image-preview {
   margin-top: 8px;
-  max-width: 100%;
-  max-height: 100px;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 16 / 9;
   border-radius: 8px;
   object-fit: cover;
+  object-position: center;
   border: 1px solid #e2e8f0;
+  display: block;
+  background: #f8fafc;
 }
 
 .auth-card {

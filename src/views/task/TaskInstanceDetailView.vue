@@ -17,9 +17,10 @@ import {
   getSubmittedWorkflowFieldSnapshots,
   getWorkflowFieldsForNode,
   isInstanceAtEnterpriseNode,
+  instanceWorkflowStatusMap,
+  resolveInstanceWorkflowStatus,
 } from '@/services/task'
-import { formatTaskTypePrice } from '@/constants/task'
-import { sortedWorkflowNodes } from '@/utils/workflow'
+import { resolveTaskSettlementUnitPrice } from '@/constants/task'
 import type { WorkflowActionConfig } from '@/types'
 
 const route = useRoute()
@@ -28,8 +29,6 @@ const store = useAppStore()
 const { runEnterpriseAction } = useEnterpriseInstanceAction()
 
 const includeOpLogs = ref(true)
-const transferNodeId = ref('')
-const reassignWorkerId = ref('')
 const cancelReason = ref('')
 const enterpriseForm = reactive<Record<string, string | number | boolean>>({})
 const actionLoading = ref(false)
@@ -44,13 +43,17 @@ const task = computed(() =>
   instance.value ? store.tasks.find((t) => t.id === instance.value!.taskId) : undefined,
 )
 
-const taskType = computed(() =>
-  task.value ? store.taskTypes.find((t) => t.id === task.value!.taskTypeId) : undefined,
-)
-
 const workflow = computed(() =>
   task.value ? store.taskWorkflows.find((w) => w.id === task.value!.workflowId) : undefined,
 )
+
+const workflowStatus = computed(() =>
+  instance.value && workflow.value
+    ? resolveInstanceWorkflowStatus(instance.value, workflow.value)
+    : 'running',
+)
+
+const statusMeta = computed(() => instanceWorkflowStatusMap[workflowStatus.value])
 
 const lifecycleRecords = computed(() =>
   instance.value
@@ -67,22 +70,15 @@ const timeoutHours = computed(() =>
   instance.value ? calcInstanceTimeoutHours(instance.value) : null,
 )
 
-const unitPriceLabel = computed(() =>
-  taskType.value ? formatTaskTypePrice(taskType.value) : '-',
-)
-
-const workerOptions = computed(() =>
-  store.activeEmployees
-    .filter((e) => e.id !== instance.value?.workerId)
-    .map((e) => ({ label: `${e.name}（${e.employeeNo}）`, value: e.id })),
-)
-
-const nodeOptions = computed(() => {
-  if (!workflow.value) return []
-  return sortedWorkflowNodes(workflow.value.nodes)
-    .filter((n) => n.nodeType !== 'end' || !n.name.includes('取消'))
-    .map((n) => ({ label: n.name, value: n.id }))
+const unitPriceLabel = computed(() => {
+  if (!task.value) return '-'
+  const price = resolveTaskSettlementUnitPrice(task.value)
+  return price != null ? `¥${price}/单` : '-'
 })
+
+const canIntervene = computed(
+  () => !isEnterprise.value && workflowStatus.value === 'running',
+)
 
 const pendingEnterprise = computed(() =>
   instance.value && workflow.value
@@ -145,34 +141,6 @@ function goBack() {
   router.push(isEnterprise.value ? '/enterprise/task/progress' : '/task-manage')
 }
 
-async function executeTransfer() {
-  if (!instance.value || !transferNodeId.value) {
-    ElMessage.warning('请选择目标节点')
-    return
-  }
-  try {
-    store.forceTransferTaskInstance(instance.value.id, transferNodeId.value)
-    ElMessage.success('节点已强制流转')
-    transferNodeId.value = ''
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
-  }
-}
-
-async function executeReassign() {
-  if (!instance.value || !reassignWorkerId.value) {
-    ElMessage.warning('请选择新灵工')
-    return
-  }
-  try {
-    store.reassignTaskInstance(instance.value.id, reassignWorkerId.value)
-    ElMessage.success('转派成功')
-    reassignWorkerId.value = ''
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
-  }
-}
-
 async function executeCancel() {
   if (!instance.value) return
   if (!cancelReason.value.trim()) {
@@ -215,8 +183,8 @@ async function executeCancel() {
             <el-tag v-if="timeoutHours" type="danger" size="small" class="status-badge">
               超时异常
             </el-tag>
-            <el-tag v-else size="small" type="primary" class="status-badge">
-              {{ instance.currentNodeName }}
+            <el-tag v-else size="small" :type="statusMeta.type" class="status-badge">
+              {{ statusMeta.label }}
             </el-tag>
           </div>
 
@@ -226,13 +194,12 @@ async function executeCancel() {
             </el-descriptions-item>
             <el-descriptions-item label="任务状态">
               <span class="status-dot status-dot--primary" />
-              {{ instance.currentNodeName }}
+              {{ statusMeta.label }}
             </el-descriptions-item>
             <el-descriptions-item label="企业名称">{{ instance.enterpriseName }}</el-descriptions-item>
-            <el-descriptions-item label="任务类型">
-              <el-tag size="small" type="info">{{ instance.taskTypeName }}</el-tag>
+            <el-descriptions-item label="任务流程">
+              <el-tag size="small" type="info">{{ workflow.name }}</el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="关联工作流">{{ workflow.name }}</el-descriptions-item>
             <el-descriptions-item label="执行灵工">
               <span class="worker-chip">{{ instance.workerName.charAt(0) }}</span>
               {{ instance.workerName }}
@@ -260,7 +227,7 @@ async function executeCancel() {
             <div class="section-icon section-icon--green">流</div>
             <div class="section-head-text">
               <h3>生命周期流转记录</h3>
-              <p>子任务从认领到当前节点的全流程轨迹</p>
+              <p>子任务从认领到当前节点的全流程轨迹（每条认领一条记录）</p>
             </div>
             <div class="timeline-toolbar">
               <span class="record-count">{{ lifecycleRecords.length }} 条记录</span>
@@ -275,11 +242,13 @@ async function executeCancel() {
               :type="
                 record.type === 'current'
                   ? 'primary'
-                  : record.type === 'manual'
-                    ? 'warning'
-                    : record.type === 'operation'
-                      ? 'info'
-                      : 'success'
+                  : record.type === 'terminal'
+                    ? 'info'
+                    : record.type === 'manual'
+                      ? 'warning'
+                      : record.type === 'operation'
+                        ? 'info'
+                        : 'success'
               "
               :hollow="record.type !== 'current'"
               placement="top"
@@ -290,6 +259,7 @@ async function executeCancel() {
                   current: record.type === 'current',
                   manual: record.type === 'manual',
                   operation: record.type === 'operation',
+                  terminal: record.type === 'terminal',
                 }"
               >
                 <div class="timeline-head">
@@ -313,6 +283,17 @@ async function executeCancel() {
                   <span v-if="record.time">{{ formatTime(record.time) }}</span>
                 </div>
                 <p v-if="record.description" class="timeline-desc">{{ record.description }}</p>
+                <div v-if="record.fieldEntries?.length" class="timeline-fields">
+                  <div class="timeline-fields-title">节点字段</div>
+                  <div
+                    v-for="entry in record.fieldEntries"
+                    :key="entry.fieldId"
+                    class="timeline-field-row"
+                  >
+                    <span class="field-name">{{ entry.name }}</span>
+                    <span class="field-value">{{ entry.value }}</span>
+                  </div>
+                </div>
               </div>
             </el-timeline-item>
           </el-timeline>
@@ -328,84 +309,68 @@ async function executeCancel() {
           <WorkflowVerticalProgress
             :workflow="workflow"
             :current-node-id="instance.currentNodeId"
+            :current-node-name="instance.currentNodeName"
           />
         </section>
 
         <section v-if="isEnterprise && pendingEnterprise" class="page-card side-card enterprise-action-card">
-          <div class="side-card-head">
-            <h3>企业操作</h3>
-            <p>请填写当前节点配置的字段后执行操作</p>
-          </div>
+          <div class="enterprise-dialog-shell">
+            <div class="enterprise-dialog-backdrop" />
+            <div class="enterprise-dialog">
+              <div class="enterprise-dialog-header">
+                <div>
+                  <h3>企业操作 · {{ instance.currentNodeName }}</h3>
+                  <p>企业端操作弹窗 · 请填写采集字段后执行</p>
+                </div>
+              </div>
 
-          <div v-if="submittedFieldSnapshots.length" class="submitted-fields">
-            <div class="submitted-title">灵工已提交</div>
-            <div v-for="item in submittedFieldSnapshots" :key="item.field.id" class="submitted-row">
-              <span class="submitted-label">{{ item.field.name }}</span>
-              <span class="submitted-value">{{ formatWorkflowFieldValue(item.field, item.value) }}</span>
+              <div class="enterprise-dialog-body">
+                <p v-if="enterpriseNodeFields.length" class="enterprise-dialog-tip">
+                  请填写以下信息后，点击底部按钮完成当前节点操作
+                </p>
+
+                <div v-if="submittedFieldSnapshots.length" class="submitted-fields">
+                  <div class="submitted-title">灵工已提交</div>
+                  <div v-for="item in submittedFieldSnapshots" :key="item.field.id" class="submitted-row">
+                    <span class="submitted-label">{{ item.field.name }}</span>
+                    <span class="submitted-value">{{ formatWorkflowFieldValue(item.field, item.value) }}</span>
+                  </div>
+                </div>
+
+                <WorkflowFieldForm
+                  v-if="enterpriseNodeFields.length"
+                  v-model="enterpriseForm"
+                  :fields="enterpriseNodeFields"
+                  label-width="88px"
+                />
+                <el-empty
+                  v-else
+                  description="当前节点未配置采集字段"
+                  :image-size="56"
+                  class="field-empty"
+                />
+              </div>
+
+              <div class="enterprise-dialog-footer">
+                <el-button
+                  v-for="item in enterpriseActions"
+                  :key="item.config.action"
+                  :type="item.meta.buttonType"
+                  class="enterprise-action-btn"
+                  :loading="actionLoading"
+                  @click="handleEnterpriseAction(item.config)"
+                >
+                  {{ item.meta.label }}
+                </el-button>
+              </div>
             </div>
-          </div>
-
-          <WorkflowFieldForm
-            v-if="enterpriseNodeFields.length"
-            v-model="enterpriseForm"
-            :fields="enterpriseNodeFields"
-            label-width="88px"
-          />
-          <el-empty
-            v-else
-            description="当前节点未配置填报字段"
-            :image-size="56"
-            class="field-empty"
-          />
-
-          <div class="enterprise-action-list">
-            <el-button
-              v-for="item in enterpriseActions"
-              :key="item.config.action"
-              :type="item.meta.buttonType"
-              class="enterprise-action-btn"
-              :loading="actionLoading"
-              @click="handleEnterpriseAction(item.config)"
-            >
-              {{ item.meta.label }}
-            </el-button>
           </div>
         </section>
 
-        <section v-if="!isEnterprise" class="page-card side-card intervention-card">
+        <section v-if="canIntervene" class="page-card side-card intervention-card">
           <div class="side-card-head">
             <h3 class="intervention-title">人工干预</h3>
-            <p>处理异常任务，强制调整节点或转派灵工</p>
-          </div>
-
-          <div class="action-block">
-            <div class="action-label">强制流转节点</div>
-            <p class="action-desc">跳过当前节点，直接流转至指定节点</p>
-            <el-select v-model="transferNodeId" placeholder="选择目标节点" style="width: 100%">
-              <el-option
-                v-for="opt in nodeOptions"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-            <el-button type="primary" class="action-btn" @click="executeTransfer">执行</el-button>
-          </div>
-
-          <div class="action-block">
-            <div class="action-label">转派灵工</div>
-            <p class="action-desc">将任务转派给其他灵工继续执行</p>
-            <el-select v-model="reassignWorkerId" placeholder="选择新灵工" filterable style="width: 100%">
-              <el-option
-                v-for="opt in workerOptions"
-                :key="opt.value"
-                :label="opt.label"
-                :value="opt.value"
-              />
-            </el-select>
-            <el-button type="primary" class="action-btn action-btn--purple" @click="executeReassign">
-              执行
-            </el-button>
+            <p>强制取消异常认领任务</p>
           </div>
 
           <div class="action-block">
@@ -425,7 +390,7 @@ async function executeCancel() {
             :closable="false"
             show-icon
             class="action-hint"
-            title="所有人工干预操作均会记录日志并通知相关方。"
+            title="强制取消将记录日志并通知相关方。"
           />
         </section>
       </div>
@@ -633,24 +598,115 @@ async function executeCancel() {
   line-height: 1.5;
 }
 
+.timeline-fields {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+}
+
+.timeline-fields-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.timeline-field-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.timeline-field-row .field-name {
+  color: #909399;
+  flex-shrink: 0;
+}
+
+.timeline-field-row .field-value {
+  color: #303133;
+  text-align: right;
+  word-break: break-word;
+}
+
 .side-card-head {
   margin-bottom: 14px;
 }
 
 .enterprise-action-card {
-  border: 1px solid #ffd591;
-  background: #fffbe6;
+  padding: 0;
+  overflow: hidden;
+  border: none;
+  background: transparent;
+  box-shadow: none;
 }
 
-.enterprise-action-list {
+.enterprise-dialog-shell {
+  position: relative;
+  min-height: 320px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #e4e7ed;
+}
+
+.enterprise-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.enterprise-dialog {
+  position: relative;
+  z-index: 1;
+  margin: 20px 16px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.2);
+  overflow: hidden;
+}
+
+.enterprise-dialog-header {
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid #ebeef5;
+  background: linear-gradient(180deg, #fafbfc, #fff);
+}
+
+.enterprise-dialog-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.enterprise-dialog-header p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #909399;
+}
+
+.enterprise-dialog-body {
+  padding: 14px 18px;
+}
+
+.enterprise-dialog-tip {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.enterprise-dialog-footer {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 10px;
-  margin-top: 16px;
+  justify-content: flex-end;
+  padding: 12px 18px 16px;
+  border-top: 1px solid #ebeef5;
+  background: #fafafa;
 }
 
 .enterprise-action-btn {
-  width: 100%;
   margin: 0;
 }
 

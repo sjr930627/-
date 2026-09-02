@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseInstanceAction } from '@/composables/useEnterpriseInstanceAction'
 import {
@@ -15,12 +15,18 @@ import {
 import type { TaskInstance, WorkflowActionConfig } from '@/types'
 
 const store = useAppStore()
+const route = useRoute()
 const router = useRouter()
 const { runEnterpriseAction } = useEnterpriseInstanceAction()
 const taskFilter = ref('')
+const workerIdFilter = ref('')
 const instanceStatusFilter = ref<'all' | 'running' | 'completed' | 'cancelled' | 'pending_enterprise'>(
   'all',
 )
+
+onMounted(() => {
+  if (typeof route.query.worker === 'string') workerIdFilter.value = route.query.worker
+})
 
 const enterpriseId = computed(() => store.currentEnterpriseId)
 
@@ -75,6 +81,7 @@ const summary = computed(() => {
 const detailData = computed(() =>
   store.taskInstances
     .filter((i) => i.enterpriseId === enterpriseId.value)
+    .filter((i) => !workerIdFilter.value || i.workerId === workerIdFilter.value)
     .filter((i) => !taskFilter.value || i.taskId === taskFilter.value)
     .map(enrichInstance)
     .filter((i) => {
@@ -88,6 +95,12 @@ const taskFilterOptions = computed(() =>
   store.tasks
     .filter((t) => t.enterpriseId === enterpriseId.value)
     .map((t) => ({ label: t.name, value: t.id })),
+)
+
+const workerFilterName = computed(() =>
+  workerIdFilter.value
+    ? store.employees.find((e) => e.id === workerIdFilter.value)?.name ?? ''
+    : '',
 )
 
 function openInstanceDetail(row: TaskInstance) {
@@ -145,6 +158,9 @@ function handleEnterpriseAction(
     </div>
 
     <div class="detail-toolbar">
+      <el-tag v-if="workerFilterName" closable @close="workerIdFilter = ''">
+        灵工：{{ workerFilterName }}
+      </el-tag>
       <el-select
         v-model="taskFilter"
         placeholder="全部任务"

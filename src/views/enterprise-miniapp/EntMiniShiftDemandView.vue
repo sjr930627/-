@@ -416,7 +416,7 @@ function tplName(id: string) {
   padding: 0 14px;
   border: none;
   border-radius: 999px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -535,10 +535,10 @@ function tplName(id: string) {
   margin-top: 10px;
   height: 32px;
   width: 100%;
-  border: 1px solid #5b4fdb;
+  border: 1px solid #228BFF;
   border-radius: 999px;
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   font-size: 13px;
   font-weight: 600;
 }
@@ -615,7 +615,7 @@ function tplName(id: string) {
   font-size: 13px;
   color: #374151;
 }
-.gap-item b { color: #5b4fdb; }
+.gap-item b { color: #228BFF; }
 .soft-empty {
   font-size: 12px;
   color: #9ca3af;
@@ -625,7 +625,7 @@ function tplName(id: string) {
   height: 42px;
   border: none;
   border-radius: 10px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-weight: 600;
 }

@@ -322,7 +322,7 @@ async function rejectShift() {
 
 .btn-confirm {
   border: none;
-  background: var(--mini-primary, #3b82f6);
+  background: var(--mini-primary, #4FD1C5);
   color: #fff;
 }
 </style>

@@ -201,7 +201,7 @@ function goProgress() {
   align-items: center;
   justify-content: space-between;
   padding: 14px 16px 12px;
-  background: #f0f9ff;
+  background: #E6FFFA;
 }
 
 .hall-title {

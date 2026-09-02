@@ -234,6 +234,9 @@ function submit() {
     enterpriseName: ent.name,
     title: form.value.title.trim(),
     department: form.value.department.trim() || '未分配',
+    departmentId: store.departments.find(
+      (d) => d.enterpriseId === ent.id && d.name === form.value.department.trim(),
+    )?.id,
     headcount: form.value.headcount,
     salaryMin: form.value.salaryMin,
     salaryMax: form.value.salaryMax,
@@ -436,7 +439,7 @@ function filterByStatus(status: typeof statusFilter.value) {
         </el-select>
       </el-form-item>
       <el-form-item label="岗位名称" required>
-        <el-input v-model="form.title" :disabled="!!editingId && isEnterprise" placeholder="如：加油站营业员" />
+        <el-input v-model="form.title" :disabled="!!editingId && isEnterprise" placeholder="如：营业厅营业员" />
       </el-form-item>
       <el-row :gutter="16">
         <el-col :span="12">

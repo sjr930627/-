@@ -94,7 +94,9 @@ watch(
   { deep: true },
 )
 
-const positionTemplates = computed(() => config.value.positionTemplates ?? [])
+const positionTemplates = computed(() =>
+  store.getEnterprisePositions(resolvedEnterpriseId.value),
+)
 
 const selectedDeptId = ref('')
 watch(
@@ -1353,7 +1355,7 @@ function configuredPositionCount(departmentId: string) {
     >
       <el-form label-width="100px">
         <el-form-item label="模板名称" required>
-          <el-input v-model="templateForm.name" placeholder="如：加油站营业员模板" />
+          <el-input v-model="templateForm.name" placeholder="如：营业厅营业员模板" />
         </el-form-item>
         <el-form-item label="岗位名称" required>
           <el-select

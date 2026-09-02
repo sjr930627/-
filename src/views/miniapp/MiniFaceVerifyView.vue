@@ -147,7 +147,7 @@ function startCapture() {
 .rule-step {
   font-size: 13px;
   font-weight: 700;
-  color: var(--mini-primary, #1677ff);
+  color: var(--mini-primary);
 }
 
 .rule-block-title {

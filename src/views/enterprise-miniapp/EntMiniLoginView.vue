@@ -66,25 +66,29 @@ async function handleLogin() {
 <style scoped>
 .auth-page {
   min-height: 100%;
-  background: linear-gradient(180deg, #5b4fdb 0%, #eef2ff 42%, #f5f6f8 100%);
+  background: #fff;
   padding: 48px 20px 24px;
 }
 .auth-hero {
   text-align: center;
-  color: #fff;
-  margin-bottom: 28px;
+  color: #111827;
+  margin: -48px -20px 28px;
+  padding: 48px 20px 28px;
+  background: #D5E9FF;
 }
 .auth-logo {
   width: 64px;
   height: 64px;
   margin: 0 auto 12px;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.2);
+  background: #fff;
+  color: #228BFF;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 28px;
   font-weight: 800;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 .auth-title {
   margin: 0;
@@ -129,7 +133,7 @@ async function handleLogin() {
   margin-top: 8px;
   border: none;
   border-radius: 12px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-size: 15px;
   font-weight: 600;
@@ -145,7 +149,7 @@ async function handleLogin() {
   width: 100%;
   border: none;
   background: none;
-  color: #5b4fdb;
+  color: #228BFF;
   font-size: 13px;
 }
 </style>

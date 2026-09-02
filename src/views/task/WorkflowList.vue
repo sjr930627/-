@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import WorkflowFlowChart from '@/components/task/WorkflowFlowChart.vue'
 import { formatWorkflowEnterpriseLabel, workflowStatusMap } from '@/constants/task'
+import { countWorkflowBoundTasks } from '@/services/task'
 import type { TaskWorkflow } from '@/types'
 
 const store = useAppStore()
@@ -29,6 +30,7 @@ const tableData = computed(() =>
       enterpriseLabel: formatWorkflowEnterpriseLabel(w, store.enterprises),
       statusLabel: workflowStatusMap[w.status],
       nodeCount: w.nodes.length,
+      boundTaskCount: countWorkflowBoundTasks(store.tasks, w.id),
     })),
 )
 
@@ -74,7 +76,7 @@ function viewChart(row: TaskWorkflow) {
       <div>
         <h2 class="page-title">任务流程配置</h2>
         <p class="text-muted">
-          定义任务类型对应的流程模板，配置节点、角色权限与结算关联 · 共 {{ store.taskWorkflows.length }} 个流程
+          阶段一：配置小任务流程模板（节点、权限、按钮）· 发布后进入模板库供企业引用 · 共 {{ store.taskWorkflows.length }} 个流程
         </p>
       </div>
       <el-button type="primary" @click="openCreate">新增工作流</el-button>
@@ -93,12 +95,12 @@ function viewChart(row: TaskWorkflow) {
       <el-table-column prop="name" label="流程名称" min-width="180" />
       <el-table-column prop="enterpriseLabel" label="适用企业" min-width="160" show-overflow-tooltip />
       <el-table-column prop="nodeCount" label="节点数" width="80" align="center" />
-      <el-table-column prop="boundTaskTypeCount" label="绑定类型" width="90" align="center">
+      <el-table-column prop="boundTaskCount" label="绑定任务数量" width="110" align="center">
         <template #default="{ row }">
-          <el-tag v-if="row.boundTaskTypeCount > 0" type="warning" size="small">
-            {{ row.boundTaskTypeCount }} 个
+          <el-tag v-if="row.boundTaskCount > 0" type="warning" size="small">
+            {{ row.boundTaskCount }} 个
           </el-tag>
-          <span v-else class="text-muted">未绑定</span>
+          <span v-else class="text-muted">0</span>
         </template>
       </el-table-column>
       <el-table-column prop="version" label="版本" width="70" align="center" />

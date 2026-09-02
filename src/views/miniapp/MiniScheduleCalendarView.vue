@@ -19,8 +19,10 @@ import { MINIAPP_DEMO_ANCHOR_DATE } from '@/constants/miniapp'
 import {
   buildDayDetail,
   formatDuration,
+  formatWeekRange,
   getCalendarCells,
   getMonthStats,
+  getWeekCalendarCells,
   resolveDayState,
   shiftBarColor,
 } from '@/composables/useMiniSchedule'
@@ -47,6 +49,7 @@ const today = computed(() => localDateStr(now.value))
 const viewYear = ref(2026)
 const viewMonth = ref(7)
 const selectedDate = ref(MINIAPP_DEMO_ANCHOR_DATE)
+const calendarExpanded = ref(false)
 
 function syncFromRoute() {
   const dateQuery = route.query.date
@@ -67,6 +70,18 @@ const panelTitle = computed(() => (isPastDay.value ? '当天打卡' : '当天排
 const selectedDayDetail = computed(() =>
   buildDayDetail(store, employeeId.value, selectedDate.value, now.value),
 )
+
+/** 过去日期班次收入：优先按实际工时结算，展示为 ¥xx（xx/时） */
+const pastShiftIncomeLabel = computed(() => {
+  const detail = selectedDayDetail.value
+  if (detail.state === 'rest') return ''
+  const pay =
+    detail.workedMinutes > 0
+      ? Math.round((detail.workedMinutes / 60) * detail.hourlyRate * 100) / 100
+      : detail.estimatedPay
+  if (pay <= 0 && detail.hourlyRate <= 0) return ''
+  return `¥${pay}（¥${detail.hourlyRate}/时）`
+})
 
 const selectedDateMakeups = computed(() =>
   store.makeupRequests
@@ -104,11 +119,44 @@ const canApplyMakeup = computed(() => {
 
 const monthLabel = computed(() => `${viewYear.value}年${viewMonth.value}月`)
 
+const weekRangeLabel = computed(() =>
+  formatWeekRange(new Date(`${selectedDate.value}T12:00:00`)),
+)
+
 const monthStats = computed(() =>
   getMonthStats(store, employeeId.value, viewYear.value, viewMonth.value),
 )
 
-const calendarCells = computed(() => getCalendarCells(viewYear.value, viewMonth.value))
+const monthCalendarCells = computed(() => getCalendarCells(viewYear.value, viewMonth.value))
+
+const weekCalendarCells = computed(() => getWeekCalendarCells(selectedDate.value))
+
+const displayCalendarCells = computed(() =>
+  calendarExpanded.value ? monthCalendarCells.value : weekCalendarCells.value,
+)
+
+function toggleCalendarExpanded() {
+  calendarExpanded.value = !calendarExpanded.value
+}
+
+function shiftSelectedDate(days: number) {
+  const d = new Date(`${selectedDate.value}T12:00:00`)
+  d.setDate(d.getDate() + days)
+  const next = localDateStr(d)
+  selectDate(next)
+  viewYear.value = d.getFullYear()
+  viewMonth.value = d.getMonth() + 1
+}
+
+function prevPeriod() {
+  if (calendarExpanded.value) prevMonth()
+  else shiftSelectedDate(-7)
+}
+
+function nextPeriod() {
+  if (calendarExpanded.value) nextMonth()
+  else shiftSelectedDate(7)
+}
 
 function cellShiftId(date: string) {
   const asn = store.getAssignment(employeeId.value, date)
@@ -260,11 +308,15 @@ function shiftIconTone(shiftId?: string) {
       </button>
     </div>
 
-    <!-- 月份选择 -->
+    <!-- 月份 / 周选择 -->
     <div class="sc-month-bar">
-      <button type="button" class="sc-nav-arrow" @click="prevMonth">‹</button>
-      <div class="sc-month-label">{{ monthLabel }} ▾</div>
-      <button type="button" class="sc-nav-arrow" @click="nextMonth">›</button>
+      <button type="button" class="sc-nav-arrow" @click="prevPeriod">‹</button>
+      <button type="button" class="sc-month-trigger" @click="toggleCalendarExpanded">
+        <span class="sc-month-label">{{ monthLabel }}</span>
+        <span v-if="!calendarExpanded" class="sc-week-range">{{ weekRangeLabel }}</span>
+        <span class="sc-expand-hint">{{ calendarExpanded ? '收起' : '展开' }}</span>
+      </button>
+      <button type="button" class="sc-nav-arrow" @click="nextPeriod">›</button>
     </div>
 
     <!-- 月度统计 -->
@@ -284,26 +336,31 @@ function shiftIconTone(shiftId?: string) {
     </div>
 
     <!-- 日历 -->
-    <div class="sc-calendar-card">
+    <div class="sc-calendar-card" :class="{ expanded: calendarExpanded }">
       <div class="sc-week-head">
         <span v-for="w in ['日','一','二','三','四','五','六']" :key="w">{{ w }}</span>
       </div>
-      <div class="sc-calendar-grid">
-        <div
-          v-for="(cell, idx) in calendarCells"
-          :key="idx"
-          class="sc-cal-cell"
-          :class="cell.date ? cellClass(cell.date) : 'empty'"
-          @click="cell.date && selectDate(cell.date)"
-        >
-          <template v-if="cell.day">
-            <div class="sc-cal-day">{{ cell.day }}</div>
-            <div
-              v-if="cellShiftId(cell.date!) !== 'shift_rest'"
-              class="sc-cal-bar"
-              :style="{ background: shiftBarColor(cellShiftId(cell.date!)) }"
-            />
-          </template>
+      <div class="sc-calendar-body">
+        <div class="sc-calendar-grid" :class="{ week: !calendarExpanded }">
+          <div
+            v-for="(cell, idx) in displayCalendarCells"
+            :key="cell.date ?? `pad-${idx}`"
+            class="sc-cal-cell"
+            :class="[
+              cell.date ? cellClass(cell.date) : 'empty',
+              { 'out-month': cell.date && !cell.date.startsWith(`${viewYear}-${String(viewMonth).padStart(2, '0')}`) },
+            ]"
+            @click="cell.date && selectDate(cell.date)"
+          >
+            <template v-if="cell.day">
+              <div class="sc-cal-day">{{ cell.day }}</div>
+              <div
+                v-if="cellShiftId(cell.date!) !== 'shift_rest'"
+                class="sc-cal-bar"
+                :style="{ background: shiftBarColor(cellShiftId(cell.date!)) }"
+              />
+            </template>
+          </div>
         </div>
       </div>
       <div class="sc-legend">
@@ -312,6 +369,10 @@ function shiftIconTone(shiftId?: string) {
         <span><i style="background:#9B59B6" />夜班</span>
         <span><i style="background:#d9d9d9" />休息</span>
       </div>
+      <button type="button" class="sc-expand-btn" @click="toggleCalendarExpanded">
+        <span>{{ calendarExpanded ? '收起本周' : '展开本月' }}</span>
+        <span class="sc-expand-icon" :class="{ up: calendarExpanded }">›</span>
+      </button>
     </div>
 
     <!-- 选中日期详情 -->
@@ -384,7 +445,10 @@ function shiftIconTone(shiftId?: string) {
                 {{ selectedDayDetail.shift?.startTime?.slice(0, 5) }} - {{ selectedDayDetail.shift?.endTime?.slice(0, 5) }}
                 · {{ Math.round((selectedDayDetail.workedMinutes + selectedDayDetail.remainingMinutes) / 60) }}小时
               </div>
-              <div v-if="!isPastDay" class="sc-shift-pay">
+              <div v-if="isPastDay && pastShiftIncomeLabel" class="sc-shift-pay past">
+                收入 {{ pastShiftIncomeLabel }}
+              </div>
+              <div v-else-if="!isPastDay" class="sc-shift-pay">
                 ¥{{ selectedDayDetail.estimatedPay }}
                 <small>¥{{ selectedDayDetail.hourlyRate }}/时</small>
               </div>
@@ -515,7 +579,7 @@ function shiftIconTone(shiftId?: string) {
   border: none;
   background: none;
   font-size: 12px;
-  color: #3b82f6;
+  color: #4FD1C5;
   cursor: pointer;
   padding: 4px 0;
   white-space: nowrap;
@@ -541,9 +605,25 @@ function shiftIconTone(shiftId?: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 20px;
+  gap: 12px;
   padding: 12px;
   background: #fff;
+}
+
+.sc-month-trigger {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 10px;
+}
+
+.sc-month-trigger:active {
+  background: #f3f4f6;
 }
 
 .sc-nav-arrow {
@@ -559,6 +639,19 @@ function shiftIconTone(shiftId?: string) {
   font-size: 17px;
   font-weight: 700;
   color: #1a1a1a;
+  line-height: 1.2;
+}
+
+.sc-week-range {
+  font-size: 12px;
+  color: #6b7280;
+  line-height: 1.2;
+}
+
+.sc-expand-hint {
+  font-size: 11px;
+  color: #4FD1C5;
+  line-height: 1.2;
 }
 
 .sc-stats-row {
@@ -574,7 +667,7 @@ function shiftIconTone(shiftId?: string) {
   text-align: center;
 }
 
-.sc-stat.blue { background: #e8f4ff; }
+.sc-stat.blue { background: #E6FFFA; }
 .sc-stat.green { background: #e8f8ef; }
 .sc-stat.orange { background: #fff3e6; }
 
@@ -585,7 +678,7 @@ function shiftIconTone(shiftId?: string) {
 }
 
 .sc-stat.orange .sc-stat-val { color: #f59e0b; }
-.sc-stat.blue .sc-stat-val { color: #3b82f6; }
+.sc-stat.blue .sc-stat-val { color: #4FD1C5; }
 .sc-stat.green .sc-stat-val { color: #22c55e; }
 
 .sc-stat-label {
@@ -599,6 +692,19 @@ function shiftIconTone(shiftId?: string) {
   background: #fff;
   border-radius: 16px;
   padding: 14px;
+}
+
+.sc-calendar-body {
+  overflow: hidden;
+  transition: max-height 0.28s ease;
+}
+
+.sc-calendar-card:not(.expanded) .sc-calendar-body {
+  max-height: 56px;
+}
+
+.sc-calendar-card.expanded .sc-calendar-body {
+  max-height: 420px;
 }
 
 .sc-week-head {
@@ -616,6 +722,14 @@ function shiftIconTone(shiftId?: string) {
   gap: 4px;
 }
 
+.sc-calendar-grid.week {
+  grid-template-rows: 1fr;
+}
+
+.sc-cal-cell.out-month .sc-cal-day {
+  color: #c0c4cc;
+}
+
 .sc-cal-cell {
   aspect-ratio: 1;
   display: flex;
@@ -629,8 +743,8 @@ function shiftIconTone(shiftId?: string) {
 
 .sc-cal-cell.empty { cursor: default; }
 .sc-cal-cell.selected {
-  background: #eff6ff;
-  border: 2px solid #3b82f6;
+  background: #E6FFFA;
+  border: 2px solid #4FD1C5;
 }
 .sc-cal-cell.today:not(.selected) { background: #f0faf4; }
 .sc-cal-cell.past-ok { background: #f6ffed; }
@@ -656,6 +770,33 @@ function shiftIconTone(shiftId?: string) {
   margin-top: 12px;
   font-size: 11px;
   color: #999;
+}
+
+.sc-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 0 2px;
+  border: none;
+  background: none;
+  font-size: 13px;
+  color: #4FD1C5;
+  cursor: pointer;
+}
+
+.sc-expand-icon {
+  display: inline-block;
+  font-size: 16px;
+  transform: rotate(90deg);
+  transition: transform 0.2s ease;
+  line-height: 1;
+}
+
+.sc-expand-icon.up {
+  transform: rotate(-90deg);
 }
 
 .sc-legend i {
@@ -690,7 +831,7 @@ function shiftIconTone(shiftId?: string) {
   border: none;
   background: none;
   font-size: 13px;
-  color: #3b82f6;
+  color: #4FD1C5;
   cursor: pointer;
   flex-shrink: 0;
   padding: 4px 0;
@@ -739,7 +880,7 @@ function shiftIconTone(shiftId?: string) {
 }
 
 .sc-punch-stat-val.highlight {
-  color: #3b82f6;
+  color: #4FD1C5;
 }
 
 .sc-shift-card {
@@ -750,8 +891,8 @@ function shiftIconTone(shiftId?: string) {
 }
 
 .sc-shift-card.selected {
-  border: 2px solid #3b82f6;
-  box-shadow: 0 2px 12px rgba(59, 130, 246, 0.15);
+  border: 2px solid #4FD1C5;
+  box-shadow: 0 2px 12px rgba(79, 209, 197, 0.15);
 }
 
 .sc-shift-head {
@@ -767,7 +908,7 @@ function shiftIconTone(shiftId?: string) {
   border-radius: 8px;
 }
 
-.sc-shift-badge.active { background: #eff6ff; color: #3b82f6; }
+.sc-shift-badge.active { background: #E6FFFA; color: #4FD1C5; }
 .sc-shift-badge.upcoming { background: #f0fdf4; color: #22c55e; }
 .sc-shift-badge.done { background: #f0f0f0; color: #999; }
 .sc-shift-badge.rest { background: #f5f5f5; color: #bbb; }
@@ -790,8 +931,8 @@ function shiftIconTone(shiftId?: string) {
 }
 
 .sc-shift-icon-box.morning {
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
 }
 
 .sc-shift-icon-box.mid {
@@ -826,6 +967,11 @@ function shiftIconTone(shiftId?: string) {
   font-weight: 800;
   color: #f59e0b;
   margin-top: 8px;
+}
+
+.sc-shift-pay.past {
+  font-size: 18px;
+  line-height: 1.35;
 }
 
 .sc-shift-pay small {
@@ -867,7 +1013,7 @@ function shiftIconTone(shiftId?: string) {
 
 .sc-progress-fill {
   height: 100%;
-  background: #3b82f6;
+  background: #4FD1C5;
   border-radius: 3px;
 }
 
@@ -886,12 +1032,12 @@ function shiftIconTone(shiftId?: string) {
   padding: 12px;
   border: none;
   border-radius: 24px;
-  background: #3b82f6;
+  background: #4FD1C5;
   color: #fff;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 4px 12px rgba(79, 209, 197, 0.25);
 }
 
 .sc-punch-secondary {
@@ -929,10 +1075,10 @@ function shiftIconTone(shiftId?: string) {
   justify-content: space-between;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid #dbeafe;
+  border: 1px solid #CCFBF1;
   border-radius: 10px;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-size: 13px;
   cursor: pointer;
   margin-bottom: 8px;
@@ -974,9 +1120,9 @@ function shiftIconTone(shiftId?: string) {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid #dbeafe;
-  background: #eff6ff;
-  color: #3b82f6;
+  border: 1px solid #CCFBF1;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-size: 13px;
   margin-top: 10px;
   padding: 8px 14px;

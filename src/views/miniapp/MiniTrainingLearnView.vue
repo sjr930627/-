@@ -1,16 +1,26 @@
 <script setup lang="ts">
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import {
+  CircleCheckFilled,
+  Document,
+  Lock,
+  Monitor,
+  VideoPlay,
+} from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppBack } from '@/composables/useMiniAppBack'
+import { getMaterialCategoryLabel } from '@/constants/training'
 import { canAccessMaterial, getMaterialMinReadMinutes } from '@/services/training'
+import type { TrainingMaterial } from '@/types'
 
 const DEMO_VIDEO_SECONDS = 30
 
 const route = useRoute()
+const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const { goBack } = useMiniAppBack('/miniapp/training/materials')
@@ -38,6 +48,7 @@ const requiredReadMinutes = computed(() => {
 const requiredReadSeconds = computed(() => requiredReadMinutes.value * 60)
 
 const playing = ref(false)
+const previewing = ref(false)
 const watchedSeconds = ref(0)
 const bottomReadSeconds = ref(0)
 const scrolledToBottom = ref(false)
@@ -49,12 +60,9 @@ const watchPercent = computed(() =>
   Math.min(100, Math.round((watchedSeconds.value / DEMO_VIDEO_SECONDS) * 100)),
 )
 
-const readPercent = computed(() =>
-  Math.min(100, Math.round((bottomReadSeconds.value / requiredReadSeconds.value) * 100)),
-)
-
 const isPdf = computed(() => material.value?.type === 'pdf')
 const isReadable = computed(() => material.value?.type === 'pdf' || material.value?.type === 'article')
+const isVideo = computed(() => material.value?.type === 'video')
 
 const canComplete = computed(() => {
   if (alreadyLearned.value) return false
@@ -71,7 +79,7 @@ const progressHint = computed(() => {
 
   if (material.value.type === 'video') {
     const left = Math.max(0, DEMO_VIDEO_SECONDS - watchedSeconds.value)
-    if (left <= 0) return '观看完成，请点击下方按钮确认'
+    if (left <= 0) return '观看完成，请点击「我想学习」确认'
     return `请完整观看视频，不可拖拽快进（剩余约 ${left} 秒）`
   }
 
@@ -91,7 +99,47 @@ const progressHint = computed(() => {
       : `需滑至底部并阅读满 ${requiredReadMinutes.value} 分钟：`
     return prefix + parts.join('，')
   }
-  return '阅读完成，请点击下方按钮确认'
+  return '阅读完成，请点击「我想学习」确认'
+})
+
+const navTitle = computed(() => {
+  const cat = getMaterialCategoryLabel(material.value?.category, store.trainingMaterialCategories)
+  const name = course.value?.name || '课程学习'
+  return cat && cat !== '—' ? `${cat} > ${name}` : name
+})
+
+const catalog = computed(() => {
+  if (!course.value) return []
+  const completed = record.value?.completedMaterialIds ?? []
+  return course.value.materialIds
+    .map((id, index) => {
+      const m = store.trainingMaterials.find((item) => item.id === id && item.status === 'approved')
+      if (!m) return null
+      return {
+        indexLabel: String(index + 1).padStart(2, '0'),
+        material: m,
+        learned: completed.includes(m.id),
+        accessible: canAccessMaterial(course.value!, m.id, completed),
+        current: m.id === materialId.value,
+      }
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+})
+
+const playerDurationLabel = computed(() => {
+  if (isVideo.value) {
+    const left = alreadyLearned.value
+      ? DEMO_VIDEO_SECONDS
+      : Math.max(0, DEMO_VIDEO_SECONDS - watchedSeconds.value)
+    return formatVideoTime(playing.value || watchedSeconds.value > 0 ? left : DEMO_VIDEO_SECONDS)
+  }
+  return `${String(requiredReadMinutes.value).padStart(2, '0')}:00`
+})
+
+const primaryActionLabel = computed(() => {
+  if (alreadyLearned.value) return '已学习'
+  if (canComplete.value) return '完成学习'
+  return '我想学习'
 })
 
 function stopPlayTimer() {
@@ -108,8 +156,24 @@ function stopReadTimer() {
   }
 }
 
+function resetLessonState() {
+  playing.value = false
+  previewing.value = false
+  watchedSeconds.value = 0
+  bottomReadSeconds.value = 0
+  scrolledToBottom.value = false
+  stopPlayTimer()
+}
+
 function togglePlay() {
-  if (material.value?.type !== 'video' || alreadyLearned.value) return
+  if (!isVideo.value) {
+    previewing.value = true
+    return
+  }
+  if (alreadyLearned.value) {
+    playing.value = !playing.value
+    return
+  }
   if (watchedSeconds.value >= DEMO_VIDEO_SECONDS) return
 
   playing.value = !playing.value
@@ -129,9 +193,19 @@ function togglePlay() {
   }
 }
 
+function onPreview() {
+  if (isVideo.value) {
+    if (!playing.value) togglePlay()
+    return
+  }
+  previewing.value = true
+}
+
 function onProgressPointerDown() {
-  if (material.value?.type !== 'video' || alreadyLearned.value) return
-  ElMessage.warning('视频不可拖拽快进，请完整观看')
+  if (!isVideo.value || alreadyLearned.value) return
+  if (course.value?.videoNoSeek !== false) {
+    ElMessage.warning('视频不可拖拽快进，请完整观看')
+  }
 }
 
 function onScroll(e: Event) {
@@ -151,14 +225,7 @@ function startReadTimer() {
 function formatVideoTime(sec: number) {
   const m = Math.floor(sec / 60)
   const s = sec % 60
-  return `${m}:${String(s).padStart(2, '0')}`
-}
-
-function formatReadTime(sec: number) {
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  if (m <= 0) return `${s} 秒`
-  return `${m} 分 ${s} 秒`
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
 function completeLearning() {
@@ -170,33 +237,84 @@ function completeLearning() {
   try {
     store.completeCourseMaterial(courseId.value, employeeId.value, materialId.value, minutes)
     ElMessage.success('学习完成')
-    goBack()
+    const completed = [...(record.value?.completedMaterialIds ?? []), materialId.value]
+    const nextId = course.value.materialIds.find(
+      (id) => id !== materialId.value && canAccessMaterial(course.value!, id, completed) && !completed.includes(id),
+    )
+    if (nextId) {
+      router.replace(`/miniapp/training/learn/${courseId.value}/${nextId}`)
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '提交失败')
   }
 }
 
+function onWantLearn() {
+  if (alreadyLearned.value) {
+    ElMessage.success('本课已学完，可继续复习')
+    return
+  }
+  if (canComplete.value) {
+    completeLearning()
+    return
+  }
+  if (isVideo.value) {
+    if (!playing.value) togglePlay()
+  } else {
+    previewing.value = true
+  }
+  ElMessage.info(progressHint.value)
+}
+
+function openLesson(item: (typeof catalog.value)[number]) {
+  if (!item.accessible) {
+    ElMessage.warning('请按顺序学习，先完成上一项资料')
+    return
+  }
+  if (item.current) {
+    onPreview()
+    return
+  }
+  router.replace(`/miniapp/training/learn/${courseId.value}/${item.material.id}`)
+}
+
+function materialTypeClass(type: TrainingMaterial['type']) {
+  if (type === 'video') return 'type-video'
+  if (type === 'pdf') return 'type-pdf'
+  return 'type-article'
+}
+
 watch(
-  [course, material, record],
+  [course, material],
   () => {
     if (!course.value || !material.value) {
       ElMessage.error('学习内容不存在')
-      goBack()
-      return
-    }
-    const completed = record.value?.completedMaterialIds ?? []
-    if (!canAccessMaterial(course.value, materialId.value, completed)) {
-      ElMessage.warning('请按顺序学习，先完成上一项资料')
       goBack()
     }
   },
   { immediate: true },
 )
 
-onMounted(() => {
-  if (isReadable.value && !alreadyLearned.value) {
-    startReadTimer()
+watch(materialId, () => {
+  resetLessonState()
+  const completed = record.value?.completedMaterialIds ?? []
+  if (course.value && material.value && !canAccessMaterial(course.value, materialId.value, completed)) {
+    ElMessage.warning('请按顺序学习，先完成上一项资料')
+    goBack()
   }
+})
+
+watch(
+  [isReadable, alreadyLearned, materialId],
+  () => {
+    stopReadTimer()
+    if (isReadable.value && !alreadyLearned.value) startReadTimer()
+  },
+  { immediate: true },
+)
+
+onMounted(() => {
+  if (isReadable.value && !alreadyLearned.value) startReadTimer()
 })
 
 onBeforeUnmount(() => {
@@ -209,60 +327,99 @@ onBeforeUnmount(() => {
   <div class="learn-page">
     <div class="mini-nav-bar">
       <MiniNavBack fallback="/miniapp/training/materials" />
-      <div class="mini-nav-title">{{ material?.name ?? '学习' }}</div>
+      <div class="mini-nav-title learn-nav-title">{{ navTitle }}</div>
     </div>
 
     <div v-if="material && course" class="learn-body">
-      <div v-if="material.type === 'video'" class="video-block">
-        <div class="video-screen" @click="togglePlay">
-          <div class="video-play-icon">{{ playing ? '⏸' : '▶' }}</div>
-          <div class="video-screen-label">演示视频 · {{ material.name }}</div>
-          <div v-if="!alreadyLearned" class="video-no-seek-tip">不可拖拽快进</div>
-        </div>
-        <div class="video-controls">
-          <span class="video-time">{{ formatVideoTime(watchedSeconds) }}</span>
+      <section class="player" :class="{ reading: isReadable && previewing }">
+        <template v-if="isVideo">
+          <button type="button" class="player-screen" @click="togglePlay">
+            <span v-if="!playing" class="player-play" aria-hidden="true">
+              <el-icon :size="42"><VideoPlay /></el-icon>
+            </span>
+            <span v-else class="player-playing">播放中 {{ formatVideoTime(watchedSeconds) }}</span>
+            <span class="player-duration">{{ playerDurationLabel }}</span>
+          </button>
           <div
-            class="video-progress no-seek"
+            v-if="!alreadyLearned && course.videoNoSeek !== false"
+            class="player-progress"
             @pointerdown.prevent="onProgressPointerDown"
           >
-            <div class="video-progress-fill" :style="{ width: `${watchPercent}%` }" />
+            <div class="player-progress-fill" :style="{ width: `${watchPercent}%` }" />
           </div>
-          <span class="video-time">{{ formatVideoTime(DEMO_VIDEO_SECONDS) }}</span>
+        </template>
+        <template v-else>
+          <div
+            v-if="!previewing"
+            class="player-screen doc-cover"
+            @click="onPreview"
+          >
+            <el-icon :size="40"><Document /></el-icon>
+            <span class="doc-cover-name">{{ isPdf ? 'PDF 文档' : '图文资料' }}</span>
+            <span class="player-duration">{{ playerDurationLabel }}</span>
+          </div>
+          <div v-else class="read-panel" @scroll="onScroll">
+            <div v-if="isPdf" class="read-pdf-cover">📄 PDF 文档</div>
+            <div class="read-content" v-html="material.description ?? '<p>暂无正文内容</p>'" />
+            <div v-if="isPdf" class="read-pdf-footer">
+              <p>{{ material.fileName }}</p>
+              <p class="text-muted">— 文档底部 —</p>
+            </div>
+          </div>
+        </template>
+      </section>
+
+      <section class="info-block">
+        <div class="info-row">
+          <div class="info-main">
+            <h1 class="info-title">
+              <span class="info-dot" />
+              {{ material.name }}
+            </h1>
+            <p class="info-hint">{{ progressHint }}</p>
+          </div>
+          <div class="info-actions">
+            <button type="button" class="btn-preview" @click="onPreview">试看</button>
+            <button
+              type="button"
+              class="btn-learn"
+              :class="{ done: alreadyLearned }"
+              @click="onWantLearn"
+            >
+              {{ primaryActionLabel }}
+            </button>
+          </div>
         </div>
+      </section>
+
+      <div class="catalog-tabs">
+        <span class="catalog-tab active">目录</span>
       </div>
 
-      <div v-else class="read-block" @scroll="onScroll">
-        <div v-if="material.type === 'pdf'" class="read-pdf-cover">📄 PDF 文档</div>
-        <div class="read-content" v-html="material.description ?? '<p>暂无正文内容</p>'" />
-        <div v-if="material.type === 'pdf'" class="read-pdf-footer">
-          <p>{{ material.fileName }}</p>
-          <p class="text-muted">— 文档底部 —</p>
-        </div>
-      </div>
-
-      <div class="learn-footer">
-        <div class="learn-hint">{{ progressHint }}</div>
-        <div v-if="isReadable && !alreadyLearned" class="read-stats">
-          <span :class="{ done: scrolledToBottom }">
-            {{ scrolledToBottom ? '✓ 已滑至底部' : '○ 未滑至底部' }}
-          </span>
-          <span>
-            底部阅读 {{ formatReadTime(bottomReadSeconds) }} / {{ requiredReadMinutes }} 分钟
-          </span>
-        </div>
-        <div v-if="isReadable && !alreadyLearned" class="read-progress-bar">
-          <div class="read-progress-fill" :style="{ width: `${readPercent}%` }" />
-        </div>
+      <div class="catalog-list">
         <button
-          v-if="!alreadyLearned"
-          class="mini-btn-primary learn-btn"
+          v-for="item in catalog"
+          :key="item.material.id"
           type="button"
-          :disabled="!canComplete"
-          @click="completeLearning"
+          class="catalog-item"
+          :class="{
+            current: item.current,
+            locked: !item.accessible,
+            learned: item.learned && !item.current,
+          }"
+          @click="openLesson(item)"
         >
-          完成学习
+          <el-icon v-if="item.current" class="catalog-tv" :size="16"><Monitor /></el-icon>
+          <span v-else class="catalog-index">{{ item.indexLabel }}</span>
+          <span class="catalog-name">{{ item.material.name }}</span>
+          <el-icon v-if="item.learned" class="catalog-status ok" :size="16"><CircleCheckFilled /></el-icon>
+          <el-icon v-else-if="!item.accessible" class="catalog-status lock" :size="14"><Lock /></el-icon>
+          <span
+            v-else
+            class="catalog-type"
+            :class="materialTypeClass(item.material.type)"
+          />
         </button>
-        <div v-else class="learn-done-tag">✓ 已学习</div>
       </div>
     </div>
   </div>
@@ -271,110 +428,107 @@ onBeforeUnmount(() => {
 <style scoped>
 .learn-page {
   min-height: 100%;
-  background: #f0f2f5;
+  background: #fff;
   display: flex;
   flex-direction: column;
+}
+
+.learn-nav-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .learn-body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding-bottom: 16px;
+  min-height: 0;
 }
 
-.video-block {
-  background: #000;
+.player {
+  background: #cfcfcf;
+  position: relative;
 }
 
-.video-screen {
-  aspect-ratio: 16 / 9;
+.player-screen {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: none;
+  background: #c8c8c8;
   color: #fff;
   cursor: pointer;
-  background: linear-gradient(135deg, #1a1a2e, #16213e);
   position: relative;
 }
 
-.video-play-icon {
-  font-size: 36px;
-  margin-bottom: 8px;
-}
-
-.video-screen-label {
-  font-size: 14px;
-  opacity: 0.85;
-  padding: 0 16px;
-  text-align: center;
-}
-
-.video-no-seek-tip {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  font-size: 11px;
-  background: rgba(230, 0, 18, 0.85);
-  padding: 2px 8px;
-  border-radius: 4px;
-}
-
-.video-controls {
+.player-play {
+  width: 56px;
+  height: 56px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: #111;
+  justify-content: center;
+  color: #fff;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.2));
 }
 
-.video-time {
-  font-size: 11px;
-  color: #aaa;
-  flex-shrink: 0;
-  width: 32px;
+.player-playing {
+  font-size: 14px;
+  font-weight: 600;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
-.video-time:last-child {
-  text-align: right;
+.player-duration {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
 }
 
-.video-progress {
-  flex: 1;
-  height: 4px;
-  background: #333;
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.video-progress.no-seek {
+.player-progress {
+  height: 3px;
+  background: rgba(0, 0, 0, 0.15);
   cursor: not-allowed;
-  pointer-events: auto;
 }
 
-.video-progress-fill {
+.player-progress-fill {
   height: 100%;
-  background: #e60012;
-  border-radius: 2px;
-  pointer-events: none;
+  background: var(--mini-primary, #4FD1C5);
   transition: width 0.3s linear;
 }
 
-.read-block {
-  flex: 1;
-  overflow-y: auto;
-  max-height: calc(100vh - 220px);
+.doc-cover {
+  gap: 8px;
+  color: #fff;
+}
+
+.doc-cover-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.player.reading {
   background: #fff;
-  margin: 12px;
-  border-radius: 12px;
+}
+
+.read-panel {
+  max-height: min(52vh, 420px);
+  min-height: 180px;
+  overflow-y: auto;
   padding: 16px;
+  background: #fff;
 }
 
 .read-pdf-cover {
   text-align: center;
-  font-size: 48px;
-  padding: 24px 0 8px;
+  font-size: 36px;
+  padding: 8px 0 12px;
 }
 
 .read-content {
@@ -388,8 +542,8 @@ onBeforeUnmount(() => {
 }
 
 .read-pdf-footer {
-  margin-top: 32px;
-  padding-top: 16px;
+  margin-top: 24px;
+  padding-top: 12px;
   border-top: 1px dashed #eee;
   font-size: 12px;
   color: #666;
@@ -401,63 +555,171 @@ onBeforeUnmount(() => {
   margin-top: 4px;
 }
 
-.learn-footer {
-  margin: 0 12px;
-  padding: 12px;
-  background: #fff;
-  border-radius: 12px;
+.info-block {
+  padding: 14px 16px 10px;
 }
 
-.learn-hint {
-  font-size: 12px;
-  color: #666;
-  margin-bottom: 8px;
-  text-align: center;
-  line-height: 1.5;
-}
-
-.read-stats {
+.info-row {
   display: flex;
-  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.info-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.info-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a1a1a;
+  line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
   gap: 8px;
-  font-size: 11px;
+}
+
+.info-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: var(--mini-primary, #4FD1C5);
+  flex-shrink: 0;
+}
+
+.info-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
   color: #999;
-  margin-bottom: 8px;
+  line-height: 1.45;
 }
 
-.read-stats .done {
-  color: #52c41a;
+.info-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-.read-progress-bar {
-  height: 4px;
-  background: #f0f0f0;
-  border-radius: 2px;
-  overflow: hidden;
-  margin-bottom: 12px;
-}
-
-.read-progress-fill {
-  height: 100%;
-  background: #e60012;
-  transition: width 1s linear;
-}
-
-.learn-btn {
-  width: 100%;
-  padding: 12px;
-}
-
-.learn-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.learn-done-tag {
-  text-align: center;
-  color: #52c41a;
-  font-size: 15px;
+.btn-preview {
+  padding: 3px 12px;
+  border: 1px solid var(--mini-primary, #4FD1C5);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--mini-primary, #4FD1C5);
+  font-size: 12px;
   font-weight: 600;
-  padding: 10px;
+  cursor: pointer;
+}
+
+.btn-learn {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 4px;
+  background: var(--mini-primary, #4FD1C5);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-learn.done {
+  background: #22c55e;
+}
+
+.catalog-tabs {
+  display: flex;
+  padding: 0 16px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.catalog-tab {
+  padding: 10px 4px 8px;
+  margin-right: 20px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1a1a1a;
+  border-bottom: 3px solid var(--mini-primary, #4FD1C5);
+}
+
+.catalog-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.catalog-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 16px;
+  border: none;
+  border-bottom: 1px solid #f3f4f6;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.catalog-item.current .catalog-name {
+  color: var(--mini-primary, #4FD1C5);
+  font-weight: 700;
+}
+
+.catalog-item.locked {
+  opacity: 0.55;
+}
+
+.catalog-tv {
+  color: var(--mini-primary, #4FD1C5);
+  flex-shrink: 0;
+}
+
+.catalog-index {
+  width: 22px;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
+}
+
+.catalog-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #1a1a1a;
+  line-height: 1.45;
+}
+
+.catalog-status.ok {
+  color: #22c55e;
+  flex-shrink: 0;
+}
+
+.catalog-status.lock {
+  color: #bbb;
+  flex-shrink: 0;
+}
+
+.catalog-type {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.catalog-type.type-video {
+  background: var(--mini-primary, #4FD1C5);
+}
+
+.catalog-type.type-pdf {
+  background: #fb923c;
+}
+
+.catalog-type.type-article {
+  background: #60a5fa;
 }
 </style>

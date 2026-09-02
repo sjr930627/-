@@ -50,6 +50,9 @@ function submit(publishNow: boolean) {
     enterpriseName: ent.name,
     title: form.value.title.trim(),
     department: form.value.department.trim() || '未分配',
+    departmentId: store.departments.find(
+      (d) => d.enterpriseId === ent.id && d.name === form.value.department.trim(),
+    )?.id,
     headcount: form.value.headcount,
     salaryMin: form.value.salaryMin,
     salaryMax: form.value.salaryMax,
@@ -91,7 +94,7 @@ function scrollToForm() {
     </div>
     <div id="publish-form" class="form">
       <label>岗位名称</label>
-      <input v-model="form.title" placeholder="如：加油站营业员">
+      <input v-model="form.title" placeholder="如：营业厅营业员">
       <label>部门</label>
       <input v-model="form.department">
       <label>需求人数</label>
@@ -120,10 +123,10 @@ function scrollToForm() {
 
 <style scoped>
 .publish-page {
-  background: #f5f6f8;
+  background: #fff;
 }
 .stats-wrap {
-  background: linear-gradient(180deg, #5b4fdb 0%, #7c6ff0 100px, #f5f6f8 180px);
+  background: #fff;
   padding: 12px 12px 4px;
 }
 .form {
@@ -171,11 +174,11 @@ function scrollToForm() {
 .ghost {
   border: 1px solid #c7c3f5;
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .mini-btn-primary {
   border: none;
-  background: linear-gradient(90deg, #7c6ff0, #5b4fdb);
+  background: linear-gradient(90deg, #5AA8FF, #228BFF);
   color: #fff;
 }
 </style>

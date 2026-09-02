@@ -8,8 +8,9 @@ const props = withDefaults(
     min?: number
     max?: number
     unit?: string
+    disabled?: boolean
   }>(),
-  { min: 1, max: 99999, unit: '单' },
+  { min: 1, max: 99999, unit: '单', disabled: false },
 )
 
 const emit = defineEmits<{
@@ -43,7 +44,7 @@ function onUnlimitedChange(checked: boolean) {
       v-model="quantity"
       :min="min"
       :max="max"
-      :disabled="isUnlimited"
+      :disabled="disabled || isUnlimited"
       controls-position="right"
       placeholder="请输入数量"
       class="quantity-input"
@@ -52,6 +53,7 @@ function onUnlimitedChange(checked: boolean) {
     <el-checkbox
       :model-value="isUnlimited"
       class="unlimited-check"
+      :disabled="disabled"
       @change="onUnlimitedChange(!!$event)"
     >
       无上限

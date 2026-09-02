@@ -87,8 +87,13 @@ function toggle(item: MiniAppSkillCertOption) {
 }
 
 .cert-chip.selected {
-  border-color: #86efac;
-  background: #f0fdf4;
+  border-color: var(--mini-primary);
+  background: var(--mini-primary-light);
+}
+
+.cert-chip.selected .cert-name {
+  color: var(--mini-primary-dark);
+  font-weight: 600;
 }
 
 .cert-icon {
@@ -100,10 +105,5 @@ function toggle(item: MiniAppSkillCertOption) {
   font-size: 13px;
   color: #374151;
   line-height: 1.3;
-}
-
-.cert-chip.selected .cert-name {
-  color: #15803d;
-  font-weight: 600;
 }
 </style>

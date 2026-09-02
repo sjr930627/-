@@ -181,7 +181,7 @@ export function buildDayDetail(
     weekday: WEEKDAYS[d.getDay()],
     assignment: asn ?? null,
     shift,
-    teamName: team?.name ?? '中石化朝阳站班组',
+    teamName: team?.name ?? '中国移动朝阳营业厅班组',
     state,
     stateLabel,
     clockIn,
@@ -190,7 +190,7 @@ export function buildDayDetail(
     remainingMinutes,
     estimatedPay,
     hourlyRate,
-    location: '北京 · 朝阳区 · 中石化朝阳加油站',
+    location: '北京 · 朝阳区 · 中国移动朝阳营业厅',
   }
 }
 
@@ -232,6 +232,20 @@ export function getCalendarCells(year: number, month: number) {
   for (let d = 1; d <= last.getDate(); d++) {
     const date = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
     cells.push({ date, day: d })
+  }
+  return cells
+}
+
+/** 以周日为一周起点，返回锚点日期所在周的 7 天 */
+export function getWeekCalendarCells(anchorDate: string) {
+  const anchor = new Date(anchorDate + 'T12:00:00')
+  const sunday = new Date(anchor)
+  sunday.setDate(anchor.getDate() - anchor.getDay())
+  const cells: { date: string; day: number }[] = []
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(sunday)
+    d.setDate(sunday.getDate() + i)
+    cells.push({ date: localDateStr(d), day: d.getDate() })
   }
   return cells
 }

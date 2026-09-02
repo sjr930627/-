@@ -173,7 +173,7 @@ function formatTime(iso?: string) {
 }
 .tabs button.active {
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 .tabs i {
@@ -184,7 +184,7 @@ function formatTime(iso?: string) {
   height: 16px;
   padding: 0 4px;
   border-radius: 999px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-size: 10px;
   font-style: normal;
@@ -210,7 +210,7 @@ function formatTime(iso?: string) {
   align-items: center;
 }
 .hours {
-  color: #5b4fdb;
+  color: #228BFF;
   font-weight: 600;
 }
 .meta,
@@ -220,7 +220,7 @@ function formatTime(iso?: string) {
   color: #9ca3af;
 }
 .reason {
-  color: #4338ca;
+  color: #228BFF;
 }
 .empty {
   padding: 40px 16px;

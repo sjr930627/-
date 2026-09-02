@@ -3,24 +3,26 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
+import EntMiniGrabShiftCalendar, {
+  type GrabShiftCalendarSlot,
+} from '@/components/enterprise-miniapp/EntMiniGrabShiftCalendar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import { normalizeDeptInterviewRule } from '@/constants/grabInterview'
 import {
   buildGrabShiftSlotPayload,
   calcGrabShiftEffectiveRate,
+  formatGrabPositionAgeRange,
+  formatGrabPositionGender,
   getGrabShiftScopeOptions,
   getGrabShiftTemplateOptions,
   grabShiftPublishStatusMap,
   resolveGrabShiftBaseHourlyRate,
-  resolveGrabSlotDepartmentId,
   resolveGrabSlotDepartmentName,
+  resolveGrabSlotPositionProfile,
   resolveGrabSlotShiftName,
 } from '@/services/grabShift'
-import {
-  resolveEnterpriseIdByAttendanceGroupId,
-  resolveEnterpriseIdByDepartment,
-} from '@/utils/enterpriseScope'
+import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
 const store = useAppStore()
 const router = useRouter()
@@ -30,9 +32,11 @@ const operatorName = computed(() => displayName.value || '企业小程序')
 type TabKey = 'slots' | 'apps' | 'whitelist'
 const tab = ref<TabKey>('slots')
 const publishOpen = ref(false)
-const listDeptFilter = ref<'all' | string>('all')
-const listPositionFilter = ref<'all' | string>('all')
-const expandedSlotId = ref('')
+const storeTeamFilter = ref<'all' | string>('all')
+const slotDetailOpen = ref(false)
+const selectedDay = ref('')
+const selectedDaySlots = ref<GrabShiftCalendarSlot[]>([])
+const selectedSlot = ref<GrabShiftCalendarSlot | null>(null)
 
 const selectedGroupId = ref('')
 const whitelistForm = ref({ employeeId: '', remark: '' })
@@ -56,6 +60,20 @@ const interviewDeptOptions = computed(() => {
     })
 })
 
+/** 发布范围部门：优先面试配置部门，否则企业业务部门 */
+const publishDepartmentOptions = computed(() => {
+  if (interviewDeptOptions.value.length) {
+    return interviewDeptOptions.value.map((d) => ({
+      departmentId: d.departmentId,
+      departmentName: d.departmentName,
+    }))
+  }
+  return store
+    .getDepartmentsByEnterprise(enterpriseId.value)
+    .filter((d) => d.orgType !== 'enterprise' && !d.id.includes('unassigned'))
+    .map((d) => ({ departmentId: d.id, departmentName: d.name }))
+})
+
 const publishForm = ref({
   groupId: '',
   departmentId: '',
@@ -65,7 +83,14 @@ const publishForm = ref({
   requiredCount: 2,
   hourlySubsidy: 5,
   positionName: '',
+  jobType: '',
   positionRequirement: '',
+  description: '',
+  ageMin: undefined as number | undefined,
+  ageMax: undefined as number | undefined,
+  gender: 'any' as 'any' | 'male' | 'female',
+  experience: '不限',
+  skillsText: '',
   requirements: [] as string[],
 })
 
@@ -81,44 +106,11 @@ const templateShiftOptions = computed(() =>
   getGrabShiftTemplateOptions(publishGroup.value, store.shifts),
 )
 
-const publishDeptPositions = computed(() => {
-  const dept = interviewDeptOptions.value.find((d) => d.departmentId === publishForm.value.departmentId)
-  return dept?.positions ?? []
-})
+const enterprisePositions = computed(() => store.getEnterprisePositions(enterpriseId.value))
 
-const selectedInterviewPosition = computed(() =>
-  publishDeptPositions.value.find((p) => p.id === publishForm.value.positionId),
+const selectedEnterprisePosition = computed(() =>
+  store.getEnterprisePosition(publishForm.value.positionId),
 )
-
-const enterpriseDepartments = computed(() =>
-  store.departments.filter((d) => {
-    if (d.orgType === 'enterprise') return false
-    return resolveEnterpriseIdByDepartment(d.id, store.departments) === enterpriseId.value
-  }),
-)
-
-const departmentFilterOptions = computed(() => [
-  { value: 'all', label: '全部部门' },
-  ...enterpriseDepartments.value.map((d) => ({ value: d.id, label: d.name })),
-])
-
-const positionFilterOptions = computed(() => {
-  const names = new Set<string>()
-  interviewDeptOptions.value.forEach((d) => {
-    d.positions.forEach((p) => {
-      if (p.profile.positionName?.trim()) names.add(p.profile.positionName.trim())
-    })
-  })
-  store.grabShiftSlots.forEach((s) => {
-    if (s.positionName?.trim() && matchesEnterpriseSlot(s.attendanceGroupId)) {
-      names.add(s.positionName.trim())
-    }
-  })
-  return [
-    { value: 'all', label: '全部岗位' },
-    ...[...names].sort().map((name) => ({ value: name, label: name })),
-  ]
-})
 
 watch(
   groupList,
@@ -129,6 +121,29 @@ watch(
   },
   { immediate: true },
 )
+
+const enterpriseTeams = computed(() => {
+  const empIds = new Set(
+    store.employees.filter((e) => e.enterpriseId === enterpriseId.value).map((e) => e.id),
+  )
+  return store.teams.filter((t) => t.memberIds.some((id) => empIds.has(id)))
+})
+
+const storeOptions = computed(() => {
+  const ent = store.enterprises.find((e) => e.id === enterpriseId.value)
+  return [
+    { value: 'all', label: ent?.name ? `${ent.name}（全部班组）` : '全部门店' },
+    ...enterpriseTeams.value.map((t) => ({ value: t.id, label: t.name })),
+  ]
+})
+
+const storeDisplayName = computed(() => {
+  if (storeTeamFilter.value === 'all') {
+    const ent = store.enterprises.find((e) => e.id === enterpriseId.value)
+    return ent?.name ?? '全部门店'
+  }
+  return enterpriseTeams.value.find((t) => t.id === storeTeamFilter.value)?.name ?? '门店'
+})
 
 const grabStatusMap: Record<string, string> = {
   open: '招募中',
@@ -146,21 +161,15 @@ function matchesEnterpriseSlot(attendanceGroupId: string) {
   return !enterpriseId.value || ent === enterpriseId.value
 }
 
-function matchesDeptFilter(slot: { departmentId?: string; teamId: string }) {
-  if (listDeptFilter.value === 'all') return true
-  return resolveGrabSlotDepartmentId(slot, store.teams) === listDeptFilter.value
-}
-
-function matchesPositionFilter(slot: { positionName?: string }) {
-  if (listPositionFilter.value === 'all') return true
-  return (slot.positionName ?? '') === listPositionFilter.value
+function matchesTeamFilter(slot: { teamId: string }) {
+  if (storeTeamFilter.value === 'all') return true
+  return slot.teamId === storeTeamFilter.value
 }
 
 const slots = computed(() =>
   store.grabShiftSlots
     .filter((s) => matchesEnterpriseSlot(s.attendanceGroupId))
-    .filter((s) => matchesDeptFilter(s))
-    .filter((s) => matchesPositionFilter(s))
+    .filter((s) => matchesTeamFilter(s))
     .map((slot) => {
       const apps = store.grabShiftApplications.filter((a) => a.slotId === slot.id)
       const pendingApps = apps.filter((a) => a.status === 'pending')
@@ -192,7 +201,7 @@ const pendingApps = computed(() =>
     .map((a) => {
       const slot = store.grabShiftSlots.find((s) => s.id === a.slotId)
       if (!slot || !matchesEnterpriseSlot(slot.attendanceGroupId)) return null
-      if (!matchesDeptFilter(slot) || !matchesPositionFilter(slot)) return null
+      if (!matchesTeamFilter(slot)) return null
       const emp = store.employees.find((e) => e.id === a.employeeId)
       return {
         ...a,
@@ -262,30 +271,51 @@ const whitelistCandidateOptions = computed(() =>
     })),
 )
 
-function applyInterviewPosition(positionId: string) {
-  const pos = publishDeptPositions.value.find((p) => p.id === positionId)
+function optionalAge(n: unknown): number | undefined {
+  return typeof n === 'number' && Number.isFinite(n) && n >= 16 ? n : undefined
+}
+
+function parsePublishSkills(): string[] {
+  const parsed = publishForm.value.skillsText
+    .split(/[,，、]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (parsed.length) return parsed
+  if (publishForm.value.requirements.length) return publishForm.value.requirements
+  return selectedEnterprisePosition.value?.profile.skills ?? []
+}
+
+function applyEnterprisePosition(positionId: string) {
+  const pos = store.getEnterprisePosition(positionId)
   if (!pos) return
+  const p = pos.profile
   publishForm.value.positionId = pos.id
-  publishForm.value.positionName = pos.profile.positionName
-  publishForm.value.positionRequirement =
-    [pos.profile.requirements, pos.profile.description].filter(Boolean).join('\n') || ''
-  publishForm.value.requirements = [...(pos.profile.skills ?? [])]
+  publishForm.value.positionName = p.positionName || pos.name
+  publishForm.value.jobType = p.jobType || ''
+  publishForm.value.positionRequirement = p.requirements?.trim() || ''
+  publishForm.value.description = p.description?.trim() || ''
+  publishForm.value.ageMin = p.ageMin
+  publishForm.value.ageMax = p.ageMax
+  publishForm.value.gender = p.gender || 'any'
+  publishForm.value.experience = p.experience || '不限'
+  publishForm.value.requirements = [...(p.skills ?? [])]
+  publishForm.value.skillsText = (p.skills ?? []).join('、')
 }
 
 function syncPublishDefaults() {
   const dept =
-    interviewDeptOptions.value.find((d) =>
+    publishDepartmentOptions.value.find((d) =>
       groupList.value.some((g) =>
         g.departmentBindings.some((b) => b.departmentId === d.departmentId),
       ),
-    ) || interviewDeptOptions.value[0]
-  const position = dept?.positions[0]
+    ) || publishDepartmentOptions.value[0]
+  const position = enterprisePositions.value[0]
   publishForm.value.departmentId = dept?.departmentId || ''
   preferGroupForDepartment(publishForm.value.departmentId)
   if (!publishForm.value.groupId) {
     publishForm.value.groupId = groupList.value[0]?.id || ''
   }
-  publishForm.value.date = '2026-07-28'
+  publishForm.value.date = selectedDay.value || '2026-07-28'
   publishForm.value.requiredCount = 2
   publishForm.value.hourlySubsidy = 5
   const templates = getGrabShiftTemplateOptions(
@@ -294,11 +324,18 @@ function syncPublishDefaults() {
   )
   publishForm.value.shiftTemplateId = templates[0]?.templateId || ''
   if (position) {
-    applyInterviewPosition(position.id)
+    applyEnterprisePosition(position.id)
   } else {
     publishForm.value.positionId = ''
     publishForm.value.positionName = ''
+    publishForm.value.jobType = ''
     publishForm.value.positionRequirement = ''
+    publishForm.value.description = ''
+    publishForm.value.ageMin = undefined
+    publishForm.value.ageMax = undefined
+    publishForm.value.gender = 'any'
+    publishForm.value.experience = '不限'
+    publishForm.value.skillsText = ''
     publishForm.value.requirements = []
   }
 }
@@ -315,14 +352,6 @@ watch(
   (deptId) => {
     if (!publishOpen.value) return
     preferGroupForDepartment(deptId)
-    const first = interviewDeptOptions.value.find((d) => d.departmentId === deptId)?.positions[0]
-    if (first) applyInterviewPosition(first.id)
-    else {
-      publishForm.value.positionId = ''
-      publishForm.value.positionName = ''
-      publishForm.value.positionRequirement = ''
-      publishForm.value.requirements = []
-    }
   },
 )
 
@@ -350,19 +379,46 @@ watch(
   { immediate: true },
 )
 
-function toggleExpand(id: string) {
-  expandedSlotId.value = expandedSlotId.value === id ? '' : id
+function onCalendarDayClick(date: string, daySlots: GrabShiftCalendarSlot[]) {
+  selectedDay.value = date
+  selectedDaySlots.value = daySlots
+  slotDetailOpen.value = false
+  selectedSlot.value = null
+}
+
+function openSlotDetail(slot: GrabShiftCalendarSlot) {
+  selectedSlot.value = slot
+  slotDetailOpen.value = true
+}
+
+const selectedSlotProfile = computed(() =>
+  selectedSlot.value ? resolveGrabSlotPositionProfile(selectedSlot.value) : null,
+)
+
+function closeSlotDetail() {
+  slotDetailOpen.value = false
+  selectedSlot.value = null
 }
 
 function openPublish() {
-  if (!interviewDeptOptions.value.length) {
-    ElMessage.warning('请先在「抢班面试配置」中配置部门岗位')
-    router.push('/enterprise-miniapp/grab-interview')
+  if (!enterprisePositions.value.length) {
+    ElMessage.warning('请先在「岗位管理」中新增企业岗位')
+    router.push('/enterprise-miniapp/positions')
     return
   }
   if (!groupList.value.length) {
     ElMessage.warning('当前企业暂无可用考勤组')
     return
+  }
+  if (!interviewDeptOptions.value.length) {
+    // 无面试部门时，用考勤组绑定部门作为发布范围选项回退
+    const fallbackDepts = store
+      .getDepartmentsByEnterprise(enterpriseId.value)
+      .filter((d) => d.orgType !== 'enterprise' && !d.id.includes('unassigned'))
+    if (!fallbackDepts.length) {
+      ElMessage.warning('请先配置部门或抢班面试部门')
+      return
+    }
   }
   syncPublishDefaults()
   publishOpen.value = true
@@ -382,8 +438,8 @@ function publish() {
     ElMessage.warning('请选择面试配置中的部门')
     return
   }
-  if (!publishForm.value.positionId || !selectedInterviewPosition.value) {
-    ElMessage.warning('请选择面试配置中的岗位')
+  if (!publishForm.value.positionId || !selectedEnterprisePosition.value) {
+    ElMessage.warning('请选择企业岗位')
     return
   }
   if (!publishForm.value.shiftTemplateId) {
@@ -394,8 +450,8 @@ function publish() {
     ElMessage.warning('岗位名称不能为空')
     return
   }
-  if (!publishForm.value.positionRequirement.trim()) {
-    ElMessage.warning('请填写岗位要求')
+  if (!publishForm.value.positionRequirement.trim() && !publishForm.value.description.trim()) {
+    ElMessage.warning('请填写任职要求或岗位描述')
     return
   }
   if (publishForm.value.requiredCount < 1) {
@@ -421,11 +477,10 @@ function publish() {
     return
   }
 
-  const skills = publishForm.value.requirements.length
-    ? publishForm.value.requirements
-    : selectedInterviewPosition.value.profile.skills?.length
-      ? selectedInterviewPosition.value.profile.skills
-      : ['健康证']
+  const skills = parsePublishSkills()
+  const positionName = publishForm.value.positionName.trim()
+  const positionRequirement =
+    publishForm.value.positionRequirement.trim() || publishForm.value.description.trim()
 
   try {
     store.createGrabShiftSlot(
@@ -443,8 +498,20 @@ function publish() {
         enrollFloatMode: 'absolute',
         enrollFloatValue: 0,
         hourlySubsidy: Math.max(0, publishForm.value.hourlySubsidy),
-        positionName: publishForm.value.positionName.trim(),
-        positionRequirement: publishForm.value.positionRequirement.trim(),
+        positionName,
+        positionId: publishForm.value.positionId,
+        positionProfile: {
+          positionName,
+          jobType: publishForm.value.jobType.trim() || undefined,
+          skills,
+          requirements: publishForm.value.positionRequirement.trim() || undefined,
+          description: publishForm.value.description.trim() || undefined,
+          ageMin: optionalAge(publishForm.value.ageMin),
+          ageMax: optionalAge(publishForm.value.ageMax),
+          gender: publishForm.value.gender,
+          experience: publishForm.value.experience.trim() || undefined,
+        },
+        positionRequirement,
         requirements: skills,
         teams: store.teams,
         shifts: store.shifts,
@@ -454,6 +521,8 @@ function publish() {
     ElMessage.success('抢班需求已提交，待发布审批通过后上架')
     closePublish()
     tab.value = 'slots'
+    selectedDay.value = publishForm.value.date
+    selectedDaySlots.value = slots.value.filter((s) => s.date === publishForm.value.date)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '发布失败')
   }
@@ -531,16 +600,6 @@ async function removeWhitelist(id: string, name: string) {
   }
 }
 
-function appStatusLabel(status: string, reviewNote?: string) {
-  if (status === 'pending') return '待审'
-  if (status === 'approved') {
-    return reviewNote === '白名单免审批' ? '已通过（白名单）' : '已通过'
-  }
-  if (status === 'rejected') return '已驳回'
-  if (status === 'cancelled') return '已取消'
-  return status
-}
-
 function formatTime(iso: string) {
   try {
     return new Date(iso).toLocaleString('zh-CN', {
@@ -552,6 +611,16 @@ function formatTime(iso: string) {
   } catch {
     return iso
   }
+}
+
+function appStatusLabel(status: string, reviewNote?: string) {
+  if (status === 'pending') return '待审'
+  if (status === 'approved') {
+    return reviewNote === '白名单免审批' ? '已通过（白名单）' : '已通过'
+  }
+  if (status === 'rejected') return '已驳回'
+  if (status === 'cancelled') return '已取消'
+  return status
 }
 
 const publishPreviewRate = computed(() => {
@@ -573,35 +642,6 @@ const publishPreviewRate = computed(() => {
   <div class="mini-page">
     <EntMiniNavBar title="抢班管理" back-to="/enterprise-miniapp/attendance" />
 
-    <div class="header-actions">
-      <button type="button" class="ghost-btn" @click="router.push('/enterprise-miniapp/grab-interview')">
-        面试配置
-      </button>
-      <button type="button" class="ghost-btn" @click="tab = 'whitelist'">白名单</button>
-      <button type="button" class="primary-btn" @click="openPublish">发布抢班</button>
-    </div>
-
-    <button type="button" class="interview-banner" @click="router.push('/enterprise-miniapp/grab-interview')">
-      <strong>岗位来源：抢班面试配置</strong>
-      <p>
-        {{ interviewConfig.requireInterview ? '当前开启抢班面试' : '当前未强制面试' }}
-        · 已配置 {{ interviewDeptOptions.length }} 个部门岗位 · 点击去配置
-      </p>
-    </button>
-
-    <div class="filters">
-      <select v-model="listDeptFilter">
-        <option v-for="opt in departmentFilterOptions" :key="opt.value" :value="opt.value">
-          {{ opt.label }}
-        </option>
-      </select>
-      <select v-model="listPositionFilter">
-        <option v-for="opt in positionFilterOptions" :key="opt.value" :value="opt.value">
-          {{ opt.label }}
-        </option>
-      </select>
-    </div>
-
     <div class="tabs">
       <button type="button" :class="{ active: tab === 'slots' }" @click="tab = 'slots'">
         抢班班次
@@ -614,40 +654,18 @@ const publishPreviewRate = computed(() => {
       </button>
     </div>
 
-    <section v-if="tab === 'slots'" class="panel">
-      <p class="hint">按面试配置岗位发布抢班需求；可展开查看报名明细</p>
-      <article v-for="s in slots" :key="s.id" class="card">
-        <div class="card-top">
-          <div>
-            <strong>{{ s.positionName || s.displayShiftName }}</strong>
-            <p>{{ s.date }} · {{ s.displayShiftName }} · {{ s.startTime }}-{{ s.endTime }}</p>
-            <p>{{ s.departmentDisplayName }} · {{ s.teamName }}</p>
-          </div>
-          <div class="tag-col">
-            <span class="status publish">{{ s.publishLabel }}</span>
-            <span class="status" :class="s.status">{{ s.statusLabel }}</span>
-          </div>
-        </div>
-        <div class="progress">
-          <span>已抢 {{ s.grabbedCount }}/{{ s.requiredCount }}</span>
-          <span>待审 {{ s.pendingCount }}</span>
-          <span>通过 {{ s.approvedCount }}</span>
-        </div>
-        <button type="button" class="link" @click="toggleExpand(s.id)">
-          {{ expandedSlotId === s.id ? '收起报名' : '查看报名情况' }}
-        </button>
-        <ul v-if="expandedSlotId === s.id" class="apps">
-          <li v-for="a in s.applicants" :key="a.id">
-            <span>
-              {{ a.employeeName }}
-              <em v-if="a.whitelisted" class="wl-tag">白名单</em>
-            </span>
-            <em :class="a.status">{{ appStatusLabel(a.status, a.reviewNote) }}</em>
-          </li>
-          <li v-if="!s.applicants.length" class="empty-inline">暂无报名</li>
-        </ul>
-      </article>
-      <div v-if="!slots.length" class="empty">暂无抢班班次</div>
+    <section v-if="tab === 'slots'" class="panel slots-panel">
+      <EntMiniGrabShiftCalendar
+        :slots="slots"
+        :store-name="storeDisplayName"
+        :store-options="storeOptions"
+        :selected-date="selectedDay"
+        :selected-day-slots="selectedDaySlots"
+        v-model:store-id="storeTeamFilter"
+        @day-click="onCalendarDayClick"
+        @slot-click="openSlotDetail"
+        @add-demand="openPublish"
+      />
     </section>
 
     <section v-else-if="tab === 'apps'" class="panel">
@@ -718,23 +736,102 @@ const publishPreviewRate = computed(() => {
       <div v-if="!whitelistTableData.length" class="empty">当前考勤组暂无白名单人员</div>
     </section>
 
+    <div v-if="slotDetailOpen && selectedSlot" class="sheet-mask slot-detail-mask" @click.self="closeSlotDetail">
+      <div class="sheet slot-detail-sheet">
+        <header>
+          <button type="button" class="back-btn" @click="closeSlotDetail">‹ 返回</button>
+          <strong>班次详情</strong>
+          <button type="button" class="close" @click="closeSlotDetail">×</button>
+        </header>
+
+        <div class="detail-block">
+          <h4>{{ selectedSlot.positionName || selectedSlot.displayShiftName }}</h4>
+          <div class="tag-col inline-tags">
+            <span class="status publish">{{ selectedSlot.publishLabel }}</span>
+            <span class="status" :class="selectedSlot.status">{{ selectedSlot.statusLabel }}</span>
+          </div>
+        </div>
+
+        <dl class="detail-list">
+          <div><dt>日期</dt><dd>{{ selectedSlot.date }}</dd></div>
+          <div><dt>班次</dt><dd>{{ selectedSlot.displayShiftName }}</dd></div>
+          <div><dt>时段</dt><dd>{{ selectedSlot.startTime }} - {{ selectedSlot.endTime }}</dd></div>
+          <div><dt>部门</dt><dd>{{ selectedSlot.departmentDisplayName }}</dd></div>
+          <div><dt>班组</dt><dd>{{ selectedSlot.teamName || '—' }}</dd></div>
+          <div><dt>名额</dt><dd>已抢 {{ selectedSlot.grabbedCount }}/{{ selectedSlot.requiredCount }}</dd></div>
+          <div v-if="selectedSlot.effectiveHourlyRate != null">
+            <dt>时薪</dt><dd>¥{{ selectedSlot.effectiveHourlyRate }}/h</dd>
+          </div>
+          <div v-if="selectedSlotProfile?.jobType">
+            <dt>类型</dt><dd>{{ selectedSlotProfile.jobType }}</dd>
+          </div>
+          <div>
+            <dt>年龄</dt>
+            <dd>{{ formatGrabPositionAgeRange(selectedSlotProfile?.ageMin, selectedSlotProfile?.ageMax) }}</dd>
+          </div>
+          <div>
+            <dt>性别</dt>
+            <dd>{{ formatGrabPositionGender(selectedSlotProfile?.gender) }}</dd>
+          </div>
+          <div v-if="selectedSlotProfile?.experience">
+            <dt>经验</dt><dd>{{ selectedSlotProfile.experience }}</dd>
+          </div>
+        </dl>
+
+        <div v-if="selectedSlotProfile?.requirements || selectedSlot.positionRequirement" class="detail-section">
+          <strong>任职要求</strong>
+          <p>{{ selectedSlotProfile?.requirements || selectedSlot.positionRequirement }}</p>
+        </div>
+
+        <div v-if="selectedSlotProfile?.description" class="detail-section">
+          <strong>岗位描述</strong>
+          <p>{{ selectedSlotProfile.description }}</p>
+        </div>
+
+        <div v-if="(selectedSlotProfile?.skills || selectedSlot.requirements)?.length" class="detail-section">
+          <strong>技能要求</strong>
+          <div class="skill-tags">
+            <span
+              v-for="sk in selectedSlotProfile?.skills?.length ? selectedSlotProfile.skills : selectedSlot.requirements"
+              :key="sk"
+              class="skill"
+            >{{ sk }}</span>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <strong>报名情况（{{ selectedSlot.applicants.length }}）</strong>
+          <ul class="apps detail-apps">
+            <li v-for="a in selectedSlot.applicants" :key="a.id">
+              <span>
+                {{ a.employeeName }}
+                <em v-if="a.whitelisted" class="wl-tag">白名单</em>
+              </span>
+              <em :class="a.status">{{ appStatusLabel(a.status, a.reviewNote) }}</em>
+            </li>
+            <li v-if="!selectedSlot.applicants.length" class="empty-inline">暂无报名</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
     <div v-if="publishOpen" class="sheet-mask" @click.self="closePublish">
       <div class="sheet">
         <header>
           <strong>发布抢班需求</strong>
           <button type="button" class="close" @click="closePublish">×</button>
         </header>
-        <p class="sheet-hint">岗位与要求同步自 PC 端「抢班面试管理」配置，提交后进入发布审批</p>
+        <p class="sheet-hint">岗位选自企业岗位库，部门用于发布范围；提交后进入发布审批</p>
 
         <label>考勤组</label>
         <select v-model="publishForm.groupId">
           <option v-for="g in groupList" :key="g.id" :value="g.id">{{ g.name }}</option>
         </select>
 
-        <label>部门（面试配置）</label>
+        <label>部门（发布范围）</label>
         <select v-model="publishForm.departmentId">
           <option
-            v-for="d in interviewDeptOptions"
+            v-for="d in publishDepartmentOptions"
             :key="d.departmentId"
             :value="d.departmentId"
           >
@@ -742,15 +839,16 @@ const publishPreviewRate = computed(() => {
           </option>
         </select>
 
-        <label>岗位（面试配置）</label>
+        <label>岗位（企业岗位库）</label>
         <select
           :value="publishForm.positionId"
-          @change="applyInterviewPosition(($event.target as HTMLSelectElement).value)"
+          @change="applyEnterprisePosition(($event.target as HTMLSelectElement).value)"
         >
-          <option v-for="p in publishDeptPositions" :key="p.id" :value="p.id">
-            {{ p.profile.positionName }}
+          <option v-for="p in enterprisePositions" :key="p.id" :value="p.id">
+            {{ p.profile.positionName || p.name }}
           </option>
         </select>
+        <p class="sheet-hint">选择后带出岗位画像，可按本次发布调整</p>
 
         <label>日期</label>
         <input v-model="publishForm.date" type="date">
@@ -769,14 +867,34 @@ const publishPreviewRate = computed(() => {
         <input v-model.number="publishForm.hourlySubsidy" type="number" min="0">
         <p v-if="publishPreviewRate != null" class="rate-tip">预计时薪 ¥{{ publishPreviewRate }}/h</p>
 
-        <label>岗位要求</label>
-        <textarea v-model="publishForm.positionRequirement" rows="3" />
+        <label>岗位类型</label>
+        <input v-model="publishForm.jobType" placeholder="如：零售服务">
 
-        <label>技能要求</label>
-        <div class="skill-tags">
-          <span v-for="sk in publishForm.requirements" :key="sk" class="skill">{{ sk }}</span>
-          <span v-if="!publishForm.requirements.length" class="sub">未配置技能，将默认健康证</span>
+        <label>技能（顿号分隔）</label>
+        <input v-model="publishForm.skillsText" placeholder="健康证、业务合规证">
+
+        <label>任职要求</label>
+        <textarea v-model="publishForm.positionRequirement" rows="3" placeholder="任职要求" />
+
+        <label>岗位描述</label>
+        <textarea v-model="publishForm.description" rows="2" placeholder="岗位职责与工作内容" />
+
+        <label>年龄范围</label>
+        <div class="age-row">
+          <input v-model.number="publishForm.ageMin" type="number" min="16" max="70" placeholder="最小">
+          <span>—</span>
+          <input v-model.number="publishForm.ageMax" type="number" min="16" max="70" placeholder="最大">
         </div>
+
+        <label>性别要求</label>
+        <select v-model="publishForm.gender">
+          <option value="any">不限</option>
+          <option value="male">男</option>
+          <option value="female">女</option>
+        </select>
+
+        <label>经验要求</label>
+        <input v-model="publishForm.experience" placeholder="如：不限 / 1年以上">
 
         <button type="button" class="submit" @click="publish">提交发布审批</button>
       </div>
@@ -785,56 +903,6 @@ const publishPreviewRate = computed(() => {
 </template>
 
 <style scoped>
-.header-actions {
-  padding: 10px 16px 0;
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.primary-btn,
-.ghost-btn {
-  height: 34px;
-  padding: 0 14px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.primary-btn {
-  border: none;
-  background: #5b4fdb;
-  color: #fff;
-}
-.ghost-btn {
-  border: 1px solid #ddd6fe;
-  background: #fff;
-  color: #5b4fdb;
-}
-.interview-banner {
-  margin: 10px 16px 0;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #f5f3ff, #eef2ff);
-  border: 1px solid #e9e5ff;
-  width: calc(100% - 32px);
-  text-align: left;
-  cursor: pointer;
-}
-.interview-banner strong {
-  font-size: 13px;
-  color: #4338ca;
-}
-.interview-banner p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #6b7280;
-}
-.filters {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin: 10px 16px 0;
-}
-.filters select,
 .wl-toolbar select,
 .wl-add select,
 .wl-add input,
@@ -867,11 +935,72 @@ const publishPreviewRate = computed(() => {
 }
 .tabs button.active {
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   font-weight: 600;
 }
 .panel {
   padding: 12px 16px 28px;
+}
+.slots-panel {
+  padding-top: 8px;
+}
+.slot-detail-mask {
+  z-index: 55;
+}
+.slot-detail-sheet {
+  max-height: 86vh;
+}
+.back-btn {
+  border: none;
+  background: none;
+  color: var(--mini-primary, #228BFF);
+  font-size: 14px;
+  padding: 0;
+}
+.detail-block h4 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.inline-tags {
+  flex-direction: row;
+  align-items: center;
+}
+.detail-list {
+  margin: 12px 0;
+  display: grid;
+  gap: 8px;
+}
+.detail-list div {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+}
+.detail-list dt {
+  width: 48px;
+  flex-shrink: 0;
+  color: var(--mini-text-muted, #9ca3af);
+}
+.detail-list dd {
+  margin: 0;
+  color: var(--mini-text, #374151);
+}
+.detail-section {
+  margin-top: 12px;
+}
+.detail-section strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 6px;
+  color: var(--mini-text, #374151);
+}
+.detail-section p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--mini-text-secondary, #6b7280);
+  line-height: 1.5;
+}
+.detail-apps {
+  margin-top: 4px;
 }
 .hint {
   margin: 0 0 10px;
@@ -918,22 +1047,7 @@ const publishPreviewRate = computed(() => {
 .status.open { background: #fef2f2; color: #dc2626; }
 .status.partial { background: #fffbeb; color: #d97706; }
 .status.full { background: #ecfdf5; color: #059669; }
-.status.publish { background: #eef2ff; color: #4338ca; }
-.progress {
-  display: flex;
-  gap: 12px;
-  margin-top: 8px;
-  font-size: 12px;
-  color: #374151;
-}
-.link {
-  margin-top: 8px;
-  border: none;
-  background: none;
-  color: #5b4fdb;
-  font-size: 12px;
-  padding: 0;
-}
+.status.publish { background: #D5E9FF; color: #228BFF; }
 .apps {
   margin: 8px 0 0;
   padding: 0;
@@ -957,8 +1071,8 @@ const publishPreviewRate = computed(() => {
 .wl-tag {
   margin-left: 6px;
   font-size: 10px;
-  color: #5b4fdb !important;
-  background: #eef2ff;
+  color: #228BFF !important;
+  background: #D5E9FF;
   padding: 1px 6px;
   border-radius: 999px;
 }
@@ -985,8 +1099,8 @@ const publishPreviewRate = computed(() => {
 }
 .soft {
   border: 1px solid #c7d2fe;
-  background: #eef2ff;
-  color: #4338ca;
+  background: #D5E9FF;
+  color: #228BFF;
   border-radius: 8px;
   height: 30px;
   padding: 0 10px;
@@ -994,7 +1108,7 @@ const publishPreviewRate = computed(() => {
 }
 .ok {
   border: none;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   border-radius: 8px;
   height: 30px;
@@ -1074,10 +1188,27 @@ const publishPreviewRate = computed(() => {
   padding: 10px;
   resize: vertical;
 }
+.age-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.age-row input {
+  flex: 1;
+}
 .rate-tip {
   margin: 0;
   font-size: 12px;
-  color: #5b4fdb;
+  color: #228BFF;
+}
+.submit {
+  margin-top: 8px;
+  height: 42px;
+  border: none;
+  border-radius: 10px;
+  background: #228BFF;
+  color: #fff;
+  font-weight: 600;
 }
 .skill-tags {
   display: flex;
@@ -1092,14 +1223,5 @@ const publishPreviewRate = computed(() => {
   border-radius: 999px;
   background: #f3f4f6;
   color: #374151;
-}
-.submit {
-  margin-top: 8px;
-  height: 42px;
-  border: none;
-  border-radius: 10px;
-  background: #5b4fdb;
-  color: #fff;
-  font-weight: 600;
 }
 </style>

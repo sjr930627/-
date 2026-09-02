@@ -7,12 +7,14 @@ import type {
   AttendanceRule,
   AttendanceStatus,
   Employee,
+  GrabShiftSlot,
   LeaveRequest,
   PunchType,
   ScheduleAssignment,
   Shift,
 } from '@/types'
 import { calcShiftHours, getMonthDays } from '@/utils'
+import { calcGrabShiftWorkHours, resolveGrabSlotShiftName } from '@/services/grabShift'
 
 /** 考勤数据/审批按排班或抢班拆分的数据来源 */
 export type AttendanceAssignmentSource = 'schedule' | 'grab'
@@ -80,14 +82,117 @@ export function isDailyAttendanceVisible(day: AttendanceDaily): boolean {
   return day.scheduledHours > 0
 }
 
-export function canCorrectWorkHours(status: AttendanceStatus): boolean {
-  return status === 'late' || status === 'missing_punch' || status === 'early_leave' || status === 'normal'
+/** 未确认工时均可矫正（不限当天、不限异常状态）；已确认不可再矫正 */
+export function canCorrectWorkHours(
+  dayOrStatus: AttendanceDaily | AttendanceStatus,
+): boolean {
+  if (typeof dayOrStatus === 'object') {
+    if (dayOrStatus.hoursConfirmed) return false
+    if (dayOrStatus.scheduledHours <= 0) return false
+    if (dayOrStatus.status === 'leave' || dayOrStatus.status === 'rest') return false
+    return true
+  }
+  return dayOrStatus !== 'leave' && dayOrStatus !== 'rest'
 }
 
 export function canConfirmWorkHours(day: AttendanceDaily): boolean {
   if (day.scheduledHours <= 0) return false
   if (day.status === 'leave' || day.status === 'rest') return false
   return !day.hoursConfirmed
+}
+
+function formatHoursNumber(hours: number): string {
+  const n = Math.round(Number(hours) * 10) / 10
+  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+}
+
+/**
+ * 确认工时取值：
+ * - 已矫正：按矫正工时确认结算（可大于班次工时）
+ * - 未矫正：用实际打卡工时；若大于班次/默认工时，则按班次工时封顶
+ */
+export function resolveConfirmWorkHours(day: {
+  workHours: number
+  scheduledHours: number
+  actualPunchHours?: number
+  workHoursCorrected?: boolean
+}): number {
+  if (day.workHoursCorrected) {
+    return Math.round(Math.max(0, day.workHours) * 10) / 10
+  }
+  const raw = day.actualPunchHours ?? day.workHours
+  const scheduled = Math.max(0, day.scheduledHours)
+  const capped = Math.min(Math.max(0, raw), scheduled || raw)
+  return Math.round(capped * 10) / 10
+}
+
+/**
+ * 日考勤工时展示：
+ * - 未确认：待确认工时（默认=实际打卡封顶班次；已矫正=矫正工时，可超班次）
+ * - 已确认：确认工时
+ */
+export function formatDailyWorkHoursText(day: {
+  workHours: number
+  hoursConfirmed?: boolean
+  actualPunchHours?: number
+}): string {
+  return formatHoursNumber(day.workHours)
+}
+
+export function formatActualPunchHoursText(day: {
+  actualPunchHours?: number
+  workHours: number
+}): string {
+  return formatHoursNumber(day.actualPunchHours ?? day.workHours)
+}
+
+/** 抢班考勤「班次」列：班次名称（时间段）工时 */
+export function formatGrabAttendanceShiftText(input: {
+  name?: string
+  startTime?: string
+  endTime?: string
+  workHours?: number
+}): string {
+  const name = input.name?.trim() || '—'
+  const start = input.startTime?.slice(0, 5)
+  const end = input.endTime?.slice(0, 5)
+  const hoursText =
+    input.workHours != null && !Number.isNaN(Number(input.workHours))
+      ? formatHoursNumber(input.workHours)
+      : ''
+  if (start && end) {
+    return hoursText ? `${name}（${start}-${end}）${hoursText}h` : `${name}（${start}-${end}）`
+  }
+  return hoursText ? `${name} ${hoursText}h` : name
+}
+
+/** 解析日考勤行的班次/排班展示文案与列名 */
+export function resolveAttendanceShiftColumn(options: {
+  source: AttendanceAssignmentSource
+  shift?: Pick<Shift, 'name' | 'startTime' | 'endTime' | 'breakMinutes'> | null
+  slot?: GrabShiftSlot | null
+  scheduledHours?: number
+}): { label: string; text: string } {
+  if (options.source === 'grab') {
+    const slot = options.slot
+    const shift = options.shift
+    const name = slot ? resolveGrabSlotShiftName(slot) : shift?.name || '—'
+    const startTime = slot?.startTime ?? shift?.startTime
+    const endTime = slot?.endTime ?? shift?.endTime
+    const workHours =
+      slot?.workHours ??
+      (slot
+        ? calcGrabShiftWorkHours(slot.startTime, slot.endTime, slot.breakMinutes)
+        : options.scheduledHours)
+    return {
+      label: '班次',
+      text: formatGrabAttendanceShiftText({ name, startTime, endTime, workHours }),
+    }
+  }
+  return {
+    label: '排班',
+    text: options.shift?.name || '—',
+  }
 }
 
 /** 实际工时相对排班：缺失 / 超时 */
@@ -101,22 +206,18 @@ export function getWorkHoursAnomaly(
   return null
 }
 
-/** 确认工时时异常提醒文案；无异常返回 null */
+/** 确认工时时：工时不足提醒；无不足返回 null */
 export function buildConfirmHoursWarning(
   items: { name?: string; workHours: number; scheduledHours: number }[],
 ): string | null {
   const parts: string[] = []
   items.forEach((item) => {
-    const anomaly = getWorkHoursAnomaly(item.workHours, item.scheduledHours)
-    if (!anomaly) return
-    const tip =
-      anomaly.type === 'shortfall'
-        ? `${anomaly.diff}工时有缺失`
-        : `${anomaly.diff}工时有超时`
-    parts.push(item.name ? `${item.name}：${tip}` : tip)
+    if (item.workHours >= item.scheduledHours - 0.05) return
+    const who = item.name?.trim()
+    parts.push(who ? `${who}的工时不足` : '工时不足')
   })
   if (!parts.length) return null
-  return `请确认工时正确，${parts.join('；')}。是否仍要按现在工时确认？`
+  return `${parts.join('；')}，是否确认现在工时并结算？`
 }
 
 function applyManualAdjustment(
@@ -131,7 +232,8 @@ function applyManualAdjustment(
   }
   if (manualOverride.workHours !== undefined) {
     next.workHours = manualOverride.workHours
-    next.workHoursCorrected = true
+    // 仅真正矫正过才标记；确认时写入的工时不算矫正
+    next.workHoursCorrected = Boolean(manualOverride.hoursCorrectedAt)
   }
   if (manualOverride.note) {
     next.manualNote = manualOverride.note
@@ -145,6 +247,8 @@ function applyManualAdjustment(
     next.hoursCorrectedAt = manualOverride.hoursCorrectedAt
     next.hoursCorrectedBy = manualOverride.hoursCorrectedBy
   }
+  // 保留打卡算出的原始工时，不被矫正覆盖
+  next.actualPunchHours = day.actualPunchHours ?? day.workHours
   return next
 }
 
@@ -176,6 +280,15 @@ function getPunchesForDay(punches: AttendancePunch[], employeeId: string, date: 
     .sort((a, b) => a.time.localeCompare(b.time))
 }
 
+function withActualPunchHours(
+  day: Omit<AttendanceDaily, 'actualPunchHours'> & { actualPunchHours?: number },
+): AttendanceDaily {
+  return {
+    ...day,
+    actualPunchHours: day.actualPunchHours ?? day.workHours,
+  }
+}
+
 export function computeDailyAttendance(
   employeeId: string,
   date: string,
@@ -192,46 +305,47 @@ export function computeDailyAttendance(
 
   if (manualOverride?.status) {
     const dayPunches = getPunchesForDay(punches, employeeId, date)
+    const punchHours = calcWorkHours(dayPunches, shift)
     return applyManualAdjustment(
-      {
+      withActualPunchHours({
         employeeId,
         date,
         shiftId: shift?.id,
         status: manualOverride.status,
         clockIn: dayPunches.find((p) => p.type === 'clock_in')?.time,
         clockOut: dayPunches.find((p) => p.type === 'clock_out')?.time,
-        workHours: calcWorkHours(dayPunches, shift),
+        workHours: punchHours,
         scheduledHours,
         manualStatus: manualOverride.status,
         manualNote: manualOverride.note,
-      },
+      }),
       manualOverride,
     )
   }
 
   if (isOnLeave(leaveRequests, employeeId, date)) {
     return applyManualAdjustment(
-      {
+      withActualPunchHours({
         employeeId,
         date,
         shiftId: shift?.id,
         status: 'leave',
         workHours: 0,
         scheduledHours,
-      },
+      }),
       manualOverride,
     )
   }
 
   if (!shift || shift.code === 'REST') {
-    return {
+    return withActualPunchHours({
       employeeId,
       date,
       shiftId: shift?.id,
       status: 'rest',
       workHours: 0,
       scheduledHours: 0,
-    }
+    })
   }
 
   const dayPunches = getPunchesForDay(punches, employeeId, date)
@@ -240,30 +354,31 @@ export function computeDailyAttendance(
 
   if (!clockIn && !clockOut) {
     return applyManualAdjustment(
-      {
+      withActualPunchHours({
         employeeId,
         date,
         shiftId: shift.id,
         status: 'absent',
         workHours: 0,
         scheduledHours,
-      },
+      }),
       manualOverride,
     )
   }
 
   if (!clockIn || !clockOut) {
+    const punchHours = calcWorkHours(dayPunches, shift)
     return applyManualAdjustment(
-      {
+      withActualPunchHours({
         employeeId,
         date,
         shiftId: shift.id,
         status: 'missing_punch',
         clockIn: clockIn?.time,
         clockOut: clockOut?.time,
-        workHours: calcWorkHours(dayPunches, shift),
+        workHours: punchHours,
         scheduledHours,
-      },
+      }),
       manualOverride,
     )
   }
@@ -282,17 +397,18 @@ export function computeDailyAttendance(
   if (outMin < earlyThreshold && status === 'normal') status = 'early_leave'
   if (inMin > lateThreshold && outMin < earlyThreshold) status = 'late'
 
+  const punchHours = calcWorkHours(dayPunches, shift)
   return applyManualAdjustment(
-    {
+    withActualPunchHours({
       employeeId,
       date,
       shiftId: shift.id,
       status,
       clockIn: clockIn.time,
       clockOut: clockOut.time,
-      workHours: calcWorkHours(dayPunches, shift),
+      workHours: punchHours,
       scheduledHours,
-    },
+    }),
     manualOverride,
   )
 }

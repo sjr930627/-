@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { isScheduleHistoryDate } from '@/constants/schedule'
 import { getWeekday, isWeekend } from '@/utils'
 import type { Employee } from '@/types'
 
@@ -37,7 +38,7 @@ const emit = defineEmits<{
           <th
             v-for="date in dates"
             :key="date"
-            :class="{ weekend: isWeekend(date) }"
+            :class="{ weekend: isWeekend(date), history: isScheduleHistoryDate(date) }"
           >
             <div>{{ date.slice(5) }}</div>
             <div class="text-muted">周{{ getWeekday(date) }}</div>
@@ -182,6 +183,21 @@ const emit = defineEmits<{
 
 .shift-cell.weekend {
   background: #fafafa;
+}
+
+.shift-grid th.history {
+  color: #909399;
+  background: #f5f7fa;
+}
+
+.shift-cell.history {
+  cursor: default;
+  background: #f5f7fa;
+  color: #909399;
+}
+
+.shift-cell.history:hover {
+  background: #f5f7fa;
 }
 
 .cell-count {

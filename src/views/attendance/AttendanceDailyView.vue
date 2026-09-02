@@ -8,6 +8,10 @@ import {
   canConfirmWorkHours,
   canCorrectWorkHours,
   filterAssignmentsBySource,
+  formatActualPunchHoursText,
+  formatDailyWorkHoursText,
+  resolveAttendanceShiftColumn,
+  resolveConfirmWorkHours,
   getStatusLabel,
   getStatusTagType,
   isDailyAttendanceVisible,
@@ -92,6 +96,21 @@ const tableData = computed(() => {
     .map((d) => {
       const emp = store.employees.find((e) => e.id === d.employeeId)
       const shift = d.shiftId ? store.shifts.find((s) => s.id === d.shiftId) : undefined
+      const assignment = store.assignments.find(
+        (a) =>
+          a.employeeId === d.employeeId &&
+          a.date === d.date &&
+          (props.assignmentSource === 'grab' ? Boolean(a.fromGrabSlotId) : !a.fromGrabSlotId),
+      )
+      const slot = assignment?.fromGrabSlotId
+        ? store.grabShiftSlots.find((s) => s.id === assignment.fromGrabSlotId)
+        : null
+      const shiftColumn = resolveAttendanceShiftColumn({
+        source: props.assignmentSource,
+        shift,
+        slot,
+        scheduledHours: d.scheduledHours,
+      })
       const override = store.manualOverrides[`${d.employeeId}_${d.date}`]
       const rowKey = `${d.employeeId}_${d.date}`
       const enterpriseId = resolveEnterpriseIdByEmployee(emp)
@@ -104,15 +123,20 @@ const tableData = computed(() => {
           : '—',
         employeeName: emp?.name ?? '-',
         phone: emp?.phone || '—',
-        shiftName: shift?.name ?? '-',
+        shiftName: shiftColumn.text,
         statusLabel: getStatusLabel(d.status),
         tagType: getStatusTagType(d.status),
-        canCorrect: canCorrectWorkHours(d.status),
+        canCorrect: canCorrectWorkHours(d),
         canConfirm: canConfirmWorkHours(d),
+        confirmWorkHours: resolveConfirmWorkHours(d),
         hoursHistory: override?.hoursHistory ?? [],
       }
     })
 })
+
+const shiftColumnLabel = computed(() =>
+  props.assignmentSource === 'grab' ? '班次' : '排班',
+)
 
 const summary = computed(() => {
   const list = tableData.value
@@ -147,11 +171,11 @@ function openCorrection(row: (typeof tableData.value)[0]) {
     employeeId: row.employeeId,
     employeeName: row.employeeName,
     date: row.date,
-    workHours: row.workHours,
+    workHours: row.actualPunchHours ?? row.workHours,
     scheduledHours: row.scheduledHours,
   }
   correctionForm.value = {
-    workHours: row.workHoursCorrected ? row.workHours : row.scheduledHours,
+    workHours: row.workHoursCorrected ? row.workHours : (row.actualPunchHours ?? row.workHours),
     note: '',
   }
   correctionVisible.value = true
@@ -174,8 +198,10 @@ function submitCorrection() {
       correctionTarget.value.date,
       correctionForm.value.workHours,
       note,
+      '考勤管理员',
+      { autoConfirm: false },
     )
-    ElMessage.success('工时已矫正')
+    ElMessage.success('工时已矫正，可继续确认工时')
     correctionVisible.value = false
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
@@ -183,18 +209,19 @@ function submitCorrection() {
 }
 
 async function confirmOne(row: (typeof tableData.value)[0]) {
+  const workHours = resolveConfirmWorkHours(row)
   const warning = buildConfirmHoursWarning([
     {
       name: row.employeeName,
-      workHours: row.workHours,
+      workHours,
       scheduledHours: row.scheduledHours,
     },
   ])
   if (warning) {
     try {
-      await ElMessageBox.confirm(warning, '工时异常提醒', {
+      await ElMessageBox.confirm(warning, '工时不足提醒', {
         type: 'warning',
-        confirmButtonText: '仍按现工时确认',
+        confirmButtonText: '确认并结算',
         cancelButtonText: '取消',
       })
     } catch {
@@ -202,8 +229,8 @@ async function confirmOne(row: (typeof tableData.value)[0]) {
     }
   }
   try {
-    store.confirmWorkHours(row.employeeId, row.date, { workHours: row.workHours })
-    ElMessage.success(`已确认 ${row.employeeName} 工时 ${row.workHours}h`)
+    store.confirmWorkHours(row.employeeId, row.date, { workHours })
+    ElMessage.success(`已确认 ${row.employeeName} 工时 ${workHours}h`)
     selectedKeys.value = selectedKeys.value.filter((k) => k !== row.rowKey)
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '确认失败')
@@ -216,20 +243,27 @@ async function batchConfirm() {
     ElMessage.warning('请先勾选待确认工时的记录')
     return
   }
+  const payloads = rows.map((r) => ({
+    employeeId: r.employeeId,
+    date: r.date,
+    name: r.employeeName,
+    workHours: resolveConfirmWorkHours(r),
+    scheduledHours: r.scheduledHours,
+  }))
   const warning = buildConfirmHoursWarning(
-    rows.map((r) => ({
-      name: r.employeeName,
+    payloads.map((r) => ({
+      name: r.name,
       workHours: r.workHours,
       scheduledHours: r.scheduledHours,
     })),
   )
   try {
     await ElMessageBox.confirm(
-      warning || `将确认所选 ${rows.length} 条记录的当前工时，是否继续？`,
-      warning ? '工时异常提醒' : '批量确认工时',
+      warning || `将确认所选 ${rows.length} 条记录的当前工时并结算，是否继续？`,
+      warning ? '工时不足提醒' : '批量确认工时',
       {
         type: 'warning',
-        confirmButtonText: warning ? '仍按现工时确认' : '确定',
+        confirmButtonText: warning ? '确认并结算' : '确定',
         cancelButtonText: '取消',
       },
     )
@@ -237,7 +271,7 @@ async function batchConfirm() {
     return
   }
   const count = store.batchConfirmWorkHours(
-    rows.map((r) => ({
+    payloads.map((r) => ({
       employeeId: r.employeeId,
       date: r.date,
       workHours: r.workHours,
@@ -266,12 +300,12 @@ function openAudit(row: (typeof tableData.value)[0]) {
       <div>
         <h2 class="page-title">日考勤数据</h2>
         <p class="text-muted">
-          {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 可确认工时、批量确认；矫正须填原因并可追溯
+          {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 未确认工时均可矫正（不限日期），确认后不可再矫正
         </p>
       </div>
     </div>
     <p v-else class="text-muted tab-desc">
-      {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 可确认工时、批量确认；矫正须填原因并可追溯
+      {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 未确认工时均可矫正（不限日期），确认后不可再矫正
     </p>
 
     <el-form inline style="margin-bottom: 16px">
@@ -311,16 +345,21 @@ function openAudit(row: (typeof tableData.value)[0]) {
       <el-table-column prop="departmentName" label="部门" min-width="110" show-overflow-tooltip />
       <el-table-column prop="employeeName" label="姓名" width="100" />
       <el-table-column prop="phone" label="手机号" width="130" />
-      <el-table-column prop="shiftName" label="排班" width="90" />
+      <el-table-column prop="shiftName" :label="shiftColumnLabel" :min-width="assignmentSource === 'grab' ? 200 : 90" show-overflow-tooltip />
       <el-table-column prop="clockIn" label="上班" width="80">
         <template #default="{ row }">{{ row.clockIn ?? '—' }}</template>
       </el-table-column>
       <el-table-column prop="clockOut" label="下班" width="80">
         <template #default="{ row }">{{ row.clockOut ?? '—' }}</template>
       </el-table-column>
-      <el-table-column label="工时(h)" width="130">
+      <el-table-column label="实际工时(h)" width="110">
         <template #default="{ row }">
-          {{ row.workHours }}
+          {{ formatActualPunchHoursText(row) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="工时(h)" width="120">
+        <template #default="{ row }">
+          {{ row.hoursConfirmed ? formatDailyWorkHoursText(row) : row.confirmWorkHours }}
           <el-tag v-if="row.workHoursCorrected" size="small" type="warning" class="hour-tag">
             已矫正
           </el-tag>
@@ -359,11 +398,11 @@ function openAudit(row: (typeof tableData.value)[0]) {
       </el-table-column>
       <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="row.canConfirm" link type="success" @click="confirmOne(row)">
-            确认工时
-          </el-button>
           <el-button v-if="row.canCorrect" link type="primary" @click="openCorrection(row)">
             工时矫正
+          </el-button>
+          <el-button v-if="row.canConfirm" link type="success" @click="confirmOne(row)">
+            确认工时
           </el-button>
         </template>
       </el-table-column>
@@ -373,8 +412,9 @@ function openAudit(row: (typeof tableData.value)[0]) {
   <el-dialog v-model="correctionVisible" title="工时矫正" width="460px" destroy-on-close>
     <template v-if="correctionTarget">
       <p class="correction-meta">
-        {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} · 排班
-        {{ correctionTarget.scheduledHours }}h · 当前 {{ correctionTarget.workHours }}h
+        {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} · 班次工时
+        {{ correctionTarget.scheduledHours }}h · 实际
+        {{ correctionTarget.workHours }}h（矫正工时可大于班次工时）
       </p>
       <el-form label-width="100px">
         <el-form-item label="矫正工时" required>

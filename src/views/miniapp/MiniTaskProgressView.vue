@@ -145,7 +145,7 @@ function togglePendingMine() {
 
 .filter-chip.active {
   border-color: var(--mini-primary);
-  background: #eff6ff;
+  background: #E6FFFA;
   color: var(--mini-primary);
   font-weight: 600;
 }
@@ -233,8 +233,8 @@ function togglePendingMine() {
 }
 
 .mini-tag.tone-blue {
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
 }
 
 .mini-tag.tone-orange {

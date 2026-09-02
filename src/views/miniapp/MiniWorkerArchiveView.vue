@@ -434,7 +434,7 @@ function goSkillCerts() {
 }
 
 .schedule-icon.weekday {
-  background: linear-gradient(135deg, #3b82f6, #60a5fa);
+  background: linear-gradient(135deg, #4FD1C5, #81E6D9);
 }
 
 .schedule-icon.weekend {
@@ -481,7 +481,7 @@ function goSkillCerts() {
   margin-top: 8px;
   border: none;
   background: none;
-  color: #3b82f6;
+  color: #4FD1C5;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;

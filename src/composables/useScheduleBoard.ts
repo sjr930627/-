@@ -1,7 +1,18 @@
 import { computed, ref, shallowRef, watch, type Ref } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { detectComplianceConflicts } from '@/services/scheduleCompliance'
-import { cellKey, parseCellKey, normalizeConfirmStatus, getAssignmentStatsKey, formatStatsSummaryKey, isAssignmentConfirmedLocked } from '@/constants/schedule'
+import {
+  cellKey,
+  parseCellKey,
+  normalizeConfirmStatus,
+  getAssignmentStatsKey,
+  formatStatsSummaryKey,
+  isAssignmentConfirmedLocked,
+  isScheduleHistoryDate,
+  isScheduleFutureDate,
+  isScheduleShiftHistorical,
+  resolveAssignmentStartTime,
+} from '@/constants/schedule'
 import type { AttendanceGroupCompliance, Employee, ScheduleAssignment, Shift } from '@/types'
 import { addDays } from '@/utils'
 
@@ -55,7 +66,7 @@ export function useScheduleBoard(options: {
     const all = store.assignments.filter(
       (a) => a.employeeId === employeeId && a.date === date && a.teamId === teamId,
     )
-    if (editMode.value === 'editing') {
+    if (editMode.value === 'editing' && !isScheduleHistoryDate(date)) {
       return all.find((a) => !a.published) ?? all.find((a) => a.published)
     }
     return all.find((a) => a.published) ?? all[0]
@@ -143,12 +154,26 @@ export function useScheduleBoard(options: {
     )
   }
 
+  function mutableDates() {
+    return options.dates.value.filter((d) => isScheduleFutureDate(d))
+  }
+
+  function isCellHistorical(employeeId: string, date: string, nextShiftId?: string): boolean {
+    if (isScheduleHistoryDate(date)) return true
+    if (nextShiftId) {
+      return isScheduleShiftHistorical(date, store.shifts.find((s) => s.id === nextShiftId)?.startTime)
+    }
+    const visible = getVisibleAssignment(employeeId, date)
+    return isScheduleShiftHistorical(date, resolveAssignmentStartTime(visible, store.shifts))
+  }
+
   function isCellLocked(employeeId: string, date: string): boolean {
+    if (isCellHistorical(employeeId, date)) return true
     return isAssignmentConfirmedLocked(getPublishedAssignment(employeeId, date))
   }
 
   function enterEditMode() {
-    store.enterEditModeForPeriod(options.teamId.value, options.dates.value)
+    store.enterEditModeForPeriod(options.teamId.value, mutableDates())
     editMode.value = 'editing'
   }
 
@@ -163,7 +188,7 @@ export function useScheduleBoard(options: {
     opts?: { note?: string; manual?: boolean },
   ) {
     if (editMode.value !== 'editing') return
-    if (isCellLocked(employeeId, date)) return
+    if (isCellLocked(employeeId, date) || isCellHistorical(employeeId, date, shiftId)) return
     pushUndo()
     store.upsertAssignment({
       employeeId,
@@ -203,7 +228,7 @@ export function useScheduleBoard(options: {
     pushUndo()
     selectedCells.value.forEach((key) => {
       const { employeeId, date } = parseCellKey(key)
-      if (isCellLocked(employeeId, date)) return
+      if (isCellLocked(employeeId, date) || isCellHistorical(employeeId, date, shiftId)) return
       store.upsertAssignment({
         employeeId,
         date,
@@ -309,18 +334,26 @@ export function useScheduleBoard(options: {
   }
 
   function copyLastPeriod(sourceDates: string[]) {
+    const src: string[] = []
+    const tgt: string[] = []
+    options.dates.value.forEach((date, idx) => {
+      if (isScheduleHistoryDate(date)) return
+      src.push(sourceDates[idx])
+      tgt.push(date)
+    })
+    if (!tgt.length) return 0
     pushUndo()
     return store.cloneAssignmentsFromDates(
       options.teamId.value,
-      sourceDates,
-      options.dates.value,
+      src,
+      tgt,
       options.memberIds.value,
     )
   }
 
   function clearDraft() {
     pushUndo()
-    store.revertDraftForPeriod(options.teamId.value, options.dates.value)
+    store.revertDraftForPeriod(options.teamId.value, mutableDates())
     exitEditMode()
   }
 
@@ -330,6 +363,7 @@ export function useScheduleBoard(options: {
     let removed = 0
     options.memberIds.value.forEach((employeeId) => {
       options.dates.value.forEach((date) => {
+        if (isCellHistorical(employeeId, date)) return
         const pub = store.assignments.find(
           (a) =>
             a.employeeId === employeeId &&
@@ -360,10 +394,11 @@ export function useScheduleBoard(options: {
   }
 
   function publish() {
-    store.publishSchedulePeriod(options.teamId.value, options.dates.value)
+    const dates = mutableDates()
+    store.publishSchedulePeriod(options.teamId.value, dates)
     store.assignments = store.assignments.filter((a) => {
       if (a.teamId !== options.teamId.value) return true
-      if (!options.dates.value.includes(a.date)) return true
+      if (!dates.includes(a.date)) return true
       return a.published
     })
     store.persist('assignments')
@@ -407,8 +442,10 @@ export function useScheduleBoard(options: {
     )
     if (hasAny) return
     if (dates.length >= 7) {
-      const prevDates = dates.map((d) => addDays(d, -7))
-      store.cloneAssignmentsFromDates(teamId, prevDates, dates, members)
+      const tgt = dates.filter((d) => isScheduleFutureDate(d))
+      if (!tgt.length) return
+      const prevDates = tgt.map((d) => addDays(d, -7))
+      store.cloneAssignmentsFromDates(teamId, prevDates, tgt, members)
     }
   }
 
@@ -434,6 +471,7 @@ export function useScheduleBoard(options: {
     copyBuffer,
     getVisibleAssignment,
     getPublishedAssignment,
+    isCellHistorical,
     isCellLocked,
     enterEditMode,
     exitEditMode,

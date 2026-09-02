@@ -31,6 +31,7 @@ function isActive(tab: (typeof tabs)[number]) {
       p.startsWith('/enterprise-miniapp/attendance') ||
       p.startsWith('/enterprise-miniapp/schedule') ||
       p.startsWith('/enterprise-miniapp/grab') ||
+      p.startsWith('/enterprise-miniapp/attendance-groups') ||
       p.startsWith('/enterprise-miniapp/shift-demand') ||
       p.startsWith('/enterprise-miniapp/personnel') ||
       p.startsWith('/enterprise-miniapp/onboard') ||
@@ -72,16 +73,68 @@ function isActive(tab: (typeof tabs)[number]) {
 </template>
 
 <style scoped>
+/* 企业端 — 页面白底，抬头 #D5E9FF，按钮/选中态 #228BFF */
 .ent-mini-shell {
-  --mini-primary: #5b4fdb;
-  --mini-primary-light: #eef2ff;
-  --mini-primary-dark: #4338ca;
-  --app-primary: #5b4fdb;
-  --app-primary-light: #eef2ff;
-  --app-primary-dark: #4338ca;
-  --mini-bg: #f5f6f8;
+  --mini-bg: #ffffff;
+  --ent-header-bg: #D5E9FF;
+  --mini-primary: #228BFF;
+  --mini-primary-light: #D5E9FF;
+  --mini-primary-dark: #1A73E6;
+  --mini-primary-mid: #5AA8FF;
+  --app-primary: #228BFF;
+  --app-primary-light: #D5E9FF;
+  --app-primary-dark: #1A73E6;
+  --mini-text: #1f2937;
+  --mini-text-secondary: #6b7280;
+  --mini-text-muted: #9ca3af;
+  --mini-card: #ffffff;
+  --mini-border: #e5e7eb;
+
+  --el-color-primary: var(--mini-primary);
+  --el-color-primary-light-3: #69b8ff;
+  --el-color-primary-light-5: #91caff;
+  --el-color-primary-light-7: #BAE0FF;
+  --el-color-primary-light-8: #D5E9FF;
+  --el-color-primary-light-9: #EBF4FF;
+  --el-color-primary-dark-2: var(--mini-primary-dark);
 }
+
+.ent-mini-shell :deep(.mini-app-main) {
+  background: #fff;
+}
+
 .ent-mini-shell :deep(.mini-tab-item.active) {
-  color: #5b4fdb;
+  color: var(--mini-primary);
+}
+
+.ent-mini-shell :deep(.mini-tab.active) {
+  background: var(--mini-primary);
+  color: #fff;
+}
+
+.ent-mini-shell :deep(.mini-btn-primary) {
+  background: var(--mini-primary);
+  color: #fff;
+}
+
+.ent-mini-shell :deep(.mini-btn-primary:not(:disabled):hover) {
+  background: var(--mini-primary-dark);
+}
+
+.ent-mini-shell :deep(.mini-btn-outline) {
+  border-color: var(--mini-primary);
+  color: var(--mini-primary);
+}
+
+.ent-mini-shell :deep(.el-button--primary) {
+  --el-button-bg-color: var(--mini-primary);
+  --el-button-border-color: var(--mini-primary);
+  --el-button-text-color: #fff;
+  --el-button-hover-bg-color: var(--mini-primary-dark);
+  --el-button-hover-border-color: var(--mini-primary-dark);
+  --el-button-hover-text-color: #fff;
+  --el-button-active-bg-color: var(--mini-primary-dark);
+  --el-button-active-border-color: var(--mini-primary-dark);
+  --el-button-active-text-color: #fff;
 }
 </style>

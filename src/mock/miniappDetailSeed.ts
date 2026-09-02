@@ -101,7 +101,7 @@ export interface MiniGrabShiftSlotExtra {
 const defaultReviews: MiniJobReview[] = [
   {
     id: 'rv_1',
-    text: '站长很负责，会提前说明操作流程，适合兼职过渡。',
+    text: '店长很负责，会提前说明操作流程，适合兼职过渡。',
     userName: '灵工小王',
     brandCount: 12,
     tag: '兼职好评',
@@ -120,7 +120,7 @@ const defaultReviews: MiniJobReview[] = [
 const defaultReviewTags = [
   { label: '强度节奏较忙', count: 3 },
   { label: '兼职好评', count: 3 },
-  { label: '站长负责', count: 2 },
+  { label: '店长负责', count: 2 },
 ]
 
 const defaultRegistrationRules: MiniJobRuleGroup[] = [
@@ -158,11 +158,11 @@ const defaultAttendanceRequirement: MiniJobAttendanceRequirement = {
 }
 
 const defaultRequirementDetail: MiniJobRequirementDetail = {
-  intro: '招聘加油站服务兼职人员',
+  intro: '招聘营业厅服务兼职人员',
   duties: [
-    '负责加油服务与非油产品推介，主动沟通客户需求',
+    '负责业务受理服务与号卡套餐推介，主动沟通客户需求',
     '完成收银、商品陈列及门店日常清洁维护',
-    '配合站长完成高峰时段秩序维护与安全巡检',
+    '配合店长完成高峰时段秩序维护与安全巡检',
     '及时上报设备异常，协助完成简单故障处理',
     '遵守企业安全规范，维护良好服务形象',
   ],
@@ -181,7 +181,7 @@ export const jobDetailExtras: Record<string, MiniJobDetailExtra> = {
     hourlyMin: 19,
     hourlyMax: 23.5,
     promoText: '服务满60小时即奖励50元，最高奖励570元',
-    storeName: '中石化朝阳加油站',
+    storeName: '中国移动朝阳营业厅',
     address: '北京市朝阳区建国路88号',
     distance: '距您 3.2km',
     commute: '公交约40分钟',
@@ -196,16 +196,16 @@ export const jobDetailExtras: Record<string, MiniJobDetailExtra> = {
     ],
     bonusText: '570元加薪券',
     requirementDetail: {
-      intro: '招聘加油站营业员兼职',
+      intro: '招聘营业厅营业员兼职',
       duties: [
-        '负责加油服务流程引导，协助客户完成加油与非油选购',
+        '负责业务受理服务流程引导，协助客户完成号卡办理与套餐选购',
         '完成收银结算、发票开具及基础账务核对',
-        '维护加油岛及便利店区域整洁与安全秩序',
-        '配合开展会员拉新、活动推广等现场服务',
+        '维护业务受理台及营业厅区域整洁与安全秩序',
+        '配合开展套餐升档、活动推广等现场服务',
         '按规范完成交接班记录与设备点检',
       ],
       qualifications: [
-        '高中/中专及以上学历，有加油站或零售经验优先',
+        '高中/中专及以上学历，有营业厅或零售经验优先',
         '沟通表达清晰，具备基础销售与服务意识',
         '可接受轮班，能适应周末及节假日高峰',
         '责任心强，遵守安全作业规范',
@@ -220,7 +220,7 @@ export const jobDetailExtras: Record<string, MiniJobDetailExtra> = {
     hourlyMin: 18,
     hourlyMax: 22,
     promoText: '首月出勤满20天额外奖励100元',
-    storeName: '中石化海淀便利店',
+    storeName: '中国移动海淀营业厅',
     address: '北京市海淀区中关村大街1号',
     distance: '距您 5.1km',
     commute: '地铁约35分钟',
@@ -242,7 +242,7 @@ export const jobDetailExtras: Record<string, MiniJobDetailExtra> = {
     hourlyMin: 22,
     hourlyMax: 28,
     promoText: '推广达标享阶梯奖金，最高800元/月',
-    storeName: '中石化浦东加油站',
+    storeName: '中国移动浦东营业厅',
     address: '上海市浦东新区世纪大道100号',
     distance: '距您 8.6km',
     commute: '公交约55分钟',
@@ -257,9 +257,9 @@ export const jobDetailExtras: Record<string, MiniJobDetailExtra> = {
     ],
     requirementDetail: {
       ...defaultRequirementDetail,
-      intro: '招聘非油产品推广兼职',
+      intro: '招聘号卡套餐推广兼职',
       duties: [
-        '在加油站现场开展非油产品推介与体验引导',
+        '在营业厅现场开展号卡套餐推介与体验引导',
         '收集客户反馈，协助优化推广话术与陈列',
         '配合完成推广活动物料布置与数据登记',
         '维护推广区域整洁，确保活动流程顺畅',
@@ -345,18 +345,18 @@ export function shouldShowJobBenefits(extra: MiniJobDetailExtra): boolean {
 }
 
 const defaultGrabShiftRequirementDetail: MiniJobRequirementDetail = {
-  intro: '加油站帮工兼职',
+  intro: '营业厅帮工兼职',
   duties: [
-    '协助完成加油引导、车辆秩序维护及现场安全提示',
-    '完成收银结算、非油产品推介与基础陈列整理',
-    '配合站长完成高峰时段疏导与设备点检',
+    '协助完成业务引导、客户候客秩序维护及现场服务提示',
+    '完成收银结算、号卡套餐推介与终端陈列整理',
+    '配合店长完成高峰时段疏导与设备点检',
     '按规范完成交接班记录，维护作业区域整洁',
   ],
   qualifications: [],
 }
 
 const defaultGrabShiftSkills = [
-  '需持有中石化安全作业证或通过岗前安全培训',
+  '需持有中国移动业务合规证或通过岗前安全培训',
   '具备基础沟通能力，普通话标准',
   '能适应站立作业及高峰时段工作节奏',
   '时间观念强，能按时打卡并完成班次任务',
@@ -372,37 +372,37 @@ const grabShiftPostExtrasBase = {
 } as const
 export const grabShiftPostExtras: Record<string, MiniGrabShiftPostExtra> = {
   team_a: {
-    title: '加油站帮工',
+    title: '营业厅帮工',
     tags: ['收入秒结', '免审核', '兼职岗位', '平台加薪', '限时补贴'],
-    storeName: '中石化朝阳加油站',
+    storeName: '中国移动朝阳营业厅',
     address: '北京市朝阳区建国路88号',
     distance: '距您 3.2km',
     commute: '公交约40分钟',
-    requirements: ['需持有中石化安全作业证', '学历不限', '身高不限'],
+    requirements: ['需持有中国移动业务合规证', '学历不限', '身高不限'],
     ...grabShiftPostExtrasBase,
   },
   team_b: {
     title: '夜班值守',
     tags: ['收入秒结', '兼职岗位', '夜班补贴'],
-    storeName: '中石化朝阳加油站',
+    storeName: '中国移动朝阳营业厅',
     address: '北京市朝阳区建国路88号',
     distance: '距您 3.2km',
     commute: '公交约40分钟',
-    requirements: ['需持有中石化夜班资质', '学历不限'],
+    requirements: ['需持有中国移动夜班上岗证', '学历不限'],
     reviewCount: 4,
     reviewTags: [{ label: '夜班补贴高', count: 2 }, { label: '兼职好评', count: 2 }],
     reviews: defaultReviews.slice(0, 1),
     requirementDetail: {
-      intro: '加油站夜班值守兼职',
+      intro: '营业厅夜班值守兼职',
       duties: [
-        '负责夜间加油岛值守与安全巡查',
+        '负责夜间业务受理台值守与安全巡查',
         '完成夜间收银、交接班及异常情况上报',
         '配合完成设备巡检与现场秩序维护',
       ],
       qualifications: [],
     },
     skillRequirements: [
-      '需持有中石化夜班资质或通过专项培训',
+      '需持有中国移动夜班上岗证或通过专项培训',
       '能适应夜班作息，责任心强',
       '具备基础应急处理能力',
     ],

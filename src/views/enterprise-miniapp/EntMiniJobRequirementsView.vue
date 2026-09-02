@@ -68,8 +68,8 @@ const jobs = computed(() => {
 .row em {
   font-style: normal;
   font-size: 11px;
-  color: #5b4fdb;
-  background: #eef2ff;
+  color: #228BFF;
+  background: #D5E9FF;
   padding: 2px 8px;
   border-radius: 999px;
 }

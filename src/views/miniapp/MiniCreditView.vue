@@ -31,14 +31,21 @@ const creditTips = [
       <div class="mini-card" style="text-align: center; padding: 24px">
         <div
           style="font-size: 32px; font-weight: 800"
-          :style="{ color: workerLevelColors[profileExt?.level ?? ''] ?? '#e60012' }"
+            :style="{
+              color: workerLevelColors[profileExt?.level ?? ''] ?? 'var(--mini-primary)',
+            }"
         >
           {{ profileExt?.level ?? '银牌灵工' }}
         </div>
         <div style="font-size: 14px; color: #999; margin-top: 8px">能力等级分 {{ profileExt?.levelScore ?? 0 }} / 100</div>
         <div style="height: 8px; background: #f0f0f0; border-radius: 4px; margin: 16px 0 8px; overflow: hidden">
           <div
-            :style="{ width: `${profileExt?.levelScore ?? 0}%`, height: '100%', background: '#e60012', borderRadius: '4px' }"
+            :style="{
+              width: `${profileExt?.levelScore ?? 0}%`,
+              height: '100%',
+              background: 'var(--mini-primary)',
+              borderRadius: '4px',
+            }"
           />
         </div>
       </div>

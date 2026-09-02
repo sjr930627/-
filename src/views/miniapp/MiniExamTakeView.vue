@@ -218,7 +218,7 @@ async function submitExam() {
   top: 50%;
   transform: translateY(-50%);
   font-size: 12px;
-  color: #e60012;
+  color: var(--mini-primary);
   font-weight: 600;
 }
 
@@ -239,7 +239,7 @@ async function submitExam() {
 
 .exam-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #e60012, #ff4d4f);
+  background: linear-gradient(90deg, var(--mini-primary), #81E6D9);
   transition: width 0.25s;
 }
 
@@ -312,8 +312,8 @@ async function submitExam() {
 }
 
 .exam-option.selected {
-  border-color: #e60012;
-  background: #fff5f5;
+  border-color: var(--mini-primary);
+  background: var(--mini-primary-light);
 }
 
 .opt-key {
@@ -332,8 +332,8 @@ async function submitExam() {
 }
 
 .exam-option.selected .opt-key {
-  background: #e60012;
-  border-color: #e60012;
+  background: var(--mini-primary);
+  border-color: var(--mini-primary);
   color: #fff;
 }
 
@@ -346,7 +346,7 @@ async function submitExam() {
 
 .opt-check {
   flex-shrink: 0;
-  color: #e60012;
+  color: var(--mini-primary);
   font-size: 16px;
 }
 
@@ -378,7 +378,7 @@ async function submitExam() {
 
 .exam-btn.primary {
   border: none;
-  background: #e60012;
+  background: var(--mini-primary);
   color: #fff;
 }
 

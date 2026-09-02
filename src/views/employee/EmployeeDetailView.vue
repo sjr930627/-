@@ -5,20 +5,30 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import EmployeeFormDrawer from '@/components/employee/EmployeeFormDrawer.vue'
-import { formatShiftPeriod } from '@/constants/attendanceGroup'
+import {
+  employeeDataSourceMap,
+  employeeDataSourceTagType,
+  resolveEmployeeDataSource,
+} from '@/constants/department'
 import {
   buildDailyAttendanceList,
   getStatusLabel,
   getStatusTagType,
 } from '@/services/attendance'
+import {
+  instanceWorkflowStatusMap,
+  resolveInstanceWorkflowStatus,
+} from '@/services/task'
+import { synthesizeDetailedInstanceLogs } from '@/services/taskInstanceLifecycle'
 import { getDepartmentName } from '@/utils'
-import type { AttendanceDaily, Employee, EmployeeSkillCertificate, EmployeeStatus } from '@/types'
+import type { Employee, EmployeeSkillCertificate, EmployeeStatus, TaskInstance } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 
 const editVisible = ref(false)
+const recordsTab = ref<'attendance' | 'tasks'>('attendance')
 
 const employeeId = computed(() => route.params.id as string)
 
@@ -44,6 +54,12 @@ const statusLabelMap: Record<EmployeeStatus, string> = {
   active: '正常',
   resigned: '已离职',
 }
+
+const dataSource = computed(() =>
+  employee.value
+    ? resolveEmployeeDataSource(employee.value, store.workerJoinApplications)
+    : 'manual',
+)
 
 const healthCertificate = computed(() => {
   const certs = employee.value?.skillCertificates ?? []
@@ -117,19 +133,50 @@ const taskStats = computed(() => {
   }
 })
 
-const recentAttendanceDates = computed(() => {
+const employeeTaskStatusMap: Record<'running' | 'completed' | 'cancelled', string> = {
+  running: '进行中',
+  completed: '已完成',
+  cancelled: '已取消',
+}
+
+function formatClock(value?: string) {
+  if (!value) return '—'
+  return value.slice(0, 5)
+}
+
+function formatDateTime(iso?: string) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function formatDateOnly(iso?: string) {
+  if (!iso) return '—'
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10) || '—'
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function lateMinutes(clockIn: string | undefined, shiftStart: string | undefined) {
+  if (!clockIn || !shiftStart) return 0
+  const [sh, sm] = shiftStart.split(':').map(Number)
+  const [ch, cm] = clockIn.split(':').map(Number)
+  if ([sh, sm, ch, cm].some((n) => Number.isNaN(n))) return 0
+  return Math.max(0, ch * 60 + cm - (sh * 60 + sm))
+}
+
+const recentAttendanceRecords = computed(() => {
   const empId = employeeId.value
   const dates = new Set<string>()
   store.punches.filter((p) => p.employeeId === empId).forEach((p) => dates.add(p.date))
   store.assignments.filter((a) => a.employeeId === empId).forEach((a) => dates.add(a.date))
-  return [...dates].sort((a, b) => b.localeCompare(a)).slice(0, 5)
-})
-
-const recentRecords = computed(() => {
-  const empId = employeeId.value
   const daily = buildDailyAttendanceList(
     [empId],
-    recentAttendanceDates.value,
+    [...dates],
     store.assignments,
     store.shifts,
     store.punches,
@@ -138,28 +185,110 @@ const recentRecords = computed(() => {
     store.manualOverrides,
   ).sort((a, b) => b.date.localeCompare(a.date))
 
-  return daily.map((day) => {
-    const shift = store.shifts.find((s) => s.id === day.shiftId)
+  return daily.slice(0, 10).map((day) => {
+    const shift = day.shiftId ? store.shifts.find((s) => s.id === day.shiftId) : undefined
+    const shiftLabel =
+      shift && shift.code !== 'REST'
+        ? `${shift.name} ${shift.startTime}-${shift.endTime}`
+        : '—'
+    const minutes = lateMinutes(day.clockIn, shift?.startTime)
+    const statusText =
+      day.status === 'late' && minutes > 0 ? `迟到 ${minutes} 分钟` : getStatusLabel(day.status)
+    const scheduledHours = day.scheduledHours > 0 ? day.scheduledHours : null
     return {
       ...day,
-      shiftLabel: shift
-        ? `${shift.name} (${shift.startTime}-${shift.endTime})`
-        : attendanceGroup.value
-          ? formatShiftPeriod(attendanceGroup.value)
-          : '—',
-      statusText: formatRecordStatus(day, shift?.startTime),
+      dateLabel: formatDateOnly(day.date),
+      shiftLabel,
+      clockInLabel: formatClock(day.clockIn),
+      clockOutLabel: formatClock(day.clockOut),
+      hoursLabel: scheduledHours != null ? `${scheduledHours}h` : '—',
+      statusText,
     }
   })
 })
 
-function formatRecordStatus(day: AttendanceDaily, shiftStart?: string) {
-  if (day.status === 'late' && day.clockIn && shiftStart) {
-    const [sh, sm] = shiftStart.split(':').map(Number)
-    const [ch, cm] = day.clockIn.split(':').map(Number)
-    const diff = ch * 60 + cm - (sh * 60 + sm)
-    if (diff > 0) return `迟到${diff}分钟`
-  }
-  return getStatusLabel(day.status)
+function getTaskInstanceLogs(instance: TaskInstance) {
+  if (instance.logs?.length) return instance.logs
+  const task = store.tasks.find((t) => t.id === instance.taskId)
+  const workflow = task ? store.taskWorkflows.find((w) => w.id === task.workflowId) : undefined
+  if (!workflow) return []
+  return synthesizeDetailedInstanceLogs(instance, workflow)
+}
+
+function resolveTaskStartedAt(instance: TaskInstance) {
+  const logs = getTaskInstanceLogs(instance)
+  const runningLog = logs.find(
+    (l) =>
+      l.title.includes('执行中') ||
+      l.title.includes('进行中') ||
+      (l.description ?? '').includes('进入「执行中') ||
+      (l.description ?? '').includes('进入「进行中'),
+  )
+  if (runningLog?.time) return runningLog.time
+  const claimLog = logs.find((l) => l.title.includes('认领'))
+  if (claimLog?.time) return claimLog.time
+  return instance.createdAt
+}
+
+function resolveTaskCompletedAt(instance: TaskInstance, status: 'running' | 'completed' | 'cancelled') {
+  if (status !== 'completed') return undefined
+  const logs = getTaskInstanceLogs(instance)
+  const doneLog = [...logs].reverse().find(
+    (l) => l.title.includes('已完成') || l.tag === '已完成' || (l.description ?? '').includes('已完成'),
+  )
+  return doneLog?.time || instance.updatedAt
+}
+
+const recentTaskRecords = computed(() =>
+  store.taskInstances
+    .filter((t) => t.workerId === employeeId.value)
+    .slice()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.updatedAt.localeCompare(a.updatedAt))
+    .slice(0, 10)
+    .map((instance) => {
+      const task = store.tasks.find((t) => t.id === instance.taskId)
+      const workflow = task ? store.taskWorkflows.find((w) => w.id === task.workflowId) : undefined
+      const status = resolveInstanceWorkflowStatus(instance, workflow)
+      const startedAt = resolveTaskStartedAt(instance)
+      const completedAt = resolveTaskCompletedAt(instance, status)
+      return {
+        id: instance.id,
+        dateLabel: formatDateOnly(startedAt || instance.createdAt),
+        taskName: instance.taskName,
+        startedLabel: formatDateTime(startedAt),
+        completedLabel: completedAt ? formatDateTime(completedAt) : '—',
+        status,
+        statusLabel: employeeTaskStatusMap[status],
+        statusType: instanceWorkflowStatusMap[status].type,
+      }
+    }),
+)
+
+const isEnterprisePortal = computed(
+  () => route.path.startsWith('/enterprise') && !route.path.startsWith('/enterprise-miniapp'),
+)
+
+function goAllAttendance() {
+  const isGrab = employee.value?.personnelCategory === 'grab'
+  const base = isEnterprisePortal.value
+    ? isGrab
+      ? '/enterprise/grab-attendance-data'
+      : '/enterprise/attendance-data'
+    : isGrab
+      ? '/grab-attendance-data'
+      : '/attendance-data'
+  const month = recentAttendanceRecords.value[0]?.date?.slice(0, 7) || '2026-07'
+  router.push({
+    path: base,
+    query: { tab: 'monthly', employee: employeeId.value, month },
+  })
+}
+
+function goAllTasks() {
+  router.push({
+    path: isEnterprisePortal.value ? '/enterprise/task/progress' : '/task-manage',
+    query: { worker: employeeId.value },
+  })
 }
 
 function maskPhone(phone?: string) {
@@ -306,6 +435,14 @@ function handleBlacklist() {
             </el-tag>
           </span>
         </div>
+        <div class="info-item">
+          <span class="info-label">数据来源</span>
+          <span class="info-value">
+            <el-tag size="small" :type="employeeDataSourceTagType[dataSource]">
+              {{ employeeDataSourceMap[dataSource] }}
+            </el-tag>
+          </span>
+        </div>
       </div>
       </div>
     </div>
@@ -364,30 +501,57 @@ function handleBlacklist() {
     </div>
 
     <div class="page-card records-card">
-      <div class="records-head">
-        <h3>近期考勤/任务记录</h3>
-        <el-link type="primary" :underline="false">查看全部 &gt;</el-link>
-      </div>
-      <el-table :data="recentRecords" border stripe>
-        <el-table-column prop="date" label="日期" width="120" />
-        <el-table-column prop="shiftLabel" label="班次" min-width="180" />
-        <el-table-column label="上班打卡" width="110">
-          <template #default="{ row }">{{ row.clockIn ?? '—' }}</template>
-        </el-table-column>
-        <el-table-column label="下班打卡" width="110">
-          <template #default="{ row }">{{ row.clockOut ?? '—' }}</template>
-        </el-table-column>
-        <el-table-column label="工时" width="90">
-          <template #default="{ row }">{{ row.workHours ? `${row.workHours}h` : '—' }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="120">
-          <template #default="{ row }">
-            <el-tag size="small" :type="getStatusTagType(row.status)">
-              {{ row.statusText }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-tabs v-model="recordsTab" class="records-tabs">
+        <el-tab-pane label="近期考勤" name="attendance">
+          <div class="records-head">
+            <span class="records-hint">仅展示最新 10 条</span>
+            <el-link type="primary" :underline="false" @click="goAllAttendance">查看全部 &gt;</el-link>
+          </div>
+          <el-table :data="recentAttendanceRecords" border stripe>
+            <el-table-column prop="dateLabel" label="日期" width="120" />
+            <el-table-column prop="shiftLabel" label="班次" min-width="180" />
+            <el-table-column label="上班打卡" width="110">
+              <template #default="{ row }">{{ row.clockInLabel }}</template>
+            </el-table-column>
+            <el-table-column label="下班打卡" width="110">
+              <template #default="{ row }">{{ row.clockOutLabel }}</template>
+            </el-table-column>
+            <el-table-column label="工时" width="90">
+              <template #default="{ row }">{{ row.hoursLabel }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="140">
+              <template #default="{ row }">
+                <el-tag size="small" :type="getStatusTagType(row.status)">
+                  {{ row.statusText }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="暂无考勤记录" :image-size="64" />
+            </template>
+          </el-table>
+        </el-tab-pane>
+        <el-tab-pane label="任务记录" name="tasks">
+          <div class="records-head">
+            <span class="records-hint">仅展示最新 10 条</span>
+            <el-link type="primary" :underline="false" @click="goAllTasks">查看全部 &gt;</el-link>
+          </div>
+          <el-table :data="recentTaskRecords" border stripe>
+            <el-table-column prop="dateLabel" label="日期" width="120" />
+            <el-table-column prop="taskName" label="任务名称" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="startedLabel" label="领取时间" min-width="160" />
+            <el-table-column prop="completedLabel" label="完成时间" min-width="160" />
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.statusType">{{ row.statusLabel }}</el-tag>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="暂无任务记录" :image-size="64" />
+            </template>
+          </el-table>
+        </el-tab-pane>
+      </el-tabs>
     </div>
 
     <EmployeeFormDrawer
@@ -603,6 +767,15 @@ function handleBlacklist() {
   font-size: 16px;
   font-weight: 600;
   color: #1e293b;
+}
+
+.records-hint {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.records-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
 }
 
 .empty-wrap {

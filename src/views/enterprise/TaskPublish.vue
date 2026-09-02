@@ -40,6 +40,7 @@ const form = ref({
   maxPerPerson: 5,
   region: '',
   description: '',
+  metadataFields: [] as { key: string; label: string; value: string }[],
 })
 
 const enterpriseId = computed(() => store.currentEnterpriseId)
@@ -117,6 +118,7 @@ function resetForm() {
     maxPerPerson: 5,
     region: '',
     description: '',
+    metadataFields: [],
   }
 }
 
@@ -142,6 +144,7 @@ function fillFormFromTask(row: Task) {
     maxPerPerson: row.maxPerPerson ?? 5,
     region: row.region ?? '',
     description: row.description,
+    metadataFields: row.metadataFields?.map((m) => ({ ...m })) ?? [],
   }
 }
 
@@ -207,7 +210,7 @@ function validate() {
     return false
   }
   if (!form.value.workflowId) {
-    ElMessage.warning('请选择任务流程配置')
+    ElMessage.warning('请选择流程模板')
     return false
   }
   if (!form.value.departmentId) {
@@ -243,6 +246,18 @@ function validate() {
     return false
   }
   return true
+}
+
+function addMetadataField() {
+  form.value.metadataFields.push({
+    key: `meta_${form.value.metadataFields.length + 1}`,
+    label: '',
+    value: '',
+  })
+}
+
+function removeMetadataField(index: number) {
+  form.value.metadataFields.splice(index, 1)
 }
 
 function buildPayload(): Omit<
@@ -285,6 +300,7 @@ function buildPayload(): Omit<
     maxPerPerson: form.value.maxPerPerson,
     region: form.value.region.trim(),
     description: form.value.description.trim(),
+    metadataFields: form.value.metadataFields.filter((m) => m.label.trim() && m.value.trim()),
   }
 }
 
@@ -368,7 +384,7 @@ async function cancelRow(row: Task) {
       <div>
         <h2 class="page-title">任务发布</h2>
         <p class="text-muted">
-          创建并提交任务 · 平台审核通过后进入任务大厅，按任务流程流转
+          选择已发布流程模板 · 可添加任务元数据 · 提交后由平台审核，通过后进入任务大厅
         </p>
       </div>
       <el-button type="primary" @click="openCreate">创建任务</el-button>
@@ -377,7 +393,7 @@ async function cancelRow(row: Task) {
     <el-table :data="tableData" border stripe>
       <el-table-column prop="name" label="任务名称" min-width="160" />
       <el-table-column prop="departmentLabel" label="部门/公司" min-width="130" show-overflow-tooltip />
-      <el-table-column prop="workflowName" label="任务流程" min-width="140" />
+      <el-table-column prop="workflowName" label="流程模板" min-width="140" />
       <el-table-column prop="priceLabel" label="单价" min-width="140" show-overflow-tooltip />
       <el-table-column prop="quantityLabel" label="任务数量" width="100" />
       <el-table-column prop="dispatchLabel" label="派单方式" width="100" />
@@ -437,7 +453,7 @@ async function cancelRow(row: Task) {
     class="task-form-dialog"
   >
     <el-form label-width="110px" :disabled="formReadonly">
-      <TaskFormSection title="基本信息" subtitle="流程配置、名称与内容" icon="基" icon-variant="blue">
+      <TaskFormSection title="基本信息" subtitle="流程模板、名称与内容" icon="基" icon-variant="blue">
         <el-form-item label="部门/公司" required>
           <el-select
             v-model="form.departmentId"
@@ -453,8 +469,8 @@ async function cancelRow(row: Task) {
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="任务流程配置" required>
-          <el-select v-model="form.workflowId" placeholder="选择已启用流程" style="width: 100%">
+        <el-form-item label="流程模板" required>
+          <el-select v-model="form.workflowId" placeholder="选择已发布到模板库的流程" style="width: 100%">
             <el-option
               v-for="opt in workflowOptions"
               :key="opt.value"
@@ -477,6 +493,30 @@ async function cancelRow(row: Task) {
         <el-form-item label="任务地点" required>
           <el-input v-model="form.region" placeholder="如：北京市朝阳区建国路商圈" />
         </el-form-item>
+      </TaskFormSection>
+
+      <TaskFormSection
+        title="任务元数据"
+        subtitle="大任务级自定义字段（可选）"
+        icon="元"
+        icon-variant="orange"
+      >
+        <div v-if="form.metadataFields.length" class="metadata-list">
+          <div v-for="(item, index) in form.metadataFields" :key="index" class="metadata-row">
+            <el-input v-model="item.label" placeholder="字段名称" style="flex: 1" />
+            <el-input v-model="item.value" placeholder="字段值" style="flex: 1.5" />
+            <el-button
+              v-if="!formReadonly"
+              text
+              type="danger"
+              @click="removeMetadataField(index)"
+            >
+              删除
+            </el-button>
+          </div>
+        </div>
+        <p v-else class="field-hint">暂无自定义字段</p>
+        <el-button v-if="!formReadonly" size="small" @click="addMetadataField">添加字段</el-button>
       </TaskFormSection>
 
       <TaskFormSection title="定价配置" subtitle="固定单价或阶梯单价" icon="价" icon-variant="green">
@@ -592,5 +632,24 @@ async function cancelRow(row: Task) {
   display: block;
   font-size: 12px;
   margin-top: 4px;
+}
+
+.field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+
+.metadata-list {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.metadata-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 </style>

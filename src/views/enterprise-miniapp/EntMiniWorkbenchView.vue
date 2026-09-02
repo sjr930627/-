@@ -4,10 +4,10 @@ import { useRouter } from 'vue-router'
 import {
   Calendar,
   Checked,
-  Clock,
   DocumentChecked,
   EditPen,
   Promotion,
+  Setting,
   Timer,
   UserFilled,
 } from '@element-plus/icons-vue'
@@ -55,14 +55,14 @@ const entries = [
     desc: '提交岗位需求',
     path: '/enterprise-miniapp/recruitment/publish',
     icon: Promotion,
-    color: '#5b4fdb',
+    color: '#228BFF',
   },
   {
     title: '招聘进度',
     desc: '线索跟进流转',
     path: '/enterprise-miniapp/recruitment/progress',
     icon: UserFilled,
-    color: '#2563eb',
+    color: '#228BFF',
   },
   {
     title: '面试日程',
@@ -86,10 +86,10 @@ const entries = [
     color: '#7c3aed',
   },
   {
-    title: '需求总览',
-    desc: '查看排班缺口并发布需求',
-    path: '/enterprise-miniapp/shift-demand',
-    icon: Clock,
+    title: '考勤组配置',
+    desc: '班次、部门与打卡规则',
+    path: '/enterprise-miniapp/attendance-groups',
+    icon: Setting,
     color: '#d97706',
   },
   {
@@ -149,14 +149,14 @@ const entries = [
   padding-bottom: 16px;
 }
 .hero {
-  padding: 20px 16px 12px;
-  background: linear-gradient(160deg, #5b4fdb 0%, #7c6df0 55%, #eef2ff 100%);
-  color: #fff;
+  padding: 16px 16px 8px;
+  background: #fff;
+  color: #111827;
 }
 .eyebrow {
   margin: 0;
   font-size: 12px;
-  opacity: 0.85;
+  color: #6b7280;
 }
 h1 {
   margin: 6px 0 0;
@@ -165,7 +165,7 @@ h1 {
 .sub {
   margin: 6px 0 0;
   font-size: 13px;
-  opacity: 0.9;
+  color: #6b7280;
 }
 .stats {
   display: grid;
@@ -185,7 +185,7 @@ h1 {
 .stat strong {
   display: block;
   font-size: 18px;
-  color: #4338ca;
+  color: #228BFF;
 }
 .stat span {
   font-size: 10px;

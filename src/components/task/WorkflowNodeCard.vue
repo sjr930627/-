@@ -57,6 +57,7 @@ watch(
       props.node.timeoutEnabled = false
       props.node.timeoutHours = undefined
       props.node.timeoutTargetNodeId = undefined
+      props.node.triggerSettlement = true
     } else {
       props.node.triggerSettlement = false
     }
@@ -259,8 +260,7 @@ function setActionTarget(action: WorkflowAction, targetNodeId: string | undefine
     </template>
 
     <el-form-item v-if="isEndNode" label="关联结算" label-width="80px">
-      <el-checkbox v-model="node.triggerSettlement" :disabled="readonly">是否关联结算</el-checkbox>
-      <span class="settlement-tip">仅结束节点可触发结算</span>
+      <span class="settlement-tip">终止节点默认触发结算</span>
     </el-form-item>
   </div>
 </template>

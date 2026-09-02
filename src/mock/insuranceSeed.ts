@@ -51,7 +51,7 @@ export const seedInsurancePolicies: InsurancePolicy[] = [
     expireTime: '2026-07-24T23:59:59',
     premium: 3.5,
     status: 'expired',
-    location: '中石化朝阳加油站',
+    location: '中国移动朝阳营业厅',
     createdAt: '2026-07-24T08:12:05',
   },
   {
@@ -65,7 +65,7 @@ export const seedInsurancePolicies: InsurancePolicy[] = [
     expireTime: '2026-07-24T23:59:59',
     premium: 3.5,
     status: 'expired',
-    location: '中石化朝阳加油站',
+    location: '中国移动朝阳营业厅',
     createdAt: '2026-07-24T08:05:03',
   },
   {
@@ -79,7 +79,7 @@ export const seedInsurancePolicies: InsurancePolicy[] = [
     expireTime: '2026-07-25T23:59:59',
     premium: 3.5,
     status: 'active',
-    location: '中石化朝阳加油站',
+    location: '中国移动朝阳营业厅',
     createdAt: '2026-07-25T08:06:02',
   },
   {
@@ -93,7 +93,7 @@ export const seedInsurancePolicies: InsurancePolicy[] = [
     expireTime: '2026-07-25T23:59:59',
     premium: 3.5,
     status: 'active',
-    location: '中石化朝阳加油站',
+    location: '中国移动朝阳营业厅',
     createdAt: '2026-07-25T08:04:01',
   },
 ]

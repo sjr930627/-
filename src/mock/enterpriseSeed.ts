@@ -38,8 +38,8 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_china_mobile_agent',
     code: 'CT-2024-00142',
-    name: '中石化北京朝阳分公司',
-    shortName: '中石化朝阳',
+    name: '中国移动北京朝阳分公司',
+    shortName: '中国移动朝阳',
     contact: '张经理',
     contactPerson: '张经理',
     contactPhone: '13800138002',
@@ -66,7 +66,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_pingan_partner',
     code: 'CT-2024-00136',
-    name: '中石化浙江分公司',
+    name: '中国移动浙江分公司',
     shortName: '工经联',
     contact: '王总监',
     contactPerson: '王总监',
@@ -88,8 +88,8 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_china_telecom_agent',
     code: 'CT-2024-00121',
-    name: '中石化上海分公司',
-    shortName: '中石化上海',
+    name: '中国移动上海分公司',
+    shortName: '中国移动上海',
     contact: '刘经理',
     contactPerson: '刘经理',
     contactPhone: '13800138004',

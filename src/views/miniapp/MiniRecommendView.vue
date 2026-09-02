@@ -14,6 +14,7 @@ import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import { getGrabShiftPostExtra, getGrabShiftSlotExtra, getJobDetailExtra } from '@/mock/miniappDetailSeed'
 import { TASK_PREVIEW_LIMIT } from '@/services/miniTask'
 import { isGrabShiftOpenForWorkers } from '@/services/grabShift'
+import { listOpenGrabInterviewPosts } from '@/services/miniGrabInterview'
 import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
 const store = useAppStore()
@@ -56,6 +57,7 @@ const tagToneMap: Record<string, string> = {
   兼职岗位: 'blue',
   夜班补贴: 'purple',
   奖金奖励: 'orange',
+  抢班直面: 'blue',
   直面: 'blue',
   星级补贴: 'purple',
   专属福利: 'red',
@@ -112,6 +114,8 @@ const jobs = computed(() =>
         payHint: '· 上岗后收入',
         storeName: extra.storeName,
         locationHint: `${extra.subwayHint ?? '地铁口附近'} · ${extra.distance}`,
+        locationMain: '',
+        locationSide: '',
         brandLetter: extra.storeName.slice(0, 1),
         previewSlots: [],
         hasMoreSlots: false,
@@ -159,9 +163,18 @@ const shiftCompanies = computed(() => {
     const hourlies = slots.map((s) => s.hourly)
     const hourlyMin = hourlies.length ? Math.min(...hourlies) : 0
     const hourlyMax = hourlies.length ? Math.max(...hourlies) : 0
+    const enterpriseId = resolveEnterpriseIdByAttendanceGroupId(
+      first.attendanceGroupId,
+      store.attendanceGroups,
+      store.departments,
+    )
+    const enterpriseName =
+      store.enterprises.find((e) => e.id === enterpriseId)?.name?.trim() ||
+      post.storeName
+    const positionName = first.positionName?.trim() || post.title
     return {
       id: teamId,
-      title: post.title,
+      title: `${enterpriseName}|${positionName}`,
       tags,
       payMin: hourlyMin,
       payMax: hourlyMax,
@@ -169,6 +182,8 @@ const shiftCompanies = computed(() => {
       payHint: '· 日结上岗',
       storeName: post.storeName,
       locationHint: `${post.distance} · ${post.commute}`,
+      locationMain: '',
+      locationSide: '',
       brandLetter: post.storeName.slice(0, 1),
       slotCount: slots.length,
       previewSlots: slots.slice(0, TASK_PREVIEW_LIMIT),
@@ -177,27 +192,42 @@ const shiftCompanies = computed(() => {
   })
 })
 
+const interviewPosts = computed(() =>
+  listOpenGrabInterviewPosts(store, employeeId.value, { previewLimit: TASK_PREVIEW_LIMIT }),
+)
+
 const feedCards = computed(() => {
   if (activeTab.value === 'jobs') {
     return jobs.value.map((card) => ({
       ...card,
       tab: 'jobs' as const,
+      kind: 'job' as const,
+      panelTitle: '',
     }))
   }
-  return shiftCompanies.value.map((card) => ({
+  const interviews = interviewPosts.value.map((card) => ({
     ...card,
     tab: 'shifts' as const,
+    kind: 'interview' as const,
+    panelTitle: '可面试时间',
+  }))
+  const shifts = shiftCompanies.value.map((card) => ({
+    ...card,
+    tab: 'shifts' as const,
+    kind: 'shift' as const,
     panelTitle: '可抢班次',
   }))
+  return [...interviews, ...shifts]
 })
 
 const feedEmptyText = computed(() => {
   if (activeTab.value === 'jobs') return '暂无在招岗位'
-  return '暂无抢班班次'
+  return '暂无抢班班次或抢班直面'
 })
 
 function openCard(card: (typeof feedCards.value)[number]) {
-  if (card.tab === 'jobs') openJob(card.id)
+  if (card.kind === 'job') openJob(card.id)
+  else if (card.kind === 'interview') openInterview(card.id)
   else openShiftEnterprise(card.id)
 }
 
@@ -214,7 +244,12 @@ function onSlotAction(
   applyShiftSlot(slot.id, e)
 }
 
-function tagClass(tag: string) {
+function tagClass(tag: string, kind?: string) {
+  if (kind === 'interview') {
+    if (tag === '抢班直面' || tag === '直面') return 'blue'
+    if (tag === '免审核') return 'green'
+    return ''
+  }
   return tagToneMap[tag] ?? 'blue'
 }
 
@@ -224,6 +259,13 @@ function openJob(id: string) {
 
 function openShiftEnterprise(teamId: string) {
   router.push(`/miniapp/recommend/shift/${teamId}`)
+}
+
+function openInterview(postId: string, slotId?: string) {
+  router.push({
+    path: `/miniapp/recommend/interview/${encodeURIComponent(postId)}`,
+    query: slotId ? { slot: slotId } : undefined,
+  })
 }
 
 async function applyShiftSlot(slotId: string, e: Event) {
@@ -292,15 +334,15 @@ function onLoadMore() {
 
     <article
       v-for="card in feedCards"
-      :key="`${card.tab}-${card.id}`"
+      :key="`${card.kind}-${card.id}`"
       class="company-card job-post-card"
-      :class="{ 'job-post-card-clickable': card.tab === 'jobs' }"
-      @click="card.tab === 'jobs' ? openCard(card) : undefined"
+      :class="{ 'job-post-card-clickable': card.kind !== 'shift' }"
+      @click="card.kind !== 'shift' ? openCard(card) : undefined"
     >
       <div
         class="job-post-head"
-        :class="{ 'job-post-head-clickable': card.tab !== 'jobs' }"
-        @click="card.tab !== 'jobs' ? openCard(card) : undefined"
+        :class="{ 'job-post-head-clickable': card.kind === 'shift' || card.kind === 'interview' }"
+        @click="card.kind === 'shift' || card.kind === 'interview' ? openCard(card) : undefined"
       >
         <div class="job-post-main">
           <div class="job-post-title">{{ card.title }}</div>
@@ -309,7 +351,7 @@ function onLoadMore() {
               v-for="tag in card.tags.slice(0, 5)"
               :key="tag"
               class="mini-tag"
-              :class="tagClass(tag)"
+              :class="tagClass(tag, card.kind)"
             >
               {{ tag }}
             </span>
@@ -325,7 +367,11 @@ function onLoadMore() {
         <div class="job-post-logo">{{ card.brandLetter }}</div>
       </div>
 
-      <div v-if="card.tab !== 'jobs'" class="job-slot-panel">
+      <div
+        v-if="card.kind !== 'job'"
+        class="job-slot-panel"
+        :class="{ interview: card.kind === 'interview' }"
+      >
         <div class="job-slot-panel-head">
           <span class="job-slot-panel-title">{{ card.panelTitle }}</span>
           <button
@@ -337,7 +383,7 @@ function onLoadMore() {
             全部({{ card.slotCount }})
             <el-icon :size="12"><ArrowRight /></el-icon>
           </button>
-          <span v-else-if="card.slotCount > 0" class="job-slot-panel-count">
+          <span v-else-if="card.slotCount > 0 && card.kind !== 'interview'" class="job-slot-panel-count">
             共 {{ card.slotCount }} 个
           </span>
         </div>
@@ -345,6 +391,8 @@ function onLoadMore() {
           v-for="slot in card.previewSlots"
           :key="slot.id"
           class="job-slot-row"
+          :class="{ interview: card.kind === 'interview' }"
+          @click="card.kind === 'interview' ? openInterview(card.id, slot.id) : undefined"
         >
           <div class="job-slot-main">
             <div class="job-slot-time">{{ slot.dateTimeLabel }}</div>
@@ -355,6 +403,7 @@ function onLoadMore() {
             {{ slot.capacity }}
           </div>
           <button
+            v-if="card.kind === 'shift'"
             type="button"
             class="job-slot-apply"
             :class="{ applied: slot.applied }"
@@ -392,7 +441,7 @@ function onLoadMore() {
   display: flex;
   align-items: center;
   padding: 12px 16px 8px;
-  background: #f0f9ff;
+  background: #E6FFFA;
 }
 
 .rec-city {
@@ -408,7 +457,7 @@ function onLoadMore() {
 }
 
 .rec-tabs-wrap {
-  background: #f0f9ff;
+  background: #E6FFFA;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -578,23 +627,26 @@ function onLoadMore() {
 
 .job-slot-panel {
   margin: 0 14px 14px;
-  padding: 12px;
+  padding: 0;
   border: 1px solid #f3f4f6;
   border-radius: 12px;
-  background: #fafafa;
+  background: #fff;
+  overflow: hidden;
 }
 
 .job-slot-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  border-bottom: 1px solid #f0f0f0;
 }
 
 .job-slot-panel-title {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--mini-text);
+  font-weight: 500;
+  color: #6b7280;
 }
 
 .job-slot-panel-more {
@@ -618,13 +670,16 @@ function onLoadMore() {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 0;
+  padding: 12px;
   border-top: 1px solid #f0f0f0;
+}
+
+.job-slot-row.interview {
+  cursor: pointer;
 }
 
 .job-slot-panel-head + .job-slot-row {
   border-top: none;
-  padding-top: 4px;
 }
 
 .job-slot-main {

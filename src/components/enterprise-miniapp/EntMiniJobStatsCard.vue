@@ -208,7 +208,7 @@ function goHired() {
   border-radius: 999px;
   border: 1.5px solid rgba(91, 79, 219, 0.35);
   background: rgba(255, 255, 255, 0.72);
-  color: #5b4fdb;
+  color: #228BFF;
   font-size: 13px;
   font-weight: 600;
   max-width: 180px;
@@ -219,7 +219,7 @@ function goHired() {
 .chip.active {
   background: #fff;
   border-color: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   box-shadow: 0 2px 8px rgba(91, 79, 219, 0.2);
 }
 .card {
@@ -263,14 +263,14 @@ function goHired() {
   line-height: 1.1;
 }
 .metric.hired strong {
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .publish-btn {
   width: 100%;
   height: 46px;
   border: none;
   border-radius: 12px;
-  background: linear-gradient(90deg, #7c6ff0, #5b4fdb);
+  background: linear-gradient(90deg, #5AA8FF, #228BFF);
   color: #fff;
   font-size: 16px;
   font-weight: 700;

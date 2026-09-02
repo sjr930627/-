@@ -424,9 +424,9 @@ function saveReschedule() {
   font-size: 13px;
 }
 .tabs button.active {
-  border-color: #5b4fdb;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-color: #228BFF;
+  background: #228BFF;
+  color: #fff;
   font-weight: 600;
 }
 .tabs em {
@@ -441,7 +441,7 @@ function saveReschedule() {
   line-height: 18px;
 }
 .tabs button.active em {
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
 }
 .board {
@@ -467,7 +467,7 @@ function saveReschedule() {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   font-size: 18px;
 }
 .weekdays {
@@ -508,7 +508,7 @@ function saveReschedule() {
   height: 14px;
   padding: 0 3px;
   border-radius: 999px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-size: 9px;
   font-style: normal;
@@ -517,8 +517,8 @@ function saveReschedule() {
   justify-content: center;
 }
 .day.has {
-  background: #eef2ff;
-  color: #5b4fdb;
+  background: #228BFF;
+  color: #fff;
 }
 .day.past.has {
   background: #f3f4f6;
@@ -528,12 +528,12 @@ function saveReschedule() {
   background: #9ca3af;
 }
 .day.active {
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
 }
 .day.active i {
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .list-card {
   margin: 0 12px 24px;
@@ -573,15 +573,15 @@ function saveReschedule() {
 .time strong {
   display: block;
   font-size: 14px;
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .time em {
   display: inline-block;
   margin-top: 4px;
   font-style: normal;
   font-size: 10px;
-  color: #5b4fdb;
-  background: #eef2ff;
+  color: #228BFF;
+  background: #D5E9FF;
   padding: 1px 6px;
   border-radius: 4px;
 }
@@ -600,8 +600,8 @@ function saveReschedule() {
 }
 .status {
   font-size: 11px;
-  color: #5b4fdb;
-  background: #eef2ff;
+  color: #228BFF;
+  background: #D5E9FF;
   padding: 1px 6px;
   border-radius: 4px;
   white-space: nowrap;
@@ -680,8 +680,8 @@ function saveReschedule() {
 }
 .detail-hero span {
   font-size: 12px;
-  color: #5b4fdb;
-  background: #eef2ff;
+  color: #228BFF;
+  background: #D5E9FF;
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -731,7 +731,7 @@ function saveReschedule() {
   margin-bottom: 6px !important;
 }
 .score b {
-  color: #5b4fdb;
+  color: #228BFF;
   font-size: 16px;
 }
 .muted {
@@ -752,7 +752,7 @@ function saveReschedule() {
 }
 .primary {
   border: none;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
 }
 .outline {

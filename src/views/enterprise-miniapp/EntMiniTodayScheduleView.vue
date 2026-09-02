@@ -63,7 +63,7 @@ const shiftGroups = computed(() => {
         shiftId: shift.id,
         shiftName: shift.name,
         period: `${shift.startTime} - ${shift.endTime}`,
-        color: shift.color || '#5b4fdb',
+        color: shift.color || '#228BFF',
         members: [],
       }
       byShift.set(shift.id, group)
@@ -221,7 +221,7 @@ const totalCount = computed(() =>
 .tag.success { background: #ecfdf5; color: #059669; }
 .tag.warning { background: #fffbeb; color: #d97706; }
 .tag.danger { background: #fef2f2; color: #dc2626; }
-.tag.info { background: #eff6ff; color: #2563eb; }
+.tag.info { background: #eff6ff; color: #228BFF; }
 .empty {
   padding: 48px 16px;
   text-align: center;

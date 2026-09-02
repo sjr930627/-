@@ -205,8 +205,8 @@ async function goClaim() {
 }
 
 .tag.blue {
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
 }
 
 .reward-box {
@@ -265,8 +265,8 @@ async function goClaim() {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -348,8 +348,8 @@ async function goClaim() {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-size: 12px;
   font-weight: 700;
   display: flex;

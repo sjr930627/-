@@ -7,7 +7,13 @@ import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import { getGrabShiftPostExtra, getGrabShiftSlotExtra } from '@/mock/miniappDetailSeed'
-import { isGrabShiftOpenForWorkers } from '@/services/grabShift'
+import { seedDepartments } from '@/mock/seed'
+import {
+  formatGrabPositionAgeRange,
+  formatGrabPositionGender,
+  isGrabShiftOpenForWorkers,
+  resolveGrabSlotPositionProfile,
+} from '@/services/grabShift'
 import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
 const route = useRoute()
@@ -45,9 +51,31 @@ const post = computed(() => {
   const first = slots.value[0]
   if (!first) return null
   const extra = getGrabShiftPostExtra(teamId.value, first.teamName)
+  const enterpriseId = resolveEnterpriseIdByAttendanceGroupId(
+    first.attendanceGroupId,
+    store.attendanceGroups,
+    store.departments,
+  )
+  const enterpriseName =
+    store.enterprises.find((e) => e.id === enterpriseId)?.name?.trim() ||
+    extra.storeName
+  const positionName = first.positionName?.trim() || extra.title
+
+  const team = store.teams.find((t) => t.id === first.teamId)
+  const departmentId = first.departmentId || team?.departmentId
+  const department = departmentId
+    ? store.departments.find((d) => d.id === departmentId)
+    : undefined
+  const seedDept = departmentId
+    ? seedDepartments.find((d) => d.id === departmentId)
+    : undefined
+
   return {
     ...extra,
-    title: first.positionName?.trim() || extra.title,
+    title: `${enterpriseName}|${positionName}`,
+    departmentImageUrl:
+      department?.imageUrl?.trim() || seedDept?.imageUrl?.trim() || '',
+    departmentName: first.departmentName || department?.name || extra.storeName,
   }
 })
 
@@ -75,15 +103,23 @@ function parsePositionRequirement(text?: string) {
 
 const requirementDetail = computed(() => {
   const slot = slots.value[0]
-  const fromSlot = parsePositionRequirement(slot?.positionRequirement)
+  const profile = slot ? resolveGrabSlotPositionProfile(slot) : null
+  const fromSlot = parsePositionRequirement(profile?.requirements || slot?.positionRequirement)
   if (fromSlot) return fromSlot
   return post.value?.requirementDetail ?? { intro: '', duties: [], qualifications: [] }
 })
 
 const skillRequirements = computed(() => {
   const slot = slots.value[0]
+  const profile = slot ? resolveGrabSlotPositionProfile(slot) : null
+  if (profile?.skills?.length) return profile.skills
   if (slot?.requirements?.length) return slot.requirements
   return post.value?.skillRequirements ?? []
+})
+
+const positionProfile = computed(() => {
+  const slot = slots.value[0]
+  return slot ? resolveGrabSlotPositionProfile(slot) : null
 })
 
 const selectedCount = computed(() => selectedSlotIds.value.length)
@@ -159,6 +195,18 @@ async function applySelected() {
     </div>
 
     <div v-if="post && slots.length" class="detail-body">
+      <section class="detail-cover" aria-label="部门图片">
+        <img
+          v-if="post.departmentImageUrl"
+          :src="post.departmentImageUrl"
+          :alt="post.departmentName"
+          class="detail-cover-img"
+        >
+        <div v-else class="detail-cover-placeholder">
+          <span>{{ post.departmentName }}</span>
+        </div>
+      </section>
+
       <section class="detail-hero">
         <h1 class="detail-title">{{ post.title }}</h1>
         <div class="detail-tags">
@@ -209,7 +257,29 @@ async function applySelected() {
       </section>
 
       <section class="detail-section">
-        <div class="detail-section-title solo">岗位要求</div>
+        <div class="detail-section-title solo">岗位信息</div>
+        <div class="profile-rows">
+          <div class="rule-row">
+            <span class="rule-label">岗位类型</span>
+            <span class="rule-value">{{ positionProfile?.jobType || '—' }}</span>
+          </div>
+          <div class="rule-row">
+            <span class="rule-label">年龄</span>
+            <span class="rule-value">{{ formatGrabPositionAgeRange(positionProfile?.ageMin, positionProfile?.ageMax) }}</span>
+          </div>
+          <div class="rule-row">
+            <span class="rule-label">性别</span>
+            <span class="rule-value">{{ formatGrabPositionGender(positionProfile?.gender) }}</span>
+          </div>
+          <div class="rule-row">
+            <span class="rule-label">经验</span>
+            <span class="rule-value">{{ positionProfile?.experience || '不限' }}</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <div class="detail-section-title solo">任职要求</div>
         <p v-if="requirementDetail.intro" class="req-intro">
           {{ requirementDetail.intro }}
         </p>
@@ -232,6 +302,12 @@ async function applySelected() {
           {{ reqExpanded ? '收起' : '展开' }}
           <span class="req-toggle-icon">{{ reqExpanded ? '∧' : '∨' }}</span>
         </button>
+        <p v-else-if="!requirementDetail.intro" class="text-muted-mini">暂无任职要求</p>
+      </section>
+
+      <section v-if="positionProfile?.description" class="detail-section">
+        <div class="detail-section-title solo">岗位描述</div>
+        <p class="req-intro">{{ positionProfile.description }}</p>
       </section>
 
       <section class="detail-section">
@@ -293,6 +369,36 @@ async function applySelected() {
 
 .detail-body {
   padding: 0 0 12px;
+}
+
+.detail-cover {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #e8eef5;
+  overflow: hidden;
+}
+
+.detail-cover-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.detail-cover-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  background: linear-gradient(135deg, #E6FFFA 0%, #D5E9FF 100%);
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .detail-hero {

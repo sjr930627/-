@@ -1,5 +1,5 @@
-import type { TaskWorkflow, WorkflowAction, WorkflowActionConfig, WorkflowNode } from '@/types'
-import { getDefaultNextNodeId, getNodeById, resolveActionTargetNodeId, sortedWorkflowNodes as sortNodes } from '@/utils/workflow'
+import type { Task, TaskWorkflow, WorkflowAction, WorkflowActionConfig, WorkflowNode } from '@/types'
+import { getDefaultNextNodeId, getNodeById, resolveActionTargetNodeId, resolveWorkflowActionLabel, sortedWorkflowNodes as sortNodes } from '@/utils/workflow'
 
 export function sortedWorkflowNodes(workflow: TaskWorkflow | { nodes: WorkflowNode[] }): WorkflowNode[] {
   return sortNodes(workflow.nodes)
@@ -82,6 +82,12 @@ export function resolveInstanceWorkflowStatus(
   instance: { currentNodeId: string; currentNodeName: string },
   workflow: TaskWorkflow | undefined,
 ): InstanceWorkflowStatus {
+  if (
+    instance.currentNodeName.includes('取消') ||
+    instance.currentNodeName.includes('关闭')
+  ) {
+    return 'cancelled'
+  }
   if (!workflow) return 'running'
   const node = workflow.nodes.find((n) => n.id === instance.currentNodeId)
   if (!node || node.nodeType !== 'end') return 'running'
@@ -97,7 +103,7 @@ export const instanceWorkflowStatusMap: Record<
 > = {
   running: { label: '执行中', type: 'warning' },
   completed: { label: '已完成', type: 'success' },
-  cancelled: { label: '已结束', type: 'info' },
+  cancelled: { label: '已取消', type: 'info' },
 }
 
 export function getCurrentWorkflowNode(
@@ -146,9 +152,10 @@ const enterpriseActionUiMap: Partial<
 export function getEnterpriseActionUiMeta(actionConfig: WorkflowActionConfig): EnterpriseActionUiMeta {
   const action = actionConfig.action === 'approve' ? 'confirm' : actionConfig.action
   const preset = enterpriseActionUiMap[actionConfig.action] ?? enterpriseActionUiMap[action]
+  const customLabel = actionConfig.label?.trim()
   return {
     action: actionConfig.action,
-    label: preset?.label ?? action,
+    label: customLabel || preset?.label || resolveWorkflowActionLabel(actionConfig),
     buttonType: preset?.buttonType ?? 'success',
     needNote: preset?.needNote ?? false,
     noteRequired: preset?.noteRequired ?? false,
@@ -178,6 +185,26 @@ export function isWorkflowCompletedEndNode(node: WorkflowNode): boolean {
 /** 当前节点关联的工作流字段 */
 export function getWorkflowFieldsForNode(workflow: TaskWorkflow | undefined, nodeId: string) {
   return workflow?.fields?.filter((f) => f.nodeIds.includes(nodeId)) ?? []
+}
+
+/** 灵工领取任务所在节点（固定为流程开始节点「领取任务」） */
+export function getWorkflowClaimNode(workflow: TaskWorkflow): WorkflowNode | undefined {
+  const sorted = sortedWorkflowNodes(workflow)
+  const start = sorted.find((n) => n.nodeType === 'start')
+  if (start) return start
+  return (
+    sorted.find(
+      (n) =>
+        (n.name.includes('领取任务') || n.name.includes('认领') || n.name.includes('提交信息')) &&
+        n.actions.some(
+          (a) => a.action === 'confirm' || a.action === 'accept' || a.action === 'submit',
+        ),
+    ) ??
+    sorted.find((n) =>
+      n.actions.some((a) => a.action === 'confirm' || a.action === 'accept' || a.action === 'submit'),
+    ) ??
+    getWorkerExecutingNode(workflow)
+  )
 }
 
 export function validateWorkflowNodeFields(
@@ -220,6 +247,67 @@ export function formatWorkflowFieldValue(
   return String(value)
 }
 
+export interface WorkflowFieldEntry {
+  fieldId: string
+  name: string
+  value: string
+}
+
+/** 某节点已填写的配置字段（用于生命周期展示） */
+export function buildNodeFieldEntries(
+  workflow: TaskWorkflow | undefined,
+  nodeId: string,
+  fieldValues?: Record<string, string | number | boolean>,
+): WorkflowFieldEntry[] {
+  if (!workflow || !fieldValues) return []
+  return getWorkflowFieldsForNode(workflow, nodeId)
+    .filter((f) => {
+      const val = fieldValues[f.id]
+      return val !== undefined && val !== null && val !== ''
+    })
+    .map((f) => ({
+      fieldId: f.id,
+      name: f.name,
+      value: formatWorkflowFieldValue(f, fieldValues[f.id]),
+    }))
+}
+
+/** 按节点汇总全部已填字段（字段会出现在其绑定的每个节点下） */
+export function buildAllNodeFieldGroups(
+  workflow: TaskWorkflow | undefined,
+  fieldValues?: Record<string, string | number | boolean>,
+): Array<{ nodeId: string; nodeName: string; entries: WorkflowFieldEntry[] }> {
+  if (!workflow?.fields?.length || !fieldValues) return []
+  const nodes = sortedWorkflowNodes(workflow)
+  const nodeNameMap = new Map(nodes.map((n) => [n.id, n.name]))
+  const groups = new Map<string, WorkflowFieldEntry[]>()
+
+  for (const field of workflow.fields) {
+    const val = fieldValues[field.id]
+    if (val === undefined || val === null || val === '') continue
+    const entry: WorkflowFieldEntry = {
+      fieldId: field.id,
+      name: field.name,
+      value: formatWorkflowFieldValue(field, val),
+    }
+    const targetNodeIds = field.nodeIds.filter((id) => nodeNameMap.has(id))
+    const ids = targetNodeIds.length ? targetNodeIds : []
+    for (const nodeId of ids) {
+      const list = groups.get(nodeId) ?? []
+      if (!list.some((e) => e.fieldId === field.id)) list.push(entry)
+      groups.set(nodeId, list)
+    }
+  }
+
+  return nodes
+    .filter((n) => groups.has(n.id))
+    .map((n) => ({
+      nodeId: n.id,
+      nodeName: n.name,
+      entries: groups.get(n.id)!,
+    }))
+}
+
 export function extractEnterpriseActionNote(
   fields: import('@/types').WorkflowFieldConfig[],
   fieldValues: Record<string, string | number | boolean>,
@@ -241,4 +329,15 @@ export function extractEnterpriseActionNote(
     if (val !== undefined && val !== null && String(val).trim()) return String(val).trim()
   }
   return ''
+}
+
+/** 统计引用该工作流的有效任务数（不含草稿/驳回） */
+export function countWorkflowBoundTasks(
+  tasks: Pick<Task, 'workflowId' | 'status'>[],
+  workflowId: string,
+): number {
+  return tasks.filter(
+    (t) =>
+      t.workflowId === workflowId && t.status !== 'draft' && t.status !== 'rejected',
+  ).length
 }

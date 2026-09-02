@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import EntMiniPageHeader from '@/components/enterprise-miniapp/EntMiniPageHeader.vue'
 import { useAppStore } from '@/stores/app'
@@ -23,6 +24,8 @@ import {
 import type { PricingMode, TaskInstance, TieredPrice, WorkflowActionConfig } from '@/types'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
 
+const route = useRoute()
+const router = useRouter()
 const store = useAppStore()
 const { enterpriseId } = useEnterpriseMiniAuth()
 const { runEnterpriseAction } = useEnterpriseInstanceAction()
@@ -31,6 +34,7 @@ const mainTab = ref<'overview' | 'detail'>('overview')
 const instanceStatusFilter = ref<'all' | 'pending_me' | 'running' | 'completed' | 'cancelled'>(
   'pending_me',
 )
+const filterTaskId = ref('')
 const publishVisible = ref(false)
 
 const emptyTier = (): TieredPrice => ({ minCount: 1, maxCount: 10, unitPrice: 50 })
@@ -72,6 +76,11 @@ const workflowOptions = computed(() =>
       value: w.id,
     })),
 )
+
+const filterTaskName = computed(() => {
+  if (!filterTaskId.value) return ''
+  return store.tasks.find((t) => t.id === filterTaskId.value)?.name ?? ''
+})
 
 function enrichInstance(i: TaskInstance) {
   const task = store.tasks.find((t) => t.id === i.taskId)
@@ -118,6 +127,7 @@ const overviewTasks = computed(() =>
 const detailData = computed(() =>
   store.taskInstances
     .filter((i) => i.enterpriseId === enterpriseId.value)
+    .filter((i) => !filterTaskId.value || i.taskId === filterTaskId.value)
     .map(enrichInstance)
     .filter((i) => {
       if (instanceStatusFilter.value === 'all') return true
@@ -163,6 +173,42 @@ const summary = computed(() => {
     pendingMe: enriched.filter((i) => i.pendingEnterprise).length,
   }
 })
+
+function syncFromQuery() {
+  const tab = String(route.query.tab ?? '')
+  if (tab === 'detail' || tab === 'overview') {
+    mainTab.value = tab
+  }
+  filterTaskId.value = String(route.query.taskId ?? '')
+  if (filterTaskId.value) {
+    mainTab.value = 'detail'
+    instanceStatusFilter.value = 'all'
+  }
+}
+
+onMounted(syncFromQuery)
+watch(() => route.query, syncFromQuery, { deep: true })
+
+function clearTaskFilter() {
+  filterTaskId.value = ''
+  router.replace({ path: '/enterprise-miniapp/tasks', query: { tab: 'detail' } })
+}
+
+function switchTab(tab: 'overview' | 'detail') {
+  mainTab.value = tab
+  if (tab === 'overview') {
+    filterTaskId.value = ''
+    router.replace({ path: '/enterprise-miniapp/tasks' })
+    return
+  }
+  router.replace({
+    path: '/enterprise-miniapp/tasks',
+    query: {
+      tab: 'detail',
+      ...(filterTaskId.value ? { taskId: filterTaskId.value } : {}),
+    },
+  })
+}
 
 function resetPublishForm() {
   const workflowId = workflowOptions.value[0]?.value ?? ''
@@ -288,8 +334,12 @@ async function submitPublish() {
   }
 }
 
-function openInstance(_row: TaskInstance) {
-  ElMessage.info('认领详情请在企业端网页查看')
+function openTaskDetail(taskId: string) {
+  router.push(`/enterprise-miniapp/tasks/${taskId}`)
+}
+
+function openInstance(row: TaskInstance) {
+  router.push(`/enterprise-miniapp/task-instances/${row.id}`)
 }
 
 function handleAction(
@@ -297,7 +347,7 @@ function handleAction(
   config: WorkflowActionConfig,
 ) {
   if (row.hasEnterpriseFields) {
-    ElMessage.info('该节点需填写表单，请在企业端网页处理')
+    router.push(`/enterprise-miniapp/task-instances/${row.id}`)
     return
   }
   runEnterpriseAction(row.id, config)
@@ -330,14 +380,14 @@ function handleAction(
         <button
           type="button"
           :class="{ active: mainTab === 'overview' }"
-          @click="mainTab = 'overview'"
+          @click="switchTab('overview')"
         >
           任务总览
         </button>
         <button
           type="button"
           :class="{ active: mainTab === 'detail' }"
-          @click="mainTab = 'detail'"
+          @click="switchTab('detail')"
         >
           任务明细
           <i v-if="summary.pendingMe" class="tab-badge">{{ summary.pendingMe }}</i>
@@ -346,7 +396,12 @@ function handleAction(
 
       <template v-if="mainTab === 'overview'">
         <div v-if="!overviewTasks.length" class="empty">暂无任务，点击上方发布</div>
-        <article v-for="t in overviewTasks" :key="t.id" class="card">
+        <article
+          v-for="t in overviewTasks"
+          :key="t.id"
+          class="card clickable"
+          @click="openTaskDetail(t.id)"
+        >
           <div class="row">
             <strong>{{ t.name }}</strong>
             <span class="tag">{{ t.statusLabel }}</span>
@@ -360,6 +415,10 @@ function handleAction(
       </template>
 
       <template v-else>
+        <div v-if="filterTaskId" class="filter-banner">
+          <span>当前任务：{{ filterTaskName || filterTaskId }}</span>
+          <button type="button" @click="clearTaskFilter">清除筛选</button>
+        </div>
         <div class="filters">
           <button
             type="button"
@@ -400,7 +459,12 @@ function handleAction(
         <div v-if="!detailData.length" class="empty">
           {{ instanceStatusFilter === 'pending_me' ? '暂无待我处理的明细' : '暂无认领记录' }}
         </div>
-        <article v-for="row in detailData" :key="row.id" class="card">
+        <article
+          v-for="row in detailData"
+          :key="row.id"
+          class="card clickable"
+          @click="openInstance(row)"
+        >
           <div class="row">
             <strong>{{ row.taskName }}</strong>
             <span class="tag" :class="row.pendingEnterprise ? 'pending' : row.workflowStatus">
@@ -408,19 +472,16 @@ function handleAction(
             </span>
           </div>
           <p>{{ row.workerName }} · {{ row.currentNodeName }} · ¥{{ row.amount }}</p>
-          <div class="actions">
-            <template v-if="row.pendingEnterprise">
-              <button
-                v-for="item in row.enterpriseActions"
-                :key="item.config.action"
-                type="button"
-                class="act"
-                @click="handleAction(row, item.config)"
-              >
-                {{ item.meta.label }}
-              </button>
-            </template>
-            <button type="button" class="link" @click="openInstance(row)">详情</button>
+          <div v-if="row.pendingEnterprise" class="actions" @click.stop>
+            <button
+              v-for="item in row.enterpriseActions"
+              :key="item.config.action"
+              type="button"
+              class="act"
+              @click="handleAction(row, item.config)"
+            >
+              {{ item.meta.label }}
+            </button>
           </div>
         </article>
       </template>
@@ -506,6 +567,10 @@ function handleAction(
 </template>
 
 <style scoped>
+.page {
+  min-height: 100%;
+  background: #fff;
+}
 .body {
   padding: 12px;
 }
@@ -535,7 +600,7 @@ function handleAction(
   height: 42px;
   border: none;
   border-radius: 12px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-size: 15px;
   font-weight: 600;
@@ -551,7 +616,7 @@ function handleAction(
 .tabs button,
 .filters button {
   border: none;
-  background: #eef2ff;
+  background: #fff;
   color: #6b7280;
   border-radius: 999px;
   height: 30px;
@@ -561,7 +626,7 @@ function handleAction(
 }
 .tabs button.active,
 .filters button.active {
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-weight: 600;
 }
@@ -585,6 +650,29 @@ function handleAction(
   padding: 12px;
   margin-bottom: 8px;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+}
+.card.clickable {
+  cursor: pointer;
+}
+.filter-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #D5E9FF;
+  color: #228BFF;
+  font-size: 12px;
+}
+.filter-banner button {
+  border: none;
+  background: transparent;
+  color: #228BFF;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
 }
 .row {
   display: flex;
@@ -630,14 +718,14 @@ function handleAction(
 }
 .bar {
   height: 6px;
-  background: #eef2ff;
+  background: #D5E9FF;
   border-radius: 999px;
   overflow: hidden;
 }
 .bar i {
   display: block;
   height: 100%;
-  background: #5b4fdb;
+  background: #228BFF;
   font-style: normal;
 }
 .progress span {
@@ -655,8 +743,8 @@ function handleAction(
 .act,
 .link {
   border: none;
-  background: #eef2ff;
-  color: #5b4fdb;
+  background: #228BFF;
+  color: #fff;
   border-radius: 8px;
   height: 28px;
   padding: 0 10px;
@@ -763,7 +851,7 @@ function handleAction(
 }
 .primary {
   border: none;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
 }
 </style>

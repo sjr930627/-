@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import isoWeek from 'dayjs/plugin/isoWeek'
 import EntMiniPageHeader from '@/components/enterprise-miniapp/EntMiniPageHeader.vue'
@@ -19,6 +18,7 @@ import {
   lineChartOption,
   valueLineChartOption,
 } from '@/services/statisticsCharts'
+import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 import type { AttendanceDaily, RecruitmentLeadStatus, Task, TaskInstance } from '@/types'
 
 dayjs.extend(isoWeek)
@@ -28,7 +28,6 @@ type PeriodMode = 'month' | 'week' | 'day'
 type HoursPeriodMode = 'day' | 'month'
 
 const store = useAppStore()
-const router = useRouter()
 const { enterpriseId } = useEnterpriseMiniAuth()
 
 const topTab = ref<StatsTab>('attendance')
@@ -332,7 +331,7 @@ const recruitTrendChart = computed(() => {
   return valueLineChartOption(
     labels,
     [
-      { name: '投递', data: apply, color: '#5B4FDB' },
+      { name: '投递', data: apply, color: '#228BFF' },
       { name: '录用', data: hired, color: '#A5B4FC' },
     ],
     '人',
@@ -519,7 +518,7 @@ const onboardTrend = computed(() => {
 const onboardTrendChart = computed(() =>
   valueLineChartOption(
     onboardTrend.value.labels,
-    [{ name: '入职人数', data: onboardTrend.value.counts, color: '#5B4FDB' }],
+    [{ name: '入职人数', data: onboardTrend.value.counts, color: '#228BFF' }],
     '人',
   ),
 )
@@ -634,7 +633,7 @@ const hoursChart = computed(() => {
     return dualMetricLineChartOption(
       labels,
       [
-        { name: '本期工时', data: hoursBuckets.value.hours, color: '#5B4FDB', unit: '小时' },
+        { name: '本期工时', data: hoursBuckets.value.hours, color: '#228BFF', unit: '小时' },
         { name: '上期工时', data: prevHours, color: '#A5B4FC', dashed: true, unit: '小时' },
       ],
       [
@@ -647,7 +646,7 @@ const hoursChart = computed(() => {
   return dualMetricLineChartOption(
     labels,
     [
-      { name: `${y}年工时`, data: hoursBuckets.value.hours, color: '#5B4FDB', unit: '小时' },
+      { name: `${y}年工时`, data: hoursBuckets.value.hours, color: '#228BFF', unit: '小时' },
       { name: `${y - 1}年工时`, data: prevHours, color: '#A5B4FC', dashed: true, unit: '小时' },
     ],
     [
@@ -692,31 +691,10 @@ const shiftBoard = computed(() => {
   )
   const total = shifts.length
   const full = shifts.filter((x) => x.shift.gapCount <= 0).length
-  const gap = shifts.filter((x) => x.shift.gapCount > 0).length
   const required = shifts.reduce((s, x) => s + x.shift.requiredHeadcount, 0)
   const scheduled = shifts.reduce((s, x) => s + x.shift.scheduledCount, 0)
   const fulfillRate = pct(Math.min(scheduled, required), required || 1)
-  return { total, full, gap, fulfillRate, required, scheduled }
-})
-
-const gapShiftItems = computed(() => {
-  const today = shiftBoardDate.value
-  const tomorrow = dayjs(today).add(1, 'day').format('YYYY-MM-DD')
-  return demandRows.value
-    .filter((r) => r.date === today || r.date === tomorrow)
-    .flatMap((r) =>
-      r.shifts
-        .filter((s) => s.gapCount > 0)
-        .map((s) => ({
-          key: `${r.key}-${s.shiftTemplateId}`,
-          dayLabel: r.date === today ? '今日' : '明日',
-          groupName: r.attendanceGroupName || r.teamName,
-          shiftName: s.shiftTemplateName,
-          gap: s.gapCount,
-        })),
-    )
-    .sort((a, b) => (a.dayLabel === b.dayLabel ? b.gap - a.gap : a.dayLabel === '今日' ? -1 : 1))
-    .slice(0, 8)
+  return { total, full, fulfillRate, required, scheduled }
 })
 
 const shiftFulfillTrend = computed(() => {
@@ -737,7 +715,7 @@ const shiftFulfillTrendChart = computed(() =>
   lineChartOption(
     shiftFulfillTrend.value.labels,
     [
-      { name: '满足率', data: shiftFulfillTrend.value.rates, color: '#5B4FDB' },
+      { name: '排班满足率', data: shiftFulfillTrend.value.rates, color: '#228BFF' },
       {
         name: `目标 ${SHIFT_TARGET}%`,
         data: shiftFulfillTrend.value.labels.map(() => SHIFT_TARGET),
@@ -775,9 +753,71 @@ const shiftGroupRank = computed(() => {
     .slice(0, 8)
 })
 
-function goFillGap() {
-  router.push('/enterprise-miniapp/shift-demand')
-}
+const enterpriseGrabSlots = computed(() =>
+  store.grabShiftSlots.filter((s) => {
+    if (s.publishStatus && s.publishStatus !== 'published') return false
+    const eid = resolveEnterpriseIdByAttendanceGroupId(
+      s.attendanceGroupId,
+      store.attendanceGroups,
+      store.departments,
+    )
+    return eid === enterpriseId.value
+  }),
+)
+
+const grabTodaySlots = computed(() =>
+  enterpriseGrabSlots.value
+    .filter((s) => s.date === shiftBoardDate.value)
+    .sort((a, b) => a.startTime.localeCompare(b.startTime) || a.teamName.localeCompare(b.teamName)),
+)
+
+const grabBoard = computed(() => {
+  const slots = grabTodaySlots.value
+  const published = slots.length
+  const full = slots.filter((s) => s.grabbedCount >= s.requiredCount).length
+  const required = slots.reduce((sum, s) => sum + s.requiredCount, 0)
+  const grabbed = slots.reduce((sum, s) => sum + Math.min(s.grabbedCount, s.requiredCount), 0)
+  const grabRate = pct(grabbed, required || 1)
+  return { published, full, required, grabbed, grabRate }
+})
+
+const grabSlotItems = computed(() =>
+  grabTodaySlots.value.slice(0, 10).map((s) => ({
+    id: s.id,
+    teamName: s.teamName || s.departmentName || '班组',
+    shiftName: s.positionName?.trim() || s.shiftName,
+    timeLabel: `${s.startTime.slice(0, 5)}~${s.endTime.slice(0, 5)}`,
+    grabbed: s.grabbedCount,
+    required: s.requiredCount,
+    rate: pct(Math.min(s.grabbedCount, s.requiredCount), s.requiredCount || 1),
+    full: s.grabbedCount >= s.requiredCount,
+  })),
+)
+
+const grabRateTrend = computed(() => {
+  const labels: string[] = []
+  const rates: number[] = []
+  for (let i = 6; i >= 0; i--) {
+    const d = dayjs(shiftBoardDate.value).subtract(i, 'day').format('YYYY-MM-DD')
+    const daySlots = enterpriseGrabSlots.value.filter((s) => s.date === d)
+    const required = daySlots.reduce((sum, s) => sum + s.requiredCount, 0)
+    const grabbed = daySlots.reduce(
+      (sum, s) => sum + Math.min(s.grabbedCount, s.requiredCount),
+      0,
+    )
+    labels.push(dayjs(d).format('M/D'))
+    rates.push(required ? pct(grabbed, required) : 0)
+  }
+  return { labels, rates }
+})
+
+const grabRateTrendChart = computed(() =>
+  lineChartOption(
+    grabRateTrend.value.labels,
+    [{ name: '抢班率', data: grabRateTrend.value.rates, color: '#10B981' }],
+    100,
+  ),
+)
 
 function resolveTaskWorkflow(task: Task | undefined) {
   if (!task) return undefined
@@ -892,7 +932,7 @@ const taskBoard = computed(() => {
   const statusTotal = Math.max(pendingClaim + runningQty + completedQty + overdueQty, 1)
   const statusRows = [
     { key: 'pending', name: '待认领', value: pendingClaim, color: '#94A3B8' },
-    { key: 'running', name: '进行中', value: runningQty, color: '#5B4FDB' },
+    { key: 'running', name: '进行中', value: runningQty, color: '#228BFF' },
     { key: 'done', name: '已完成', value: completedQty, color: '#22C55E' },
     { key: 'overdue', name: '已逾期', value: overdueQty, color: '#F59E0B' },
   ].map((r) => ({
@@ -1046,7 +1086,7 @@ const attendanceTrendChart = computed(() => {
   const option = lineChartOption(
     attendanceTrend.value.labels,
     [
-      { name: '到岗率', data: attendanceTrend.value.rates, color: '#5B4FDB' },
+      { name: '到岗率', data: attendanceTrend.value.rates, color: '#228BFF' },
       {
         name: `目标 ${ATTENDANCE_TARGET}%`,
         data: attendanceTrend.value.labels.map(() => ATTENDANCE_TARGET),
@@ -1475,11 +1515,11 @@ const attendanceGroupRank = computed(() => {
         </section>
       </template>
 
-      <!-- 班次看板 -->
+      <!-- 班次看板：排班情况 + 抢班情况 -->
       <template v-else-if="topTab === 'schedule'">
         <section class="card board-card">
           <div class="card-title">
-            <h3>排班看板</h3>
+            <h3>排班情况</h3>
             <input v-model="shiftBoardDate" class="board-date" type="date">
           </div>
           <div class="att-kpi">
@@ -1488,15 +1528,15 @@ const attendanceGroupRank = computed(() => {
               <strong>{{ shiftBoard.total }}</strong>
             </div>
             <div class="att-kpi-item">
-              <span>已满</span>
+              <span>已满班次</span>
               <strong>{{ shiftBoard.full }}</strong>
             </div>
-            <div class="att-kpi-item warn">
-              <span>缺编</span>
-              <strong>{{ shiftBoard.gap }}</strong>
+            <div class="att-kpi-item">
+              <span>已排/需求</span>
+              <strong>{{ shiftBoard.scheduled }}/{{ shiftBoard.required }}</strong>
             </div>
             <div class="att-kpi-item">
-              <span>满足率</span>
+              <span>排班满足率</span>
               <strong>{{ shiftBoard.fulfillRate }}%</strong>
             </div>
           </div>
@@ -1504,23 +1544,7 @@ const attendanceGroupRank = computed(() => {
 
         <section class="card">
           <div class="card-title">
-            <h3>缺编班次（{{ gapShiftItems.length }}个）</h3>
-          </div>
-          <div v-if="!gapShiftItems.length" class="empty-tip">今日/明日暂无缺编班次</div>
-          <div v-else class="gap-list">
-            <div v-for="item in gapShiftItems" :key="item.key" class="gap-row">
-              <span class="gap-day">{{ item.dayLabel }}</span>
-              <span class="gap-group">{{ item.groupName }}</span>
-              <span class="gap-shift">{{ item.shiftName }}</span>
-              <span class="gap-num">缺{{ item.gap }}人</span>
-              <button type="button" class="gap-btn" @click="goFillGap">补员</button>
-            </div>
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="card-title">
-            <h3>近7日班次满足率趋势</h3>
+            <h3>近7日排班满足率</h3>
             <span class="period-tag">目标 {{ SHIFT_TARGET }}%</span>
           </div>
           <VChart :option="shiftFulfillTrendChart" height="200px" />
@@ -1528,9 +1552,9 @@ const attendanceGroupRank = computed(() => {
 
         <section class="card">
           <div class="card-title">
-            <h3>考勤组满足率排行</h3>
+            <h3>考勤组排班满足率</h3>
           </div>
-          <div v-if="!shiftGroupRank.length" class="empty-tip">暂无考勤组数据</div>
+          <div v-if="!shiftGroupRank.length" class="empty-tip">暂无排班数据</div>
           <div v-else class="rank-list">
             <div v-for="row in shiftGroupRank" :key="row.name" class="rank-row">
               <span class="rank-name">{{ row.name }}</span>
@@ -1541,6 +1565,57 @@ const attendanceGroupRank = computed(() => {
               <span class="rank-dot" :class="row.level" />
             </div>
           </div>
+        </section>
+
+        <section class="card board-card">
+          <div class="card-title">
+            <h3>抢班情况</h3>
+            <span class="period-tag">{{ shiftBoardDate }}</span>
+          </div>
+          <div class="att-kpi">
+            <div class="att-kpi-item">
+              <span>发布班次</span>
+              <strong>{{ grabBoard.published }}</strong>
+            </div>
+            <div class="att-kpi-item">
+              <span>已抢满</span>
+              <strong>{{ grabBoard.full }}</strong>
+            </div>
+            <div class="att-kpi-item">
+              <span>已抢/需求</span>
+              <strong>{{ grabBoard.grabbed }}/{{ grabBoard.required }}</strong>
+            </div>
+            <div class="att-kpi-item">
+              <span>抢班率</span>
+              <strong>{{ grabBoard.grabRate }}%</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-title">
+            <h3>当日抢班班次</h3>
+          </div>
+          <div v-if="!grabSlotItems.length" class="empty-tip">当日暂无已发布抢班班次</div>
+          <div v-else class="grab-list">
+            <div v-for="item in grabSlotItems" :key="item.id" class="grab-row">
+              <div class="grab-main">
+                <div class="grab-title">{{ item.teamName }} · {{ item.shiftName }}</div>
+                <div class="grab-meta">{{ item.timeLabel }}</div>
+              </div>
+              <div class="grab-side">
+                <strong :class="{ full: item.full }">{{ item.grabbed }}/{{ item.required }}</strong>
+                <span>{{ item.rate }}%</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-title">
+            <h3>近7日抢班率</h3>
+          </div>
+          <VChart :option="grabRateTrendChart" height="200px" />
         </section>
       </template>
 
@@ -1661,6 +1736,10 @@ const attendanceGroupRank = computed(() => {
 </template>
 
 <style scoped>
+.page {
+  min-height: 100%;
+  background: #fff;
+}
 .body {
   padding: 12px 12px 28px;
 }
@@ -1668,21 +1747,20 @@ const attendanceGroupRank = computed(() => {
   display: flex;
   gap: 14px;
   overflow-x: auto;
-  margin-top: 12px;
 }
 .tabs button {
   border: none;
   background: none;
-  color: rgba(255, 255, 255, 0.75);
+  color: #6b7280;
   font-size: 14px;
   padding: 0 0 8px;
   white-space: nowrap;
   border-bottom: 2px solid transparent;
 }
 .tabs button.active {
-  color: #fff;
+  color: #228BFF;
   font-weight: 700;
-  border-bottom-color: #fff;
+  border-bottom-color: #228BFF;
 }
 .filter-card,
 .card {
@@ -1707,9 +1785,9 @@ const attendanceGroupRank = computed(() => {
   font-size: 13px;
 }
 .mode-row button.active {
-  border-color: #5b4fdb;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-color: #228BFF;
+  background: #228BFF;
+  color: #fff;
   font-weight: 600;
 }
 .filter-grid {
@@ -1779,7 +1857,7 @@ const attendanceGroupRank = computed(() => {
   width: 22px;
   height: 22px;
   border-radius: 6px;
-  background: #eef2ff;
+  background: #D5E9FF;
   position: relative;
 }
 .kpi-ico::after {
@@ -1787,7 +1865,7 @@ const attendanceGroupRank = computed(() => {
   position: absolute;
   inset: 6px;
   border-radius: 2px;
-  background: #5b4fdb;
+  background: #D5E9FF;
   opacity: 0.55;
 }
 .kpi-card strong {
@@ -1885,9 +1963,9 @@ const attendanceGroupRank = computed(() => {
   font-size: 12px;
 }
 .dim-tabs button.active {
-  border-color: #5b4fdb;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-color: #228BFF;
+  background: #228BFF;
+  color: #fff;
   font-weight: 600;
 }
 .metrics {
@@ -1954,20 +2032,20 @@ const attendanceGroupRank = computed(() => {
   flex: 1;
   height: 10px;
   border-radius: 999px;
-  background: #eef2ff;
+  background: #D5E9FF;
   overflow: hidden;
 }
 .rate-bar i {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, #818cf8, #5b4fdb);
+  background: linear-gradient(90deg, #5AA8FF, #228BFF);
 }
 .rate-bar-wrap em {
   font-style: normal;
   font-size: 13px;
   font-weight: 700;
-  color: #5b4fdb;
+  color: #228BFF;
   min-width: 48px;
   text-align: right;
 }
@@ -2130,9 +2208,9 @@ const attendanceGroupRank = computed(() => {
   font-size: 12px;
 }
 .trend-tools button.active {
-  border-color: #5b4fdb;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-color: #228BFF;
+  background: #228BFF;
+  color: #fff;
   font-weight: 600;
 }
 .trend-filter {
@@ -2197,42 +2275,57 @@ const attendanceGroupRank = computed(() => {
   background: #f59e0b;
   border-radius: 999px;
 }
-.gap-list {
+.grab-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-.gap-row {
-  display: grid;
-  grid-template-columns: 36px 1fr 48px 48px 52px;
+.grab-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #4b5563;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f3f4f6;
 }
-.gap-day {
-  color: #ef4444;
+.grab-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.grab-main {
+  flex: 1;
+  min-width: 0;
+}
+.grab-title {
+  font-size: 13px;
   font-weight: 600;
-}
-.gap-group {
+  color: #374151;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.gap-shift {
-  color: #6b7280;
-}
-.gap-num {
-  color: #ef4444;
-  text-align: right;
-}
-.gap-btn {
-  height: 26px;
-  border: none;
-  border-radius: 6px;
-  background: #5b4fdb;
-  color: #fff;
+.grab-meta {
+  margin-top: 4px;
   font-size: 12px;
+  color: #9ca3af;
+}
+.grab-side {
+  flex-shrink: 0;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.grab-side strong {
+  font-size: 14px;
+  color: #228BFF;
+}
+.grab-side strong.full {
+  color: #10b981;
+}
+.grab-side span {
+  font-size: 11px;
+  color: #9ca3af;
 }
 
 .overview-tools {
@@ -2412,8 +2505,8 @@ const attendanceGroupRank = computed(() => {
   justify-content: center;
 }
 .cr-row em.top {
-  background: #eef2ff;
-  color: #5b4fdb;
+  background: #228BFF;
+  color: #fff;
 }
 .cr-row strong {
   color: #111827;
@@ -2477,7 +2570,7 @@ const attendanceGroupRank = computed(() => {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: #5b4fdb;
+  background: #228BFF;
 }
 .tg-row strong {
   text-align: right;

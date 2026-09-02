@@ -14,8 +14,8 @@ export const MINIAPP_WEEKDAY_OPTIONS = [
 ] as const
 
 export const MINIAPP_JOB_OPTIONS = [
-  '加油站营业员',
-  '便利店店员',
+  '营业厅营业员',
+  '终端销售员',
   '促销导购',
   '地推专员',
   '仓库分拣',
@@ -25,7 +25,7 @@ export const MINIAPP_JOB_OPTIONS = [
 ] as const
 
 export const MINIAPP_BRAND_OPTIONS = [
-  '中石化',
+  '中国移动',
   '中石油',
   '星辰通信',
   '华信通信',

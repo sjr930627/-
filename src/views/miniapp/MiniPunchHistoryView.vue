@@ -134,7 +134,7 @@ const highlightDate = computed(() =>
 }
 
 .hist-card.highlight {
-  border: 2px solid #3b82f6;
+  border: 2px solid #4FD1C5;
 }
 
 .hist-head {
@@ -175,7 +175,7 @@ const highlightDate = computed(() =>
 }
 
 .hist-link {
-  color: #3b82f6;
+  color: #4FD1C5;
 }
 
 .hist-apply {
@@ -188,7 +188,7 @@ const highlightDate = computed(() =>
   padding: 1px 6px;
 }
 
-.mini-tag.online { background: #eff6ff; color: #3b82f6; }
+.mini-tag.online { background: #E6FFFA; color: #4FD1C5; }
 .mini-tag.hours { background: #f0fdf4; color: #16a34a; }
 .mini-tag.rest { background: #f3f4f6; color: #9ca3af; }
 .mini-tag.pending { background: #fff7ed; color: #ea580c; }

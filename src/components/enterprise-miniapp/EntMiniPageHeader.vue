@@ -7,51 +7,58 @@ defineProps<{
 </script>
 
 <template>
-  <header class="ent-page-header">
-    <div class="title-row">
-      <span class="side" />
-      <h1>{{ title }}</h1>
-      <div class="side right">
-        <EntMiniMessageEntry tone="light" />
+  <div class="ent-page-header-wrap">
+    <header class="ent-page-header">
+      <div class="side left">
+        <EntMiniMessageEntry tone="dark" />
       </div>
-    </div>
-    <div v-if="$slots.default" class="extra">
+      <h1>{{ title }}</h1>
+      <span class="side" aria-hidden="true" />
+    </header>
+    <div v-if="$slots.default" class="ent-page-header-extra">
       <slot />
     </div>
-  </header>
+  </div>
 </template>
 
 <style scoped>
-.ent-page-header {
-  background: linear-gradient(180deg, #5b4fdb 0%, #7c6df0 100%);
-  color: #fff;
-  padding: 14px 12px 14px;
+.ent-page-header-wrap {
   position: sticky;
   top: 0;
   z-index: 30;
+  background: #fff;
 }
-.title-row {
+
+.ent-page-header {
   display: grid;
   grid-template-columns: 44px 1fr 44px;
   align-items: center;
   gap: 4px;
+  padding: 10px 12px;
+  background: var(--ent-header-bg, #D5E9FF);
+  color: #111827;
 }
+
 h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   text-align: center;
   letter-spacing: 0.02em;
 }
+
 .side {
   display: flex;
   align-items: center;
   min-height: 36px;
 }
-.side.right {
-  justify-content: flex-end;
+
+.side.left {
+  justify-content: flex-start;
 }
-.extra {
-  margin-top: 10px;
+
+.ent-page-header-extra {
+  background: #fff;
+  padding: 0 12px 8px;
 }
 </style>

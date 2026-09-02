@@ -47,9 +47,9 @@ function save() {
       <MiniSkillCertPicker v-model="selectedCertIds" />
     </div>
 
-    <div class="cert-footer">
-      <button type="button" class="footer-cancel" @click="router.back()">取消</button>
-      <button type="button" class="footer-save" @click="save">
+    <div class="mini-footer-bar cert-footer">
+      <button type="button" class="mini-footer-secondary" @click="router.back()">取消</button>
+      <button type="button" class="mini-footer-primary" @click="save">
         保存
         <span class="footer-count">({{ selectedCertIds.length }}/{{ MINIAPP_SKILL_CERT_MAX }})</span>
       </button>
@@ -60,7 +60,7 @@ function save() {
 <style scoped>
 .edit-page {
   min-height: 100%;
-  background: #f3f0ff;
+  background: var(--mini-bg, #f3f4f6);
 }
 
 .edit-content {
@@ -77,43 +77,6 @@ function save() {
   font-weight: 800;
   color: #111827;
   line-height: 1.35;
-}
-
-.cert-footer {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 30;
-  display: flex;
-  gap: 12px;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-  background: #fff;
-  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.08);
-}
-
-.footer-cancel {
-  flex: 0 0 88px;
-  padding: 14px 0;
-  border: none;
-  border-radius: 999px;
-  background: #f3f4f6;
-  color: #64748b;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.footer-save {
-  flex: 1;
-  padding: 14px 0;
-  border: none;
-  border-radius: 999px;
-  background: #86efac;
-  color: #14532d;
-  font-size: 16px;
-  font-weight: 700;
-  cursor: pointer;
 }
 
 .footer-count {

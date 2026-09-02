@@ -6,6 +6,15 @@ import type {
   TaskTypeStatus,
   TaskWorkflow,
   WorkflowAction,
+  PunchMethod,
+  WorkflowEntryConditionType,
+  WorkflowEntryListenTarget,
+  WorkflowEntryTimeoutAction,
+  WorkflowEventSource,
+  WorkflowPunchCountMode,
+  WorkflowPunchLocationSource,
+  WorkflowPunchNavigateMode,
+  WorkflowPunchTimeSource,
   WorkflowFieldType,
   WorkflowNodeType,
   WorkflowPrerequisite,
@@ -56,6 +65,83 @@ export const workflowPrerequisiteMap: Record<WorkflowPrerequisite, string> = {
   punch: '打卡',
 }
 
+export const workflowEntryConditionTypeMap: Record<WorkflowEntryConditionType, string> = {
+  punch_record: '待打卡记录',
+  time_condition: '时间条件',
+  field_filled: '字段校验',
+  none: '无条件',
+}
+
+export const workflowPunchNavigateModeMap: Record<WorkflowPunchNavigateMode, string> = {
+  jump_to_punch_page: '点击任务跳转打卡页',
+  in_task: '任务内直接打卡',
+}
+
+export const workflowPunchCountModeMap: Record<WorkflowPunchCountMode, string> = {
+  clock_in_only: '仅上班打卡',
+  clock_in_out: '上下班打卡',
+  each_service_period: '每个服务时段都需打卡',
+}
+
+export const workflowPunchLocationSourceMap: Record<WorkflowPunchLocationSource, string> = {
+  task_region: '任务创建时的「任务地点」',
+  task_field: '任务录入的自定义字段',
+  attendance_group: '执行人考勤组地点',
+}
+
+export const workflowPunchTimeSourceMap: Record<WorkflowPunchTimeSource, string> = {
+  task_schedule: '任务起止时间（发布时录入）',
+  task_field: '任务录入的自定义字段',
+  fixed_window: '固定服务时段',
+}
+
+export const workflowPunchMethodOptions: PunchMethod[] = ['gps', 'wifi', 'field', 'qrcode']
+
+export const workflowPunchMethodMap: Record<PunchMethod, string> = {
+  gps: '定位打卡',
+  wifi: 'WiFi打卡',
+  field: '外勤打卡',
+  qrcode: '扫码打卡',
+}
+
+export const workflowEventSourceMap: Record<WorkflowEventSource, string> = {
+  attendance: '考勤模块',
+  task: '任务模块',
+  training: '培训模块',
+  finance: '财务模块',
+}
+
+export const workflowEventNameOptions: Record<WorkflowEventSource, { value: string; label: string }[]> = {
+  attendance: [
+    { value: 'punch_complete', label: '打卡完成' },
+    { value: 'punch_on_time', label: '按时打卡' },
+    { value: 'punch_missed', label: '缺卡记录' },
+  ],
+  task: [
+    { value: 'submit_complete', label: '提交完成' },
+    { value: 'proof_uploaded', label: '凭证已上传' },
+  ],
+  training: [
+    { value: 'course_complete', label: '课程完成' },
+    { value: 'exam_passed', label: '考试通过' },
+  ],
+  finance: [
+    { value: 'invoice_uploaded', label: '发票已上传' },
+    { value: 'settlement_ready', label: '结算就绪' },
+  ],
+}
+
+export const workflowEntryListenTargetMap: Record<WorkflowEntryListenTarget, string> = {
+  task_executor: '任务执行人',
+  specified_person: '指定人员',
+}
+
+export const workflowEntryTimeoutActionMap: Record<WorkflowEntryTimeoutAction, string> = {
+  auto_cancel: '自动取消',
+  auto_advance: '自动流转',
+  notify_only: '仅提醒',
+}
+
 export const workflowFieldTypeMap: Record<WorkflowFieldType, string> = {
   text: '文本',
   select: '下拉',
@@ -68,8 +154,8 @@ export const workflowFieldTypeMap: Record<WorkflowFieldType, string> = {
 
 export const workflowNodeTypeMap: Record<WorkflowNodeType, string> = {
   start: '起始节点',
-  middle: '中间节点',
-  end: '结束节点',
+  middle: '普通节点',
+  end: '终止节点',
 }
 
 export const workflowStatusMap: Record<WorkflowStatus, string> = {

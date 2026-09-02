@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
-  EMPLOYEE_POSITION_OPTIONS,
+  DEFAULT_WORKFORCE_ENTERPRISE_ID,
   isUnassignedDepartment,
 } from '@/constants/department'
 import { getDepartmentName } from '@/utils'
@@ -24,7 +24,7 @@ const emit = defineEmits<{
 const store = useAppStore()
 
 const departmentId = ref('')
-const position = ref('')
+const positionId = ref('')
 const employeeNo = ref('')
 
 const assignableDepartments = computed(() =>
@@ -42,12 +42,30 @@ const preferredDepartmentId = computed(() => {
   return first?.applyDepartmentId || ''
 })
 
+const enterpriseId = computed(() => {
+  const dept = store.departments.find((d) => d.id === departmentId.value)
+  const fromEmp = selectedEmployees.value[0]?.enterpriseId
+  return (
+    dept?.enterpriseId ||
+    fromEmp ||
+    store.currentEnterpriseId ||
+    DEFAULT_WORKFORCE_ENTERPRISE_ID
+  )
+})
+
+const enterprisePositions = computed(() => store.getEnterprisePositions(enterpriseId.value))
+
+const selectedPositionName = computed(() => {
+  const pos = store.getEnterprisePosition(positionId.value)
+  return pos?.profile.positionName || pos?.name || ''
+})
+
 watch(
   () => props.visible,
   (open) => {
     if (!open) return
     departmentId.value = preferredDepartmentId.value || ''
-    position.value = ''
+    positionId.value = selectedEmployees.value[0]?.positionId || ''
     employeeNo.value =
       props.employeeIds.length === 1 ? selectedEmployees.value[0]?.employeeNo || '' : ''
   },
@@ -66,8 +84,8 @@ function submit() {
     ElMessage.warning('请选择部门')
     return
   }
-  if (!position.value.trim()) {
-    ElMessage.warning('请选择或填写岗位')
+  if (!positionId.value || !selectedPositionName.value) {
+    ElMessage.warning('请选择岗位')
     return
   }
   if (props.requireEmployeeNo && !employeeNo.value.trim()) {
@@ -80,19 +98,29 @@ function submit() {
   }
 
   try {
+    const options = {
+      employeeNo: employeeNo.value.trim() || undefined,
+      positionId: positionId.value,
+    }
     if (props.requireEmployeeNo && props.employeeIds.length === 1) {
       store.assignPendingOnboardEmployee(props.employeeIds[0], {
         departmentId: departmentId.value,
-        position: position.value,
+        position: selectedPositionName.value,
         employeeNo: employeeNo.value,
+        positionId: positionId.value,
       })
     } else {
-      store.batchAssignEmployees(props.employeeIds, departmentId.value, position.value, {
-        employeeNo: employeeNo.value.trim() || undefined,
-      })
+      store.batchAssignEmployees(
+        props.employeeIds,
+        departmentId.value,
+        selectedPositionName.value,
+        options,
+      )
     }
     ElMessage.success(
-      props.requireEmployeeNo ? '已审批入驻并分配岗位' : `已为 ${props.employeeIds.length} 名人员分配部门和岗位`,
+      props.requireEmployeeNo
+        ? '已审批入驻并分配岗位'
+        : `已为 ${props.employeeIds.length} 名人员分配部门和岗位`,
     )
     emit('assigned', props.employeeIds.length)
     close()
@@ -133,14 +161,17 @@ function submit() {
       </el-form-item>
       <el-form-item label="分配岗位" required>
         <el-select
-          v-model="position"
+          v-model="positionId"
           filterable
-          allow-create
-          default-first-option
-          placeholder="请选择或输入岗位"
+          placeholder="请选择企业岗位"
           style="width: 100%"
         >
-          <el-option v-for="p in EMPLOYEE_POSITION_OPTIONS" :key="p" :label="p" :value="p" />
+          <el-option
+            v-for="p in enterprisePositions"
+            :key="p.id"
+            :label="p.profile.positionName || p.name"
+            :value="p.id"
+          />
         </el-select>
       </el-form-item>
       <el-form-item v-if="requireEmployeeNo || employeeIds.length === 1" label="人员 ID" :required="requireEmployeeNo">

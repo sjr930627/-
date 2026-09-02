@@ -370,7 +370,7 @@ async function openScanJoin() {
       phone: employee.value?.phone,
       employeeId: employeeId.value,
     })
-    ElMessage.success('已提交入驻申请，请等待企业审批')
+    ElMessage.success('已提交入驻申请，可在入驻管理查看审批结果')
   } catch {
     /* cancel */
   }
@@ -500,13 +500,6 @@ async function openScanJoin() {
           </div>
           <div class="wb-stat-title">本月在线</div>
           <div class="wb-stat-value">{{ formatHoursShort(monthOnlineMinutes) }}</div>
-          <div class="wb-stat-goal">目标 120h</div>
-          <div class="wb-stat-bar">
-            <div
-              class="wb-stat-bar-fill"
-              :style="{ width: `${Math.min(100, Math.round((monthOnlineMinutes / 60 / 120) * 100))}%` }"
-            />
-          </div>
         </div>
         <div class="wb-stat-card green">
           <div class="wb-stat-icon">
@@ -514,13 +507,6 @@ async function openScanJoin() {
           </div>
           <div class="wb-stat-title">本周在线</div>
           <div class="wb-stat-value">{{ formatHoursShort(weekOnlineMinutes) }}</div>
-          <div class="wb-stat-goal">目标 30h</div>
-          <div class="wb-stat-bar">
-            <div
-              class="wb-stat-bar-fill"
-              :style="{ width: `${Math.min(100, Math.round((weekOnlineMinutes / 60 / 30) * 100))}%` }"
-            />
-          </div>
         </div>
         <div class="wb-stat-card orange">
           <div class="wb-stat-icon">
@@ -684,8 +670,8 @@ async function openScanJoin() {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6, #60a5fa);
-  border: 2px solid #eff6ff;
+  background: linear-gradient(135deg, #4FD1C5, #81E6D9);
+  border: 2px solid #E6FFFA;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -716,11 +702,11 @@ async function openScanJoin() {
 }
 
 .wb-level-badge {
-  background: #eff6ff;
+  background: #E6FFFA;
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 11px;
-  color: #3b82f6;
+  color: #4FD1C5;
 }
 
 .wb-profile-actions {
@@ -784,7 +770,7 @@ async function openScanJoin() {
 }
 
 .wb-main-tab.active {
-  color: #3b82f6;
+  color: #4FD1C5;
   font-weight: 700;
 }
 
@@ -795,7 +781,7 @@ async function openScanJoin() {
   right: 20%;
   bottom: 0;
   height: 3px;
-  background: #3b82f6;
+  background: #4FD1C5;
   border-radius: 3px 3px 0 0;
 }
 
@@ -803,8 +789,8 @@ async function openScanJoin() {
   font-size: 11px;
   padding: 1px 6px;
   border-radius: 10px;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-weight: 600;
 }
 
@@ -814,7 +800,7 @@ async function openScanJoin() {
   border-radius: 10px;
   border: 1px solid #eee;
   background: #fafafa;
-  color: #3b82f6;
+  color: #4FD1C5;
   cursor: pointer;
   flex-shrink: 0;
   display: flex;
@@ -915,8 +901,8 @@ async function openScanJoin() {
   font-size: 11px;
   padding: 3px 10px;
   border-radius: 10px;
-  background: #e8f4ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-weight: 500;
 }
 
@@ -934,7 +920,7 @@ async function openScanJoin() {
   padding: 10px 20px;
   border: none;
   border-radius: 22px;
-  background: #3b82f6;
+  background: #4FD1C5;
   color: #fff;
   font-size: 14px;
   font-weight: 600;
@@ -1006,7 +992,7 @@ async function openScanJoin() {
 .wb-rest-link {
   border: none;
   background: none;
-  color: #3b82f6;
+  color: #4FD1C5;
   font-size: 14px;
   cursor: pointer;
 }
@@ -1034,7 +1020,7 @@ async function openScanJoin() {
   margin-bottom: 4px;
 }
 
-.wb-stat-card.blue .wb-stat-icon { color: #3b82f6; }
+.wb-stat-card.blue .wb-stat-icon { color: #4FD1C5; }
 .wb-stat-card.green .wb-stat-icon { color: #52c41a; }
 .wb-stat-card.orange .wb-stat-icon { color: #fa8c16; }
 
@@ -1050,7 +1036,12 @@ async function openScanJoin() {
   margin-bottom: 2px;
 }
 
-.wb-stat-card.blue .wb-stat-value { color: #3b82f6; }
+.wb-stat-card.blue .wb-stat-value,
+.wb-stat-card.green .wb-stat-value {
+  margin-bottom: 0;
+}
+
+.wb-stat-card.blue .wb-stat-value { color: #4FD1C5; }
 .wb-stat-card.green .wb-stat-value { color: #52c41a; }
 .wb-stat-card.orange .wb-stat-value { color: #fa8c16; }
 
@@ -1073,7 +1064,7 @@ async function openScanJoin() {
   transition: width 0.3s;
 }
 
-.wb-stat-card.blue .wb-stat-bar-fill { background: #3b82f6; }
+.wb-stat-card.blue .wb-stat-bar-fill { background: #4FD1C5; }
 .wb-stat-card.green .wb-stat-bar-fill { background: #52c41a; }
 .wb-stat-card.orange .wb-stat-bar-fill { background: #fa8c16; }
 
@@ -1114,8 +1105,8 @@ async function openScanJoin() {
 }
 
 .wb-icon-purple {
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
 }
 
 .wb-icon-red {
@@ -1152,7 +1143,7 @@ async function openScanJoin() {
 .wb-todo-banner:last-child { margin-bottom: 0; }
 .wb-todo-banner.red { background: #fff5f5; }
 .wb-todo-banner.orange { background: #fff7e6; }
-.wb-todo-banner.blue { background: #f0f7ff; }
+.wb-todo-banner.blue { background: #E6FFFA; }
 
 .wb-todo-icon {
   width: 36px;
@@ -1175,8 +1166,8 @@ async function openScanJoin() {
 }
 
 .wb-todo-icon.blue {
-  background: #dbeafe;
-  color: #3b82f6;
+  background: #CCFBF1;
+  color: #4FD1C5;
 }
 
 .wb-todo-text { flex: 1; min-width: 0; }
@@ -1190,7 +1181,7 @@ async function openScanJoin() {
 
 .wb-todo-banner.red .wb-todo-title { color: #cf1322; }
 .wb-todo-banner.orange .wb-todo-title { color: #d46b08; }
-.wb-todo-banner.blue .wb-todo-title { color: #0958d9; }
+.wb-todo-banner.blue .wb-todo-title { color: #319795; }
 
 .wb-todo-desc {
   font-size: 12px;
@@ -1243,10 +1234,10 @@ async function openScanJoin() {
   width: 100%;
   margin-top: 12px;
   padding: 12px;
-  border: 1px dashed #dbeafe;
+  border: 1px dashed #CCFBF1;
   border-radius: 12px;
   background: #f8fbff;
-  color: #3b82f6;
+  color: #4FD1C5;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -1271,8 +1262,8 @@ async function openScanJoin() {
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 8px;
-  background: #e8f4ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-weight: 500;
   flex-shrink: 0;
 }
@@ -1300,7 +1291,7 @@ async function openScanJoin() {
 
 .wb-task-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #60a5fa);
+  background: linear-gradient(90deg, #4FD1C5, #81E6D9);
   border-radius: 3px;
   transition: width 0.3s;
 }
@@ -1322,7 +1313,7 @@ async function openScanJoin() {
   border: none;
   background: none;
   font-size: 13px;
-  color: #3b82f6;
+  color: #4FD1C5;
   cursor: pointer;
 }
 
@@ -1344,8 +1335,8 @@ async function openScanJoin() {
 }
 
 .wb-day-card.today {
-  border-color: #409eff;
-  background: #f0f7ff;
+  border-color: var(--mini-primary);
+  background: var(--mini-primary-light);
 }
 
 .wb-day-card.done { background: #f0faf4; }
@@ -1402,7 +1393,7 @@ async function openScanJoin() {
 }
 
 .status-dot.blue {
-  background: #409eff;
+  background: var(--mini-primary);
 }
 
 :deep(.wb-todo-drawer .el-drawer__body) {

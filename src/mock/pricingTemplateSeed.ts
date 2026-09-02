@@ -15,7 +15,7 @@ export const seedPricingTemplates: AttendanceGroupPricingTemplate[] = [
   },
   {
     id: 'ptpl_station',
-    name: '加油站三班定价',
+    name: '营业厅三班定价',
     config: {
       ...createDefaultPricingConfig(38),
       dayShiftPeriod: { startTime: '08:00', endTime: '17:00' },

@@ -79,7 +79,7 @@ onUnmounted(() => {
     <div class="capture-body">
       <div v-if="phase === 'intro'" class="intro-block">
         <div class="face-ring">
-          <el-icon :size="48" color="#3b82f6"><UserFilled /></el-icon>
+          <el-icon :size="48" color="#4FD1C5"><UserFilled /></el-icon>
         </div>
         <h3>请进行真人核验</h3>
         <p>请将面部置于框内，保持光线充足、正对屏幕</p>
@@ -145,17 +145,17 @@ onUnmounted(() => {
   height: 200px;
   margin: 0 auto 24px;
   border-radius: 50%;
-  border: 3px solid rgba(59, 130, 246, 0.6);
+  border: 3px solid rgba(79, 209, 197, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(59, 130, 246, 0.12);
+  background: rgba(79, 209, 197, 0.12);
   position: relative;
   overflow: hidden;
 }
 
 .face-ring.scanning {
-  border-color: #22c55e;
+  border-color: var(--mini-primary);
   background: rgba(34, 197, 94, 0.15);
 }
 
@@ -164,7 +164,7 @@ onUnmounted(() => {
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(90deg, transparent, #22c55e, transparent);
+  background: linear-gradient(90deg, transparent, var(--mini-primary), transparent);
   animation: scan 1.6s linear infinite;
 }
 
@@ -212,7 +212,7 @@ onUnmounted(() => {
 
 .progress-fill {
   height: 100%;
-  background: #22c55e;
+  background: var(--mini-primary);
   transition: width 0.15s linear;
 }
 
@@ -235,7 +235,7 @@ onUnmounted(() => {
   height: 72px;
   margin: 40px auto 16px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--mini-primary);
   display: flex;
   align-items: center;
   justify-content: center;

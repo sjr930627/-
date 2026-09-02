@@ -14,7 +14,15 @@ import ScheduleTeamBoard from '@/components/schedule/ScheduleTeamBoard.vue'
 import ScheduleShiftGrid from '@/components/schedule/ScheduleShiftGrid.vue'
 import ScheduleLinePanel from '@/components/schedule/ScheduleLinePanel.vue'
 import { useScheduleBoard, filterEmployees } from '@/composables/useScheduleBoard'
-import { confirmStatusMap, normalizeConfirmStatus, isAssignmentConfirmedLocked, SCHEDULE_DEMO_TODAY, filterDatesByScheduleScope, type ScheduleScope } from '@/constants/schedule'
+import {
+  confirmStatusMap,
+  normalizeConfirmStatus,
+  isAssignmentConfirmedLocked,
+  SCHEDULE_DEMO_TODAY,
+  isScheduleFutureDate,
+  isScheduleShiftHistorical,
+  resolveAssignmentStartTime,
+} from '@/constants/schedule'
 import {
   CANCEL_SHIFT_REASON_OPTIONS,
   buildCancelShiftReasonText,
@@ -44,7 +52,6 @@ const scopedTeams = computed(() =>
 )
 
 const selectedTeamId = ref('team_a')
-const scheduleScope = ref<ScheduleScope>('future')
 const scheduleMode = ref<'shift' | 'custom'>('shift')
 /** 排班列表视图：按人员 / 按班次 */
 const shiftListView = ref<'team' | 'grid'>('team')
@@ -62,7 +69,6 @@ const pickerTarget = ref<{ employeeId: string; date: string } | null>(null)
 
 const detailDrawerVisible = ref(false)
 const detailCell = ref<{ employeeId: string; date: string } | null>(null)
-const detailNote = ref('')
 
 const swapDialogVisible = ref(false)
 const swapForm = ref({ targetEmployeeId: '', reason: '' })
@@ -106,12 +112,11 @@ const displayDates = computed(() =>
   viewType.value === 'month' ? monthDates.value : weekDates.value,
 )
 
-/** 按历史/未来范围过滤看板日期 */
-const boardDates = computed(() =>
-  filterDatesByScheduleScope(displayDates.value, scheduleScope.value, SCHEDULE_DEMO_TODAY),
-)
+const boardDates = computed(() => displayDates.value)
 
-const isHistoryScope = computed(() => scheduleScope.value === 'history')
+const mutableBoardDates = computed(() =>
+  boardDates.value.filter((d) => isScheduleFutureDate(d, SCHEDULE_DEMO_TODAY)),
+)
 
 const employees = computed(() => {
   const list = store.activeEmployees.filter((e) => memberIds.value.includes(e.id))
@@ -140,27 +145,6 @@ const board = useScheduleBoard({
   dates: boardDates,
   compliance: groupCompliance,
   memberIds,
-})
-
-watch(scheduleScope, (scope) => {
-  board.exitEditMode()
-  selectedLineShiftId.value = null
-  if (scope === 'history') {
-    const prevDay = addDays(SCHEDULE_DEMO_TODAY, -1)
-    if (viewType.value === 'week') {
-      const ws = getWeekStart(SCHEDULE_DEMO_TODAY)
-      // 若当前周没有历史日，切到上一周
-      if (!getWeekDates(weekStart.value).some((d) => d < SCHEDULE_DEMO_TODAY)) {
-        weekStart.value = addDays(ws, -7)
-      }
-    } else if (selectedMonth.value >= SCHEDULE_DEMO_TODAY.slice(0, 7)) {
-      selectedMonth.value = prevDay.slice(0, 7)
-    }
-  } else {
-    weekStart.value = getWeekStart(SCHEDULE_DEMO_TODAY)
-    selectedMonth.value = SCHEDULE_DEMO_TODAY.slice(0, 7)
-    lineSelectedDate.value = SCHEDULE_DEMO_TODAY
-  }
 })
 
 watch(boardDates, (dates) => {
@@ -238,10 +222,6 @@ watch(scheduleMode, () => {
 
 function selectGroupShift(d: (typeof groupShifts.value)[number]) {
   if (!d.shift) return
-  if (isHistoryScope.value) {
-    ElMessage.warning('历史排班仅可查看，不可编辑')
-    return
-  }
   handleEnterEditMode()
   selectedLineShiftId.value = d.shift.id
   lineSelectedDate.value = boardDates.value[0] ?? lineSelectedDate.value
@@ -267,14 +247,17 @@ function getShiftCellGap(shiftId: string, date: string) {
 
 function getShiftCellClass(shiftId: string, date: string) {
   const classes: string[] = []
+  const shift = store.shifts.find((s) => s.id === shiftId)
+  if (isScheduleShiftHistorical(date, shift?.startTime)) classes.push('history')
   if (getShiftCellGap(shiftId, date) > 0) classes.push('shortage')
   else if (getShiftCellEmployees(shiftId, date).length > 0) classes.push('full')
   return classes
 }
 
 function onShiftCellClick(shiftId: string, date: string) {
-  if (isHistoryScope.value) {
-    ElMessage.warning('历史排班仅可查看，不可编辑')
+  const shift = store.shifts.find((s) => s.id === shiftId)
+  if (isScheduleShiftHistorical(date, shift?.startTime)) {
+    ElMessage.warning('历史班次不可编辑')
     return
   }
   if (board.editMode.value !== 'editing') {
@@ -307,7 +290,7 @@ function confirmShiftAssign() {
   shiftAssignVisible.value = false
   ElMessage.success(
     skippedLocked
-      ? `班次人员已更新（跳过 ${skippedLocked} 个已确认）`
+      ? `班次人员已更新（跳过 ${skippedLocked} 个已确认或已过期）`
       : '班次人员已更新',
   )
 }
@@ -326,12 +309,8 @@ function ensureLineShiftSelected() {
 }
 
 function handleEnterEditMode() {
-  if (isHistoryScope.value) {
-    ElMessage.warning('历史排班仅可查看，不可编辑')
-    return
-  }
-  if (!boardDates.value.length) {
-    ElMessage.warning('当前周期没有可编辑的未来日期')
+  if (!mutableBoardDates.value.length) {
+    ElMessage.warning('当前周期没有可编辑的未来班次')
     return
   }
   board.enterEditMode()
@@ -367,13 +346,6 @@ const periodLabel = computed(() => {
 })
 
 const statusBar = computed(() => {
-  if (isHistoryScope.value) {
-    return {
-      type: 'info' as const,
-      label: '历史排班',
-      desc: '仅可查看，不可编辑；如需调整已发生排班请走考勤/审批流程',
-    }
-  }
   const s = board.pageStatus.value
   if (s === 'published' && board.publishRecord.value) {
     const t = new Date(board.publishRecord.value.publishedAt).toLocaleString('zh-CN')
@@ -428,6 +400,14 @@ const detailPublishedAssignment = computed(() => {
   return board.getPublishedAssignment(detailCell.value.employeeId, detailCell.value.date)
 })
 
+const detailIsHistorical = computed(() => {
+  if (!detailCell.value) return false
+  return isScheduleShiftHistorical(
+    detailCell.value.date,
+    resolveAssignmentStartTime(detailAssignment.value, store.shifts),
+  )
+})
+
 const detailIsLocked = computed(() => isAssignmentConfirmedLocked(detailPublishedAssignment.value))
 
 const swapTargetOptions = computed(() =>
@@ -465,9 +445,9 @@ function nextPeriod() {
 }
 
 function goToday() {
-  const today = getWeekStart()
-  weekStart.value = today
-  selectedMonth.value = today.slice(0, 7)
+  weekStart.value = getWeekStart(SCHEDULE_DEMO_TODAY)
+  selectedMonth.value = SCHEDULE_DEMO_TODAY.slice(0, 7)
+  lineSelectedDate.value = SCHEDULE_DEMO_TODAY
 }
 
 function goCancelShiftRecords() {
@@ -479,7 +459,12 @@ function goCancelShiftRecords() {
 
 function onCellClick(employeeId: string, date: string, event: MouseEvent) {
   if (event.shiftKey) {
-    if (!isHistoryScope.value) board.toggleSelect(employeeId, date, true)
+    if (!board.isCellHistorical(employeeId, date)) board.toggleSelect(employeeId, date, true)
+    return
+  }
+  if (board.isCellHistorical(employeeId, date)) {
+    openDetail(employeeId, date)
+    ElMessage.info('历史班次不可编辑')
     return
   }
   if (board.isCellLocked(employeeId, date)) {
@@ -487,7 +472,7 @@ function onCellClick(employeeId: string, date: string, event: MouseEvent) {
     ElMessage.info('该班次已确认，不可在看板编辑，请走取消班次流程')
     return
   }
-  if (isHistoryScope.value || board.editMode.value !== 'editing') {
+  if (board.editMode.value !== 'editing') {
     openDetail(employeeId, date)
     return
   }
@@ -517,7 +502,6 @@ function pickShift(shiftId: string) {
 
 function openDetail(employeeId: string, date: string) {
   detailCell.value = { employeeId, date }
-  detailNote.value = board.getVisibleAssignment(employeeId, date)?.note ?? ''
   detailDrawerVisible.value = true
 }
 
@@ -541,17 +525,11 @@ watch(
   { immediate: true },
 )
 
-function saveDetailNote() {
-  if (!detailCell.value || !detailAssignment.value || detailIsLocked.value) return
-  store.upsertAssignment({
-    ...detailAssignment.value,
-    note: detailNote.value,
-    published: detailAssignment.value.published,
-  })
-  ElMessage.success('备注已保存')
-}
-
 function openSwapDialog() {
+  if (detailIsHistorical.value) {
+    ElMessage.warning('历史班次不可换班')
+    return
+  }
   swapForm.value = { targetEmployeeId: '', reason: '' }
   swapDialogVisible.value = true
 }
@@ -584,6 +562,10 @@ async function submitSwapRequest() {
 
 function openCancelShiftDialog() {
   if (!detailCell.value || !detailAssignment.value) return
+  if (detailIsHistorical.value) {
+    ElMessage.warning('历史班次不可取消')
+    return
+  }
   cancelForm.value = { reasonCode: 'business_change', reasonOther: '' }
   cancelDialogVisible.value = true
 }
@@ -632,7 +614,7 @@ async function submitCancelShift() {
 }
 
 function onDragStart(employeeId: string, date: string) {
-  if (board.editMode.value !== 'editing' || isHistoryScope.value) return
+  if (board.editMode.value !== 'editing') return
   if (board.isCellLocked(employeeId, date)) return
   board.dragSource.value = { employeeId, date }
 }
@@ -649,13 +631,9 @@ function onDrop(employeeId: string, date: string) {
 }
 
 async function handleCopyLastWeek() {
-  if (isHistoryScope.value) {
-    ElMessage.warning('历史排班不可编辑')
-    return
-  }
   if (board.editMode.value !== 'editing') handleEnterEditMode()
-  if (!boardDates.value.length) {
-    ElMessage.warning('当前周期没有可编辑的未来日期')
+  if (!mutableBoardDates.value.length) {
+    ElMessage.warning('当前周期没有可编辑的未来班次')
     return
   }
   const offset = viewType.value === 'month' ? -31 : -7
@@ -665,8 +643,8 @@ async function handleCopyLastWeek() {
 }
 
 async function clearDraft() {
-  if (isHistoryScope.value) {
-    ElMessage.warning('历史排班不可编辑')
+  if (!mutableBoardDates.value.length) {
+    ElMessage.warning('当前周期没有可编辑的未来班次')
     return
   }
   await ElMessageBox.confirm('将清空当前周期未发布草稿并恢复至上次发布版本', '清空草稿', {
@@ -677,8 +655,8 @@ async function clearDraft() {
 }
 
 function openPublishDialog() {
-  if (isHistoryScope.value) {
-    ElMessage.warning('历史排班不可发布')
+  if (!mutableBoardDates.value.length) {
+    ElMessage.warning('没有可发布的未来班次')
     return
   }
   publishDialogVisible.value = true
@@ -742,12 +720,11 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 function tryAutoGenerateForTeam() {
-  if (isHistoryScope.value) return
-  if (!selectedTeamId.value || !memberIds.value.length || !boardDates.value.length) return
+  if (!selectedTeamId.value || !memberIds.value.length || !mutableBoardDates.value.length) return
   const count = store.tryAutoGenerateCycleRules(
     selectedTeamId.value,
     memberIds.value,
-    boardDates.value,
+    mutableBoardDates.value,
   )
   if (count > 0 && board.editMode.value !== 'editing') {
     board.enterEditMode()
@@ -755,7 +732,7 @@ function tryAutoGenerateForTeam() {
   }
 }
 
-watch([selectedTeamId, boardDates, scheduleScope], tryAutoGenerateForTeam, { immediate: true })
+watch([selectedTeamId, boardDates], tryAutoGenerateForTeam, { immediate: true })
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
 onUnmounted(() => window.removeEventListener('keydown', onKeydown))
@@ -806,20 +783,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     </header>
 
     <div class="mode-bar page-card">
-      <el-radio-group v-model="scheduleScope" size="small">
-        <el-radio-button value="future">未来排班</el-radio-button>
-        <el-radio-button value="history">历史排班</el-radio-button>
-      </el-radio-group>
-      <el-radio-group v-if="!isHistoryScope" v-model="scheduleMode" size="small">
+      <el-radio-group v-model="scheduleMode" size="small">
         <el-radio-button value="shift">按班次排班</el-radio-button>
         <el-radio-button value="custom">自定义排班</el-radio-button>
       </el-radio-group>
       <span class="text-muted scope-tip">
-        {{
-          isHistoryScope
-            ? `仅展示 ${SCHEDULE_DEMO_TODAY} 之前的排班，只读`
-            : `仅展示 ${SCHEDULE_DEMO_TODAY} 及之后的排班；已确认班次置灰不可改`
-        }}
+        已过期班次只读；仅未开始的班次可取消、编辑、发布
       </span>
     </div>
 
@@ -827,23 +796,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       <span class="status-tag">📋 状态：[{{ statusBar.label }}]</span>
       <span class="status-desc">{{ statusBar.desc }}</span>
       <div class="status-actions">
-        <template v-if="!isHistoryScope">
-          <template v-if="board.editMode.value === 'readonly'">
-            <el-button type="primary" size="small" @click="handleEnterEditMode">编辑排班</el-button>
-          </template>
-          <template v-else>
-            <el-button size="small" @click="board.exitEditMode()">退出编辑</el-button>
-          </template>
-          <el-button size="small" :disabled="!board.canUndo.value" :icon="RefreshLeft" @click="board.undo()">
-            撤销
-          </el-button>
-          <el-button size="small" :disabled="!board.canRedo.value" :icon="RefreshRight" @click="board.redo()">
-            重做
-          </el-button>
-          <el-button size="small" @click="handleCopyLastWeek">复制上{{ viewType === 'month' ? '月' : '周' }}</el-button>
-          <el-button size="small" @click="clearDraft">清空草稿</el-button>
-          <el-button type="success" size="small" @click="openPublishDialog">发布</el-button>
+        <template v-if="board.editMode.value === 'readonly'">
+          <el-button type="primary" size="small" @click="handleEnterEditMode">编辑排班</el-button>
         </template>
+        <template v-else>
+          <el-button size="small" @click="board.exitEditMode()">退出编辑</el-button>
+        </template>
+        <el-button size="small" :disabled="!board.canUndo.value" :icon="RefreshLeft" @click="board.undo()">
+          撤销
+        </el-button>
+        <el-button size="small" :disabled="!board.canRedo.value" :icon="RefreshRight" @click="board.redo()">
+          重做
+        </el-button>
+        <el-button size="small" @click="handleCopyLastWeek">复制上{{ viewType === 'month' ? '月' : '周' }}</el-button>
+        <el-button size="small" @click="clearDraft">清空草稿</el-button>
+        <el-button type="success" size="small" @click="openPublishDialog">发布</el-button>
         <el-button size="small" type="primary" @click="openPublishLog">
           发布日志
           <el-tag v-if="currentPublishVersion" size="small" type="info" style="margin-left: 4px">
@@ -860,11 +827,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <span>考勤组班次</span>
           </div>
           <p v-if="selectedGroup" class="panel-sub text-muted">
-            {{
-              isHistoryScope
-                ? `${selectedGroup.name} · 历史只读`
-                : `${selectedGroup.name} · 点击班次到右侧排班`
-            }}
+            {{ selectedGroup.name }} · 点击班次到右侧排班
           </p>
           <p v-else class="panel-sub text-muted">当前团队未绑定考勤组</p>
           <div class="demand-cards">
@@ -873,10 +836,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               :key="d.template.id"
               class="demand-card"
               :class="{
-                clickable: !isHistoryScope && scheduleMode === 'shift',
-                active: !isHistoryScope && scheduleMode === 'shift' && selectedLineShiftId === d.shift?.id,
+                clickable: scheduleMode === 'shift',
+                active: scheduleMode === 'shift' && selectedLineShiftId === d.shift?.id,
               }"
-              @click="!isHistoryScope && scheduleMode === 'shift' ? selectGroupShift(d) : undefined"
+              @click="scheduleMode === 'shift' ? selectGroupShift(d) : undefined"
             >
               <div class="demand-head">
                 <i v-if="d.shift" class="shift-dot" :style="{ background: d.shift.color }" />
@@ -908,7 +871,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         }"
       >
       <div
-        v-if="!isHistoryScope && scheduleMode === 'shift' && !selectedLineShiftContext"
+        v-if="scheduleMode === 'shift' && !selectedLineShiftContext"
         class="line-select-hint"
       >
         <el-alert
@@ -947,7 +910,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       />
 
       <div class="schedule-list-section">
-      <div v-if="!isHistoryScope && scheduleMode === 'shift'" class="list-view-bar">
+      <div v-if="scheduleMode === 'shift'" class="list-view-bar">
         <span class="list-view-label">列表视图</span>
         <el-radio-group v-model="shiftListView" size="small">
           <el-radio-button value="team">按人员</el-radio-button>
@@ -955,19 +918,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         </el-radio-group>
       </div>
       <div class="list-section-title">
-        {{ isHistoryScope ? '历史排班列表' : '未来排班列表' }}
-        <el-tag v-if="!boardDates.length" size="small" type="info" style="margin-left: 8px">
-          当前周期无{{ isHistoryScope ? '历史' : '未来' }}日期
-        </el-tag>
+        排班列表
       </div>
 
       <ScheduleTeamBoard
-        v-if="(isHistoryScope || scheduleMode !== 'shift' || shiftListView === 'team') && boardDates.length"
+        v-if="(scheduleMode !== 'shift' || shiftListView === 'team') && boardDates.length"
         class="schedule-list-board"
         :dates="boardDates"
         :groups="teamBoardGroups"
         :shifts="store.shifts"
-        :edit-mode="isHistoryScope ? 'readonly' : board.editMode.value"
+        :edit-mode="board.editMode.value"
         :selected-cells="board.selectedCells.value"
         :conflict-map="board.conflictMap.value"
         :max-weekly-hours="groupCompliance.maxWeeklyHours"
@@ -981,7 +941,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         @drop="onDrop"
       />
       <ScheduleShiftGrid
-        v-else-if="!isHistoryScope && boardDates.length"
+        v-else-if="boardDates.length"
         class="schedule-list-board"
         :dates="boardDates"
         :shift-rows="shiftRows"
@@ -994,7 +954,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       />
       <el-empty
         v-else
-        :description="isHistoryScope ? '当前周期没有历史排班日期，请切换到更早的周/月' : '当前周期没有未来排班日期'"
+        description="当前周期没有排班日期"
         :image-size="72"
       />
       </div>
@@ -1009,16 +969,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <i :style="{ background: cfg.bg, border: `1px solid ${cfg.color}` }" />{{ cfg.label }}
         </span>
         <span class="legend-item"><i class="dot-conflict" />工时红线冲突</span>
-        <span class="legend-item"><i class="dot-locked" />已确认（置灰不可编辑）</span>
+        <span class="legend-item"><i class="dot-locked" />已确认 / 已过期（置灰不可编辑）</span>
         <span class="text-muted tip-inline">
           {{
-            isHistoryScope
-              ? '历史排班只读查看'
-              : board.editMode.value === 'editing'
-                ? scheduleMode === 'custom'
-                  ? '自定义划线排班；已确认班次置灰不可操作'
-                  : '待确认班次可改，发布后通知灵工；已确认班次置灰不可操作'
-                : '查看未来排班，点击编辑排班进行修改'
+            board.editMode.value === 'editing'
+              ? scheduleMode === 'custom'
+                ? '自定义划线排班；已过期与已确认班次置灰不可操作'
+                : '仅未开始班次可改，发布后通知灵工；已过期与已确认班次置灰不可操作'
+              : '已过期班次只读，点击「编辑排班」可调整未来班次'
           }}
         </span>
       </div>
@@ -1096,24 +1054,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <span v-else>—</span>
           </el-descriptions-item>
         </el-descriptions>
-        <el-form label-width="60px" style="margin-top: 16px">
-          <el-form-item label="备注">
-            <el-input
-              v-model="detailNote"
-              type="textarea"
-              :rows="3"
-              :disabled="board.editMode.value !== 'editing' || detailIsLocked"
-            />
-          </el-form-item>
-        </el-form>
         <el-alert
-          v-if="detailIsLocked"
+          v-if="detailIsHistorical"
+          type="info"
+          :closable="false"
+          title="该班次已过期，不可修改、取消或发布"
+          style="margin-bottom: 12px"
+        />
+        <el-alert
+          v-else-if="detailIsLocked"
           type="info"
           :closable="false"
           title="该班次灵工已确认，不可直接编辑，请通过换班或取消班次处理"
           style="margin-bottom: 12px"
         />
-        <div v-if="detailIsLocked && detailAssignment" class="drawer-actions">
+        <div v-if="!detailIsHistorical && detailIsLocked && detailAssignment" class="drawer-actions">
           <el-button type="primary" plain style="width: 100%; margin-bottom: 8px" @click="openSwapDialog">
             发起换班
           </el-button>
@@ -1121,7 +1076,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             发起取消班次
           </el-button>
         </div>
-        <div v-else-if="board.editMode.value === 'editing'" class="drawer-actions">
+        <div v-else-if="!detailIsHistorical && board.editMode.value === 'editing'" class="drawer-actions">
           <el-select
             v-if="detailAssignment"
             placeholder="更换班次"
@@ -1133,8 +1088,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           <el-button v-if="detailAssignment" type="danger" plain @click="board.clearCell(detailCell!.employeeId, detailCell!.date)">
             取消排班
           </el-button>
-          <el-button type="primary" @click="saveDetailNote">保存备注</el-button>
         </div>
+        <p v-else-if="detailIsHistorical" class="text-muted tip">历史班次仅可查看</p>
         <p v-else class="text-muted tip">只读模式，点击「编辑排班」后可修改</p>
       </template>
     </el-drawer>

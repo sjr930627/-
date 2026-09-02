@@ -3,14 +3,31 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import WorkflowFlowChart from '@/components/task/WorkflowFlowChart.vue'
-import WorkflowNodeCard from '@/components/task/WorkflowNodeCard.vue'
-import WorkflowFieldPreview from '@/components/task/WorkflowFieldPreview.vue'
-import { workflowActionMap, workflowFieldTypeMap } from '@/constants/task'
+import WorkflowDesignCanvas from '@/components/task/WorkflowDesignCanvas.vue'
+import WorkflowNodePalette from '@/components/task/WorkflowNodePalette.vue'
+import WorkflowNodeConfigPanel from '@/components/task/WorkflowNodeConfigPanel.vue'
+import WorkflowTrialRunDialog from '@/components/task/WorkflowTrialRunDialog.vue'
+import { buildNodeFromPalette, getPaletteItem, validatePaletteDrop } from '@/constants/workflowPalette'
+import { workflowRoleMap } from '@/constants/task'
+import { countWorkflowBoundTasks } from '@/services/task'
 import { workflowTemplates } from '@/mock/taskSeed'
-import type { TaskWorkflow, WorkflowEnterpriseScope, WorkflowFieldConfig, WorkflowFieldType, WorkflowNode } from '@/types'
+import type {
+  TaskWorkflow,
+  WorkflowEnterpriseScope,
+  WorkflowFieldConfig,
+  WorkflowNode,
+  WorkflowRole,
+} from '@/types'
 import { generateId } from '@/utils'
-import { normalizeWorkflowNode, prepareWorkflowNodesForSave } from '@/utils/workflow'
+import {
+  canRemoveWorkflowNode,
+  ensureNodePositions,
+  normalizeWorkflowNode,
+  prepareWorkflowNodesForSave,
+  removeWorkflowNode,
+  resolveWorkflowActionLabel,
+  upsertWorkflowConnection,
+} from '@/utils/workflow'
 
 const route = useRoute()
 const router = useRouter()
@@ -22,22 +39,20 @@ const existing = computed(() =>
   editingId.value ? store.taskWorkflows.find((w) => w.id === editingId.value) : null,
 )
 
-const boundTaskTypeCount = computed(() => {
+const boundTaskCount = computed(() => {
   if (!editingId.value) return 0
-  return store.taskTypes.filter((t) => t.workflowId === editingId.value).length
+  return countWorkflowBoundTasks(store.tasks, editingId.value)
 })
 
-const nodesLocked = computed(() => boundTaskTypeCount.value > 0)
+const nodesLocked = computed(() => boundTaskCount.value > 0)
 
-const emptyNode = (): WorkflowNode =>
-  normalizeWorkflowNode({
-    id: generateId('node'),
-    name: '',
-    nodeType: 'middle',
-    role: 'worker',
-    actions: [{ action: 'submit' }],
-    sort: 0,
-  })
+const studioMode = ref<'config' | 'preview' | 'trial'>('config')
+const setupStep = ref<'basic' | 'canvas'>('basic')
+const previewRole = ref<WorkflowRole>('enterprise')
+const selectedNodeId = ref('')
+const settingsVisible = ref(false)
+const trialRunVisible = ref(false)
+const trialStatus = ref<Record<string, 'running' | 'success' | 'waiting' | 'error'>>({})
 
 const form = ref({
   name: '',
@@ -49,29 +64,21 @@ const form = ref({
   fields: [] as WorkflowFieldConfig[],
 })
 
-const previewNodeId = ref('')
-
-const previewWorkflow = computed(() => ({
-  name: form.value.name,
-  enterpriseScope: form.value.enterpriseScope,
-  enterpriseIds: form.value.enterpriseIds,
-  nodes: form.value.nodes,
-  status: form.value.status,
-}))
-
 const enterpriseOptions = computed(() =>
   store.enterprises.filter((e) => e.status !== 'terminated').map((e) => ({ value: e.id, label: e.name })),
 )
 
-const fieldTypeOptions = Object.entries(workflowFieldTypeMap) as [WorkflowFieldType, string][]
+const roleOptions = Object.entries(workflowRoleMap) as [WorkflowRole, string][]
 
-const previewNodeLabel = computed(() => {
-  if (!previewNodeId.value) return '全部节点'
-  return form.value.nodes.find((n) => n.id === previewNodeId.value)?.name ?? '全部节点'
-})
+const selectedNode = computed(() =>
+  form.value.nodes.find((n) => n.id === selectedNodeId.value) ?? null,
+)
 
 function normalizeNodes(nodes: WorkflowNode[]): WorkflowNode[] {
-  return nodes.map((n) => normalizeWorkflowNode({ ...n, actions: n.actions.map((a) => ({ ...a })) }, nodes))
+  const normalized = nodes.map((n) =>
+    normalizeWorkflowNode({ ...n, actions: n.actions.map((a) => ({ ...a })) }, nodes),
+  )
+  return ensureNodePositions(normalized)
 }
 
 function resolveEnterpriseScope(wf: TaskWorkflow) {
@@ -84,8 +91,36 @@ function resolveEnterpriseScope(wf: TaskWorkflow) {
   return { enterpriseScope: 'all' as WorkflowEnterpriseScope, enterpriseIds: [] as string[] }
 }
 
+function defaultFields(): WorkflowFieldConfig[] {
+  return []
+}
+
+function initDefaultNodes() {
+  const startId = generateId('node')
+  form.value.nodes = normalizeNodes([
+    {
+      id: startId,
+      name: '领取任务',
+      stageLabel: '领取阶段',
+      nodeType: 'start',
+      role: 'worker',
+      visibleRoles: ['worker', 'enterprise', 'operator'],
+      actions: [
+        {
+          action: 'confirm',
+          label: '确认领取',
+          allowedRoles: ['worker'],
+        },
+      ],
+      sort: 0,
+    },
+  ])
+  selectedNodeId.value = startId
+}
+
 function loadForm() {
   if (isEdit.value && existing.value) {
+    setupStep.value = 'canvas'
     const wf = existing.value
     const rawNodes = wf.nodes.map((n) => ({ ...n, actions: n.actions.map((a) => ({ ...a })) }))
     const scope = resolveEnterpriseScope(wf)
@@ -98,11 +133,12 @@ function loadForm() {
       fields: (wf.fields ?? []).map((f) => ({ ...f, nodeIds: [...f.nodeIds] })),
     }
     if (nodesLocked.value) {
-      ElMessage.warning('该工作流已绑定任务类型，仅可修改名称、描述和适用企业')
+      ElMessage.warning('该工作流已绑定任务，仅可修改名称、描述和适用企业')
     }
-    syncPreviewNode()
+    selectedNodeId.value = form.value.nodes[0]?.id ?? ''
     return
   }
+  setupStep.value = 'basic'
   form.value = {
     name: '',
     description: '',
@@ -112,75 +148,7 @@ function loadForm() {
     nodes: [],
     fields: defaultFields(),
   }
-  const startId = generateId('node')
-  const execId = generateId('node')
-  const doneId = generateId('node')
-  const cancelId = generateId('node')
-  form.value.nodes = normalizeNodes([
-    {
-      id: startId,
-      name: '待领取',
-      nodeType: 'start',
-      role: 'worker',
-      actions: [
-        { action: 'accept', targetNodeId: execId },
-        { action: 'cancel', targetNodeId: cancelId },
-      ],
-      sort: 0,
-    },
-    {
-      id: execId,
-      name: '执行中',
-      nodeType: 'middle',
-      role: 'worker',
-      actions: [
-        { action: 'submit', targetNodeId: doneId },
-        { action: 'cancel', targetNodeId: cancelId },
-      ],
-      sort: 1,
-    },
-    {
-      id: doneId,
-      name: '已完成',
-      nodeType: 'end',
-      role: 'system',
-      actions: [],
-      triggerSettlement: true,
-      sort: 2,
-    },
-    {
-      id: cancelId,
-      name: '已取消',
-      nodeType: 'end',
-      role: 'system',
-      actions: [],
-      sort: 3,
-    },
-  ])
-  syncPreviewNode()
-}
-
-function syncPreviewNode() {
-  previewNodeId.value = form.value.nodes.find((n) => n.nodeType !== 'end')?.id ?? form.value.nodes[0]?.id ?? ''
-}
-
-function defaultFields(): WorkflowFieldConfig[] {
-  return [
-    {
-      id: generateId('field'),
-      name: '任务编号',
-      fieldType: 'text',
-      required: true,
-      nodeIds: [],
-    },
-    {
-      id: generateId('field'),
-      name: '备注说明',
-      fieldType: 'textarea',
-      required: false,
-      nodeIds: [],
-    },
-  ]
+  selectedNodeId.value = ''
 }
 
 watch([editingId, () => store.taskWorkflows.length], loadForm, { immediate: true })
@@ -190,6 +158,19 @@ watch(
   (scope) => {
     if (scope === 'all') form.value.enterpriseIds = []
   },
+)
+
+watch(
+  () => form.value.nodes,
+  (nodes) => {
+    if (!nodes.some((n) => n.id === selectedNodeId.value)) {
+      selectedNodeId.value = nodes[0]?.id ?? ''
+    }
+    nodes.forEach((n, i) => {
+      n.sort = i
+    })
+  },
+  { deep: true },
 )
 
 function applyTemplate(tplIndex: number) {
@@ -202,29 +183,19 @@ function applyTemplate(tplIndex: number) {
   const nodes = tpl.nodes.map((n, i) => {
     const newId = generateId('node')
     idMap.set(n.id, newId)
-    return {
-      ...n,
-      id: newId,
-      sort: i,
-      actions: n.actions.map((a) => ({ ...a })),
-    }
+    return { ...n, id: newId, sort: i, actions: n.actions.map((a) => ({ ...a })) }
   })
   nodes.forEach((n) => {
     if (n.timeoutTargetNodeId && idMap.has(n.timeoutTargetNodeId)) {
       n.timeoutTargetNodeId = idMap.get(n.timeoutTargetNodeId)
     }
-    if (n.defaultNextNodeId && idMap.has(n.defaultNextNodeId)) {
-      n.defaultNextNodeId = idMap.get(n.defaultNextNodeId)
-    }
     n.actions.forEach((a) => {
-      if (a.targetNodeId && idMap.has(a.targetNodeId)) {
-        a.targetNodeId = idMap.get(a.targetNodeId)
-      }
+      if (a.targetNodeId && idMap.has(a.targetNodeId)) a.targetNodeId = idMap.get(a.targetNodeId)
     })
-    if (n.nodeType !== 'end') n.triggerSettlement = false
+    if (n.nodeType === 'end') n.triggerSettlement = true
+    else n.triggerSettlement = false
   })
   form.value.nodes = normalizeNodes(nodes)
-
   if (tpl.fields?.length) {
     form.value.fields = tpl.fields.map((f) => ({
       ...f,
@@ -232,61 +203,70 @@ function applyTemplate(tplIndex: number) {
       nodeIds: f.nodeIds.map((nid) => idMap.get(nid) ?? nid).filter((nid) => [...idMap.values()].includes(nid)),
     }))
   }
-  syncPreviewNode()
-  ElMessage.success('已套用模板，可按需调整节点')
+  selectedNodeId.value = form.value.nodes[0]?.id ?? ''
+  ElMessage.success('已套用模板，可在画布上继续调整')
 }
 
-function addNode() {
-  if (nodesLocked.value) return
-  const sort = form.value.nodes.length
-  form.value.nodes.push(
-    normalizeWorkflowNode({ ...emptyNode(), name: `节点${sort + 1}`, sort }, form.value.nodes),
-  )
+function onNodesUpdate(nodes: WorkflowNode[]) {
+  form.value.nodes = nodes
 }
 
-function removeNode(index: number) {
+function addFromPalette(key: string, position: { x: number; y: number }, connectFrom?: string) {
   if (nodesLocked.value) return
-  if (form.value.nodes.length <= 2) {
-    ElMessage.warning('至少保留起始和结束两个节点')
+  const item = getPaletteItem(key)
+  if (!item) return
+  const err = validatePaletteDrop(item, form.value.nodes)
+  if (err) {
+    ElMessage.warning(err)
     return
   }
-  form.value.nodes.splice(index, 1)
-  form.value.nodes.forEach((n, i) => {
-    n.sort = i
-  })
-  syncPreviewNode()
+  const id = generateId('node')
+  const partial = buildNodeFromPalette(item, id, position, form.value.nodes.length, form.value.nodes)
+  const node = normalizeWorkflowNode(partial as WorkflowNode, form.value.nodes)
+  let nodes: WorkflowNode[] = [...form.value.nodes, node]
+  if (connectFrom) {
+    nodes = upsertWorkflowConnection(nodes, connectFrom, id)
+  }
+  form.value.nodes = nodes
+  selectedNodeId.value = id
+  ElMessage.success(connectFrom ? `已添加${item.name}并建立流转` : `已添加${item.name}，单击节点进行配置`)
 }
 
-function moveNode(index: number, direction: -1 | 1) {
+function selectNode(id: string) {
+  selectedNodeId.value = id
+}
+
+function onRemoveNode(nodeId: string) {
   if (nodesLocked.value) return
-  const target = index + direction
-  if (target < 0 || target >= form.value.nodes.length) return
-  const nodes = form.value.nodes
-  ;[nodes[index], nodes[target]] = [nodes[target], nodes[index]]
-  nodes.forEach((n, i) => {
-    n.sort = i
-  })
+  const node = form.value.nodes.find((n) => n.id === nodeId)
+  if (!node) return
+  const err = canRemoveWorkflowNode(node)
+  if (err) {
+    ElMessage.warning(err)
+    return
+  }
+  form.value.nodes = removeWorkflowNode(form.value.nodes, nodeId)
+  form.value.fields = form.value.fields.filter((f) => !f.nodeIds.includes(nodeId))
+  selectedNodeId.value = ''
+  ElMessage.success('已删除节点')
 }
 
-function addField() {
-  form.value.fields.push({
-    id: generateId('field'),
-    name: '',
-    fieldType: 'text',
-    required: false,
-    nodeIds: [],
-  })
+function openTrialRun() {
+  trialStatus.value = {}
+  studioMode.value = 'trial'
+  trialRunVisible.value = true
 }
 
-function removeField(index: number) {
-  form.value.fields.splice(index, 1)
+function onTrialStep(nodeId: string, status: 'running' | 'success' | 'waiting' | 'error') {
+  trialStatus.value = { ...trialStatus.value, [nodeId]: status }
+  selectedNodeId.value = nodeId
 }
 
-function nodeOptionsForField() {
-  return form.value.nodes.filter((n) => n.name.trim()).map((n) => ({ value: n.id, label: n.name }))
+function onTrialDone() {
+  studioMode.value = 'config'
 }
 
-function validateForm() {
+function validateBasicForm() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请输入流程名称')
     return false
@@ -295,11 +275,32 @@ function validateForm() {
     ElMessage.warning('请选择适用企业')
     return false
   }
+  return true
+}
+
+function enterCanvas() {
+  if (!validateBasicForm()) return
+  if (!form.value.nodes.length) {
+    initDefaultNodes()
+  } else {
+    form.value.nodes = normalizeNodes(form.value.nodes)
+    selectedNodeId.value =
+      form.value.nodes.find((n) => n.nodeType === 'start')?.id ?? form.value.nodes[0]?.id ?? ''
+  }
+  setupStep.value = 'canvas'
+}
+
+function backToBasic() {
+  setupStep.value = 'basic'
+}
+
+function validateForm() {
+  if (!validateBasicForm()) return false
   if (!nodesLocked.value) {
     const starts = form.value.nodes.filter((n) => n.nodeType === 'start')
     const ends = form.value.nodes.filter((n) => n.nodeType === 'end')
     if (starts.length !== 1 || ends.length < 1) {
-      ElMessage.warning('需包含一个起始节点和至少一个结束节点')
+      ElMessage.warning('需包含一个起始节点和至少一个终止节点')
       return false
     }
     if (form.value.nodes.some((n) => !n.name.trim())) {
@@ -307,34 +308,34 @@ function validateForm() {
       return false
     }
     for (const node of form.value.nodes) {
-      if (node.nodeType === 'end') {
-        if (node.actions.length > 0) {
-          ElMessage.warning(`结束节点「${node.name}」不可配置可执行动作`)
-          return false
-        }
-        continue
-      }
-      if (node.triggerSettlement) {
-        ElMessage.warning(`仅结束节点可配置关联结算，请检查「${node.name}」`)
-        return false
-      }
+      if (node.nodeType === 'end') continue
       if (node.timeoutEnabled && (!node.timeoutHours || !node.timeoutTargetNodeId)) {
-        ElMessage.warning(`节点「${node.name || '未命名'}」请完善超时规则`)
+        ElMessage.warning(`节点「${node.name}」请完善超时规则`)
         return false
       }
       for (const action of node.actions) {
         if (!action.targetNodeId) {
           ElMessage.warning(
-            `节点「${node.name}」的「${workflowActionMap[action.action === 'approve' ? 'confirm' : action.action]}」请配置流转目标`,
+            `「${node.name}」的操作「${resolveWorkflowActionLabel(action)}」请配置目标节点`,
           )
           return false
         }
       }
     }
   }
-  if (form.value.fields.some((f) => !f.name.trim())) {
-    ElMessage.warning('请填写所有字段名称')
-    return false
+  for (const field of form.value.fields) {
+    if (!field.name.trim()) {
+      ElMessage.warning('请填写所有采集字段名称')
+      return false
+    }
+    if (!field.nodeIds.length) {
+      ElMessage.warning('采集字段需绑定到节点')
+      return false
+    }
+    if (field.fieldType === 'select' && (!field.options || !field.options.length)) {
+      ElMessage.warning(`字段「${field.name}」请配置下拉选项`)
+      return false
+    }
   }
   return true
 }
@@ -354,10 +355,7 @@ function buildPayload(status: 'enabled' | 'disabled') {
     })),
   }
   if (!nodesLocked.value) {
-    return {
-      ...payload,
-      nodes: prepareWorkflowNodesForSave(form.value.nodes),
-    }
+    return { ...payload, nodes: prepareWorkflowNodesForSave(form.value.nodes) }
   }
   return payload
 }
@@ -371,7 +369,10 @@ function save(asDraft = false) {
       store.updateTaskWorkflow(editingId.value, payload)
       ElMessage.success(asDraft ? '草稿已保存' : '更新成功')
     } else {
-      store.addTaskWorkflow({ ...payload, status } as Omit<TaskWorkflow, 'id' | 'version' | 'boundTaskTypeCount' | 'createdAt' | 'updatedAt'>)
+      store.addTaskWorkflow({
+        ...payload,
+        status,
+      } as Omit<TaskWorkflow, 'id' | 'version' | 'boundTaskTypeCount' | 'createdAt' | 'updatedAt'>)
       ElMessage.success(asDraft ? '草稿已保存' : '创建成功')
     }
     router.push('/task-workflows')
@@ -386,250 +387,287 @@ function cancel() {
 </script>
 
 <template>
-  <div class="workflow-form-page">
-    <div class="form-header">
+  <div v-if="setupStep === 'basic' && !isEdit" class="basic-setup page-card">
+    <div class="page-header">
       <div>
-        <h2 class="page-title">{{ isEdit ? '编辑工作流' : '新增工作流' }}</h2>
-        <p class="text-muted">配置流程节点、角色权限、前置条件、通知与超时规则</p>
+        <h2 class="page-title">新建工作流</h2>
+        <p class="text-muted">先填写基本信息，再进入画布配置节点与流转</p>
+      </div>
+    </div>
+    <el-form label-width="96px" class="basic-form">
+      <el-form-item label="流程名称" required>
+        <el-input v-model="form.name" placeholder="如：标准验收流程" />
+      </el-form-item>
+      <el-form-item label="适用企业" required>
+        <el-radio-group v-model="form.enterpriseScope">
+          <el-radio value="all">全部企业</el-radio>
+          <el-radio value="specific">特定企业</el-radio>
+        </el-radio-group>
+        <el-select
+          v-if="form.enterpriseScope === 'specific'"
+          v-model="form.enterpriseIds"
+          multiple
+          collapse-tags
+          placeholder="选择企业"
+          style="width: 100%; margin-top: 8px"
+        >
+          <el-option v-for="opt in enterpriseOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="流程描述">
+        <el-input v-model="form.description" type="textarea" :rows="3" placeholder="说明该流程的适用场景" />
+      </el-form-item>
+      <el-form-item label="套用模板">
+        <div class="template-btns">
+          <el-button
+            v-for="(tpl, i) in workflowTemplates"
+            :key="tpl.name"
+            size="small"
+            @click="applyTemplate(i)"
+          >
+            {{ tpl.name.replace('（模板）', '') }}
+          </el-button>
+        </div>
+        <p v-if="form.nodes.length" class="text-muted template-hint">
+          已套用模板（{{ form.nodes.length }} 个节点），进入画布后可继续调整
+        </p>
+      </el-form-item>
+    </el-form>
+    <div class="basic-actions">
+      <el-button @click="cancel">取消</el-button>
+      <el-button type="primary" @click="enterCanvas">进入画布配置</el-button>
+    </div>
+  </div>
+
+  <div v-else class="workflow-studio">
+    <header class="studio-header">
+      <div class="header-title">
+        <el-button
+          v-if="!isEdit"
+          link
+          type="primary"
+          class="back-basic-btn"
+          @click="backToBasic"
+        >
+          ← 返回基本信息
+        </el-button>
+        <h2 class="page-title">
+          任务流程配置
+          <span v-if="form.name" class="flow-name">· {{ form.name }}</span>
+        </h2>
+        <button type="button" class="link-btn" @click="settingsVisible = true">流程设置</button>
       </div>
       <div class="header-actions">
+        <el-button @click="studioMode = studioMode === 'preview' ? 'config' : 'preview'">
+          {{ studioMode === 'preview' ? '退出预览' : '预览' }}
+        </el-button>
+        <el-button @click="openTrialRun">试运行</el-button>
         <el-button @click="cancel">取消</el-button>
         <el-button @click="save(true)">保存草稿</el-button>
-        <el-button type="primary" @click="save(false)">保存并启用</el-button>
+        <el-button type="primary" @click="save(false)">发布</el-button>
       </div>
+    </header>
+
+    <div v-if="studioMode === 'preview'" class="preview-role-bar">
+      <span>预览角色：</span>
+      <el-button
+        v-for="[role, label] in roleOptions"
+        :key="role"
+        size="small"
+        :type="previewRole === role ? 'primary' : 'default'"
+        @click="previewRole = role"
+      >
+        {{ label }}
+      </el-button>
     </div>
 
-    <div class="form-layout">
-      <div class="form-main">
-        <section class="section-card">
-          <h3 class="section-title">基本信息</h3>
-          <el-form label-width="100px">
-            <el-row :gutter="16">
-              <el-col :span="12">
-                <el-form-item label="流程名称" required>
-                  <el-input v-model="form.name" placeholder="如：运营商套餐推广流程" />
-                </el-form-item>
-              </el-col>
-              <el-col :span="12">
-                <el-form-item label="关联任务类型">
-                  <div class="bound-task-types">
-                    <el-tag v-if="boundTaskTypeCount > 0" type="warning">{{ boundTaskTypeCount }} 个</el-tag>
-                    <span v-else class="text-muted">暂无关联</span>
-                    <span class="bound-hint">由任务类型配置时关联，此处不可修改</span>
-                  </div>
-                </el-form-item>
-              </el-col>
-            </el-row>
-            <el-form-item label="适用企业" required>
-              <div class="enterprise-scope">
-                <el-radio-group v-model="form.enterpriseScope">
-                  <el-radio value="all">全部企业</el-radio>
-                  <el-radio value="specific">特定企业</el-radio>
-                </el-radio-group>
-                <el-select
-                  v-if="form.enterpriseScope === 'specific'"
-                  v-model="form.enterpriseIds"
-                  multiple
-                  collapse-tags
-                  placeholder="选择企业"
-                  style="width: 100%; margin-top: 8px"
-                >
-                  <el-option v-for="opt in enterpriseOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-                </el-select>
-              </div>
-            </el-form-item>
-            <el-form-item label="流程描述">
-              <el-input v-model="form.description" type="textarea" :rows="3" placeholder="简要说明流程用途与适用场景" />
-            </el-form-item>
-            <el-form-item v-if="!isEdit" label="流程模板">
-              <el-button
-                v-for="(tpl, i) in workflowTemplates"
-                :key="tpl.name"
-                size="small"
-                :disabled="nodesLocked"
-                @click="applyTemplate(i)"
-              >
-                套用{{ tpl.name.replace('（模板）', '') }}
-              </el-button>
-            </el-form-item>
-          </el-form>
-        </section>
+    <el-alert v-if="nodesLocked" type="warning" show-icon :closable="false" class="lock-alert">
+      已绑定 {{ boundTaskCount }} 个任务，节点与流转不可修改
+    </el-alert>
 
-        <section class="section-card">
-          <div class="section-header">
-            <h3 class="section-title">节点配置</h3>
-          </div>
-          <div v-if="!nodesLocked" class="action-bar">
-            <el-button type="primary" @click="addNode">+ 添加节点</el-button>
-          </div>
-          <el-alert v-if="nodesLocked" type="warning" show-icon :closable="false" style="margin-bottom: 12px">
-            工作流已绑定任务类型，节点配置不可修改
-          </el-alert>
-          <WorkflowNodeCard
-            v-for="(node, index) in form.nodes"
-            :key="node.id"
-            :node="node"
-            :index="index"
-            :total="form.nodes.length"
-            :all-nodes="form.nodes"
-            :readonly="nodesLocked"
-            @move="moveNode(index, $event)"
-            @remove="removeNode(index)"
-          />
-          <div v-if="!nodesLocked && form.nodes.length" class="action-bar action-bar-bottom">
-            <el-button type="primary" plain @click="addNode">+ 添加节点</el-button>
-          </div>
-        </section>
-      </div>
-
-      <div class="form-side">
-        <section class="section-card">
-          <h3 class="section-title">流程预览</h3>
-          <WorkflowFlowChart :workflow="previewWorkflow" compact />
-        </section>
-
-        <section class="section-card">
-          <h3 class="section-title">业务规则</h3>
-          <ul class="rules-list">
-            <li>流程必须包含至少一个起始节点和一个结束节点，可配置多个结束节点（如已完成、已取消）</li>
-            <li>结束节点无可执行动作，仅作为分叉流转的目标</li>
-            <li>分叉节点可为每个动作指定流转目标，如「取消」→ 已取消、「确认」→ 已结算</li>
-            <li>关联结算仅可在结束节点配置</li>
-            <li>工作流绑定任务后不可修改节点，仅可停用并新建版本</li>
-            <li>超时规则可指定超时后自动流转至目标节点</li>
-          </ul>
-        </section>
-
-        <section class="section-card">
-          <div class="section-header">
-            <h3 class="section-title">字段配置</h3>
-          </div>
-          <div class="action-bar">
-            <el-button type="primary" @click="addField">+ 添加字段</el-button>
-          </div>
-          <div v-for="(field, index) in form.fields" :key="field.id" class="field-row">
-            <el-input v-model="field.name" placeholder="字段名称" style="width: 120px" />
-            <el-select v-model="field.fieldType" style="width: 90px">
-              <el-option v-for="[key, label] in fieldTypeOptions" :key="key" :label="label" :value="key" />
-            </el-select>
-            <el-checkbox v-model="field.required">必填</el-checkbox>
-            <el-select
-              v-model="field.nodeIds"
-              multiple
-              collapse-tags
-              placeholder="下发节点（空=全部）"
-              style="flex: 1; min-width: 140px"
-            >
-              <el-option v-for="opt in nodeOptionsForField()" :key="opt.value" :label="opt.label" :value="opt.value" />
-            </el-select>
-            <el-button type="danger" link @click="removeField(index)">删除</el-button>
-          </div>
-          <p v-if="!form.fields.length" class="text-muted empty-hint">暂无字段，点击「添加字段」配置任务采集项</p>
-          <div v-if="form.fields.length" class="field-preview-wrap">
-            <el-select
-              v-model="previewNodeId"
-              clearable
-              placeholder="预览节点（空=全部）"
-              style="width: 100%; margin-bottom: 8px"
-            >
-              <el-option label="全部节点" value="" />
-              <el-option v-for="opt in nodeOptionsForField()" :key="opt.value" :label="opt.label" :value="opt.value" />
-            </el-select>
-            <WorkflowFieldPreview
-              :fields="form.fields"
-              :preview-node-id="previewNodeId || undefined"
-              :node-label="previewNodeLabel"
-            />
-          </div>
-        </section>
-      </div>
+    <div class="coze-studio">
+      <WorkflowNodePalette v-if="studioMode === 'config'" :readonly="nodesLocked" />
+      <WorkflowDesignCanvas
+        :nodes="form.nodes"
+        :workflow-fields="form.fields"
+        :selected-node-id="selectedNodeId"
+        :mode="studioMode"
+        :preview-role="previewRole"
+        :readonly="nodesLocked"
+        :trial-status="trialStatus"
+        @update:nodes="onNodesUpdate"
+        @select-node="selectNode"
+        @remove-node="onRemoveNode"
+        @add-from-palette="addFromPalette"
+      />
+      <aside v-if="studioMode !== 'preview'" class="studio-side fields-side">
+        <WorkflowNodeConfigPanel
+          :node="selectedNode"
+          :all-nodes="form.nodes"
+          :workflow-fields="form.fields"
+          :readonly="nodesLocked"
+          fields-only
+        />
+      </aside>
+      <aside v-if="studioMode === 'preview'" class="studio-side">
+        <div class="preview-side">
+          <h3>角色视角预览</h3>
+          <p class="hint">不可见节点已淡化，卡片上仅展示当前角色可操作按钮。</p>
+        </div>
+      </aside>
     </div>
+
+    <el-dialog v-model="settingsVisible" title="流程设置" width="560px">
+      <el-form label-width="96px">
+        <el-form-item label="流程名称" required>
+          <el-input v-model="form.name" placeholder="如：盘点任务流程" />
+        </el-form-item>
+        <el-form-item label="适用企业" required>
+          <el-radio-group v-model="form.enterpriseScope">
+            <el-radio value="all">全部企业</el-radio>
+            <el-radio value="specific">特定企业</el-radio>
+          </el-radio-group>
+          <el-select
+            v-if="form.enterpriseScope === 'specific'"
+            v-model="form.enterpriseIds"
+            multiple
+            collapse-tags
+            placeholder="选择企业"
+            style="width: 100%; margin-top: 8px"
+          >
+            <el-option v-for="opt in enterpriseOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="流程描述">
+          <el-input v-model="form.description" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item v-if="!isEdit && setupStep === 'canvas'" label="套用模板">
+          <el-button
+            v-for="(tpl, i) in workflowTemplates"
+            :key="tpl.name"
+            size="small"
+            :disabled="nodesLocked"
+            @click="applyTemplate(i)"
+          >
+            {{ tpl.name.replace('（模板）', '') }}
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </el-dialog>
+
+    <WorkflowTrialRunDialog
+      v-model:visible="trialRunVisible"
+      :nodes="form.nodes"
+      @step="onTrialStep"
+      @done="onTrialDone"
+    />
   </div>
 </template>
 
 <style scoped>
-.workflow-form-page {
-  padding: 0 4px 24px;
+.basic-setup {
+  max-width: 720px;
 }
 
-.form-header {
+.basic-form {
+  margin-top: 8px;
+}
+
+.basic-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #ebeef5;
+}
+
+.template-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.back-basic-btn {
+  margin-right: 4px;
+  padding: 0;
+}
+
+.workflow-studio {
+  padding: 0 4px 24px;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 120px);
+}
+
+.studio-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: 20px;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+  padding: 8px 4px 0;
+}
+
+.header-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.flow-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: #3b82f6;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
 }
 
 .header-actions {
   display: flex;
-  gap: 8px;
-}
-
-.form-layout {
-  display: grid;
-  grid-template-columns: 1fr 380px;
-  gap: 16px;
-  align-items: start;
-}
-
-.section-card {
-  background: #fff;
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  padding: 16px 20px;
-  margin-bottom: 16px;
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.section-title {
-  margin: 0 0 12px;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.section-header .section-title {
-  margin-bottom: 0;
-}
-
-.enterprise-scope {
-  width: 100%;
-}
-
-.bound-task-types {
-  display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  min-height: 32px;
 }
 
-.bound-hint {
-  font-size: 12px;
-  color: #909399;
+.mode-switch {
+  margin-right: 4px;
 }
 
-.action-bar {
+.preview-role-bar {
   display: flex;
+  align-items: center;
   gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.lock-alert {
   margin-bottom: 12px;
 }
 
-.action-bar-bottom {
-  margin-top: 4px;
-  margin-bottom: 0;
+.basic-collapse {
+  margin-bottom: 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.rules-list {
-  margin: 0;
-  padding-left: 18px;
-  color: #606266;
-  font-size: 13px;
-  line-height: 1.8;
+.field-list {
+  width: 100%;
 }
 
 .field-row {
@@ -637,23 +675,50 @@ function cancel() {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
-.field-preview-wrap {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px dashed #e4e7ed;
+.coze-studio {
+  flex: 1;
+  display: flex;
+  min-height: 560px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
 }
 
-.empty-hint {
+.studio-side {
+  width: 300px;
+  flex-shrink: 0;
+  border-left: 1px solid #e5e7eb;
+  overflow: hidden;
+  background: #fff;
+}
+
+.studio-side.fields-side {
+  width: 400px;
+}
+
+.studio-side .config-panel {
+  height: 100%;
+}
+
+.preview-side {
+  padding: 16px;
   font-size: 13px;
-  margin: 0;
+  color: #606266;
+  line-height: 1.6;
 }
 
-@media (max-width: 1200px) {
-  .form-layout {
-    grid-template-columns: 1fr;
-  }
+.preview-side h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: #303133;
+}
+
+.preview-side .hint {
+  color: #909399;
+  font-size: 12px;
 }
 </style>

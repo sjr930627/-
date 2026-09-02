@@ -54,6 +54,7 @@ import type {
   GrabInterviewRegistration,
   GrabInterviewDeptRule,
   GrabInterviewPositionTemplate,
+  EnterprisePosition,
   CancelShiftRequest,
   SwapRequest,
   SystemRole,
@@ -89,6 +90,7 @@ import type {
   WorkerUnavailablePeriod,
   WorkerPartTimePreference,
   WorkerSkillCertificate,
+  WorkerJoinApplication,
   ProviderFundAccount,
   FundTransaction,
   ReminderRule,
@@ -102,6 +104,7 @@ import {
   enterpriseUnassignedDepartmentId,
   parseDepartmentJoinQrPayload,
   UNASSIGNED_POSITION,
+  DEFAULT_WORKFORCE_ENTERPRISE_ID,
 } from '@/constants/department'
 import {
   defaultAttendanceRule,
@@ -142,7 +145,6 @@ import { seedEnterpriseRoleTemplates, buildEnterpriseRolesForAll, buildEnterpris
 import { seedSystemAccounts } from '@/mock/accountSeed'
 import { seedSystemOperationLogs } from '@/mock/operationLogSeed'
 import { seedServiceContracts, seedServiceProviders } from '@/mock/partnershipSeed'
-import { DEFAULT_WORKFORCE_ENTERPRISE_ID } from '@/constants/department'
 import { seedEnterpriseWorkforceSnapshots } from '@/mock/workforceSeed'
 import { mergeWorkforceSeed } from '@/mock/enterpriseWorkforceSeed'
 import { seedFundTransactions, seedProviderFundAccounts } from '@/mock/fundManagementSeed'
@@ -168,11 +170,18 @@ import {
   seedGrabInterviewConfigs,
   seedGrabInterviewRegistrations,
 } from '@/mock/grabInterviewSeed'
+import { seedEnterprisePositions, findSeedPositionId } from '@/mock/positionSeed'
 import {
   normalizeDeptInterviewRule,
   normalizeGrabInterviewDeptRule,
 } from '@/constants/grabInterview'
-import { isAssignmentConfirmedLocked, normalizeConfirmStatus } from '@/constants/schedule'
+import {
+  isAssignmentConfirmedLocked,
+  normalizeConfirmStatus,
+  isScheduleHistoryDate,
+  isScheduleShiftHistorical,
+  resolveAssignmentStartTime,
+} from '@/constants/schedule'
 import { seedScheduleTemplates } from '@/mock/scheduleTemplateSeed'
 import {
   seedTeamCycleScheduleRules,
@@ -201,6 +210,7 @@ import {
   seedWorkerPaymentBindings,
   seedWorkerProfileExts,
 } from '@/mock/miniappSeed'
+import { seedWorkerJoinApplications } from '@/mock/joinApplicationSeed'
 import { seedReminderRules } from '@/mock/reminderRuleSeed'
 import {
   calcProfileCompleteness,
@@ -226,17 +236,20 @@ import {
 } from '@/services/settlementPrice'
 import {
   advanceThroughSystemNodes,
+  buildNodeFieldEntries,
+  countWorkflowBoundTasks,
   extractEnterpriseActionNote,
   generateTaskName,
-  getWorkerExecutingNode,
+  getWorkflowClaimNode,
   getWorkflowFieldsForNode,
   isWorkflowCompletedEndNode,
   resolveTransitionTarget,
   validateWorkflowNodeFields,
 } from '@/services/task'
 import {
-  getCancelledEndNode,
+  resolveCancelEndNode,
   getNodeById,
+  isActionAllowedForRole,
   nodeHasAction,
   resolveActionTargetNodeId,
 } from '@/utils/workflow'
@@ -303,6 +316,58 @@ function normalizeWorkforceEnterpriseId<T extends { enterpriseId?: string }>(ite
   }))
 }
 
+function loadEnterprisePositions(
+  configs: GrabInterviewConfig[],
+  employees: Employee[],
+): EnterprisePosition[] {
+  let list = loadFromStorage<EnterprisePosition[]>('enterprisePositions', seedEnterprisePositions)
+
+  // 合并 seed 中缺失的岗位（按 id）
+  for (const seed of seedEnterprisePositions) {
+    if (!list.some((p) => p.id === seed.id)) {
+      list = [...list, seed]
+    }
+  }
+
+  // 从面试配置模版库迁移到顶层岗位库
+  for (const cfg of configs) {
+    const hasAny = list.some((p) => p.enterpriseId === cfg.enterpriseId)
+    for (const tpl of cfg.positionTemplates ?? []) {
+      if (list.some((p) => p.id === tpl.id)) continue
+      // 企业已有岗位时，仅按 id 补齐；企业完全为空时整库灌入
+      if (!hasAny || true) {
+        list = [
+          ...list,
+          {
+            ...tpl,
+            enterpriseId: cfg.enterpriseId,
+            updatedAt: tpl.updatedAt || new Date().toISOString(),
+          },
+        ]
+      }
+    }
+  }
+
+  // 员工岗位名称对齐 positionId
+  for (const emp of employees) {
+    if (emp.positionId) continue
+    const eid = emp.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID
+    const found =
+      list.find(
+        (p) =>
+          p.enterpriseId === eid &&
+          (p.profile.positionName === emp.position || p.name === emp.position),
+      ) ?? null
+    if (found) emp.positionId = found.id
+    else {
+      const seedId = findSeedPositionId(emp.position, eid)
+      if (seedId) emp.positionId = seedId
+    }
+  }
+
+  return list
+}
+
 function loadWorkforceSeed() {
   const merged = mergeWorkforceSeed(
     loadFromStorage<Department[]>('departments', seedDepartments),
@@ -310,11 +375,24 @@ function loadWorkforceSeed() {
     loadFromStorage<Team[]>('teams', seedTeams),
     loadFromStorage<AttendanceGroup[]>('attendanceGroups', seedAttendanceGroups),
   )
+  const departments = normalizeWorkforceEnterpriseId(merged.departments)
+  const employees = normalizeWorkforceEnterpriseId(merged.employees)
+  const grabInterviewConfigs = loadFromStorage<GrabInterviewConfig[]>(
+    'grabInterviewConfigs',
+    seedGrabInterviewConfigs,
+  )
+  const enterprisePositions = loadEnterprisePositions(grabInterviewConfigs, employees)
+  // 同步面试配置中的 positionTemplates 指向企业岗位库（同企业）
+  for (const cfg of grabInterviewConfigs) {
+    cfg.positionTemplates = enterprisePositions.filter((p) => p.enterpriseId === cfg.enterpriseId)
+  }
   return {
-    departments: normalizeWorkforceEnterpriseId(merged.departments),
-    employees: normalizeWorkforceEnterpriseId(merged.employees),
+    departments,
+    employees,
     teams: merged.teams,
     attendanceGroups: merged.attendanceGroups,
+    grabInterviewConfigs,
+    enterprisePositions,
   }
 }
 
@@ -340,10 +418,8 @@ export const useAppStore = defineStore('app', {
       'grabShiftWhitelist',
       seedGrabShiftWhitelist,
     ),
-    grabInterviewConfigs: loadFromStorage<GrabInterviewConfig[]>(
-      'grabInterviewConfigs',
-      seedGrabInterviewConfigs,
-    ),
+    grabInterviewConfigs: workforceSeed.grabInterviewConfigs,
+    enterprisePositions: workforceSeed.enterprisePositions,
     grabInterviewRegistrations: loadFromStorage<GrabInterviewRegistration[]>(
       'grabInterviewRegistrations',
       seedGrabInterviewRegistrations,
@@ -500,6 +576,10 @@ export const useAppStore = defineStore('app', {
     workerProfileExts: loadFromStorage<WorkerProfileExt[]>(
       'workerProfileExts',
       seedWorkerProfileExts,
+    ),
+    workerJoinApplications: loadFromStorage<WorkerJoinApplication[]>(
+      'workerJoinApplications',
+      seedWorkerJoinApplications,
     ),
     platformPaymentAccount,
     providerFundAccounts: loadFromStorage<ProviderFundAccount[]>(
@@ -927,6 +1007,7 @@ export const useAppStore = defineStore('app', {
         preferredShiftIds: emp.preferredShiftIds ?? [],
         unavailableDates: emp.unavailableDates ?? [],
         realNameVerified: emp.realNameVerified ?? false,
+        dataSource: emp.dataSource ?? 'manual',
       }
       this.employees.push(item)
       this.persist('employees')
@@ -953,7 +1034,7 @@ export const useAppStore = defineStore('app', {
       ids: string[],
       departmentId: string,
       position: string,
-      options?: { employeeNo?: string },
+      options?: { employeeNo?: string; positionId?: string },
     ) {
       if (isUnassignedDepartment(departmentId)) {
         throw new Error('请选择具体部门进行分配')
@@ -964,6 +1045,7 @@ export const useAppStore = defineStore('app', {
         const patch: Partial<Employee> = {
           departmentId,
           position: position.trim(),
+          positionId: options?.positionId,
           applyDepartmentId: undefined,
           onboardingStage: undefined,
           ...(existing?.status !== 'resigned' ? { status: 'active' as const } : {}),
@@ -972,26 +1054,27 @@ export const useAppStore = defineStore('app', {
           patch.employeeNo = options.employeeNo.trim()
         }
         this.updateEmployee(id, patch)
+        this.syncJoinApplicationOnAssign(id, departmentId, position.trim())
       })
     },
 
-    /** 待申请人员：直接分配岗位与人员 ID */
     assignPendingOnboardEmployee(
       employeeId: string,
-      data: { departmentId: string; position: string; employeeNo: string },
+      data: { departmentId: string; position: string; employeeNo: string; positionId?: string },
     ) {
       const emp = this.employees.find((e) => e.id === employeeId)
       if (!emp) throw new Error('人员不存在')
       if (!data.employeeNo.trim()) throw new Error('请填写人员 ID')
       this.batchAssignEmployees([employeeId], data.departmentId, data.position, {
         employeeNo: data.employeeNo,
+        positionId: data.positionId,
       })
     },
 
     /** 已申请入驻：审批通过并分配部门、岗位、人员 ID */
     approveOnboardApplication(
       employeeId: string,
-      data: { departmentId: string; position: string; employeeNo: string },
+      data: { departmentId: string; position: string; employeeNo: string; positionId?: string },
     ) {
       const emp = this.employees.find((e) => e.id === employeeId)
       if (!emp) throw new Error('人员不存在')
@@ -1001,7 +1084,90 @@ export const useAppStore = defineStore('app', {
       if (!data.employeeNo.trim()) throw new Error('请填写人员 ID')
       this.batchAssignEmployees([employeeId], data.departmentId, data.position, {
         employeeNo: data.employeeNo,
+        positionId: data.positionId,
       })
+    },
+
+    upsertPendingJoinApplication(params: {
+      employeeId: string
+      enterpriseId: string
+      departmentId: string
+    }) {
+      const approved = this.workerJoinApplications.find(
+        (a) =>
+          a.employeeId === params.employeeId &&
+          a.departmentId === params.departmentId &&
+          a.status === 'approved',
+      )
+      if (approved) throw new Error('您已入驻该部门')
+
+      const pending = this.workerJoinApplications.find(
+        (a) =>
+          a.employeeId === params.employeeId &&
+          a.departmentId === params.departmentId &&
+          a.status === 'pending',
+      )
+      const now = new Date().toISOString()
+      if (pending) {
+        pending.appliedAt = now
+        this.persist('workerJoinApplications')
+        return pending
+      }
+      const item: WorkerJoinApplication = {
+        id: generateId('dja'),
+        employeeId: params.employeeId,
+        enterpriseId: params.enterpriseId,
+        departmentId: params.departmentId,
+        status: 'pending',
+        appliedAt: now,
+        source: 'qr',
+      }
+      this.workerJoinApplications.unshift(item)
+      this.persist('workerJoinApplications')
+      return item
+    },
+
+    syncJoinApplicationOnAssign(employeeId: string, departmentId: string, position: string) {
+      const enterpriseId =
+        resolveEnterpriseIdByDepartment(departmentId, this.departments) ||
+        this.employees.find((e) => e.id === employeeId)?.enterpriseId
+      if (!enterpriseId) return
+      const now = new Date().toISOString()
+      const pending =
+        this.workerJoinApplications.find(
+          (a) =>
+            a.employeeId === employeeId &&
+            a.status === 'pending' &&
+            (a.departmentId === departmentId || a.enterpriseId === enterpriseId),
+        ) ?? null
+      if (pending) {
+        pending.status = 'approved'
+        pending.reviewedAt = now
+        pending.assignedDepartmentId = departmentId
+        pending.assignedPosition = position
+        this.persist('workerJoinApplications')
+        return
+      }
+      const already = this.workerJoinApplications.some(
+        (a) =>
+          a.employeeId === employeeId &&
+          a.status === 'approved' &&
+          (a.assignedDepartmentId === departmentId || a.departmentId === departmentId),
+      )
+      if (already) return
+      this.workerJoinApplications.unshift({
+        id: generateId('dja'),
+        employeeId,
+        enterpriseId,
+        departmentId,
+        status: 'approved',
+        appliedAt: now,
+        reviewedAt: now,
+        assignedDepartmentId: departmentId,
+        assignedPosition: position,
+        source: 'assign',
+      })
+      this.persist('workerJoinApplications')
     },
 
     /** 灵工扫码申请入驻企业-部门 */
@@ -1027,15 +1193,23 @@ export const useAppStore = defineStore('app', {
       if (applicant.employeeId) {
         const existing = this.employees.find((e) => e.id === applicant.employeeId)
         if (existing) {
-          this.updateEmployee(existing.id, {
-            status: 'pending',
-            onboardingStage: 'applied',
-            applyDepartmentId: dept.id,
-            departmentId: unassignedId,
+          this.upsertPendingJoinApplication({
+            employeeId: existing.id,
             enterpriseId,
-            position: UNASSIGNED_POSITION,
-            hireDate: existing.hireDate || new Date().toISOString().slice(0, 10),
+            departmentId: dept.id,
           })
+          if (existing.status !== 'active') {
+            this.updateEmployee(existing.id, {
+              status: 'pending',
+              onboardingStage: 'applied',
+              applyDepartmentId: dept.id,
+              departmentId: unassignedId,
+              enterpriseId,
+              position: UNASSIGNED_POSITION,
+              hireDate: existing.hireDate || new Date().toISOString().slice(0, 10),
+              dataSource: existing.dataSource ?? 'qr',
+            })
+          }
           return existing
         }
       }
@@ -1047,15 +1221,21 @@ export const useAppStore = defineStore('app', {
           e.enterpriseId === enterpriseId,
       )
       if (dup) {
+        this.upsertPendingJoinApplication({
+          employeeId: dup.id,
+          enterpriseId,
+          departmentId: dept.id,
+        })
         this.updateEmployee(dup.id, {
           onboardingStage: 'applied',
           applyDepartmentId: dept.id,
           departmentId: unassignedId,
+          dataSource: dup.dataSource ?? 'qr',
         })
         return dup
       }
 
-      return this.addEmployee({
+      const created = this.addEmployee({
         name: applicant.name.trim() || '新申请人员',
         employeeNo: `T${Date.now().toString().slice(-6)}`,
         departmentId: unassignedId,
@@ -1068,9 +1248,16 @@ export const useAppStore = defineStore('app', {
         status: 'pending',
         onboardingStage: 'applied',
         applyDepartmentId: dept.id,
+        dataSource: 'qr',
         phone: applicant.phone,
         realNameVerified: false,
       })
+      this.upsertPendingJoinApplication({
+        employeeId: created.id,
+        enterpriseId,
+        departmentId: dept.id,
+      })
+      return created
     },
 
     // Shift
@@ -1258,6 +1445,13 @@ export const useAppStore = defineStore('app', {
           const draft = cell.find((a) => !a.published)
           const published = cell.find((a) => a.published)
 
+          const startTime = resolveAssignmentStartTime(draft ?? published, this.shifts)
+          if (isScheduleHistoryDate(date) || isScheduleShiftHistorical(date, startTime)) {
+            if (published) nextAssignments.push({ ...published })
+            if (draft) nextAssignments.push({ ...draft })
+            return
+          }
+
           // 已确认班次原样保留，不可被草稿覆盖
           if (isAssignmentConfirmedLocked(published)) {
             nextAssignments.push({ ...published! })
@@ -1406,6 +1600,8 @@ export const useAppStore = defineStore('app', {
             (a.teamId ?? record.teamId) === record.teamId,
         )
         if (isAssignmentConfirmedLocked(published)) return
+        if (isScheduleHistoryDate(item.date)) return
+        if (isScheduleShiftHistorical(item.date, resolveAssignmentStartTime(item, this.shifts))) return
         this.removeAssignment(item.employeeId, item.date, false)
         this.upsertAssignment({
           employeeId: item.employeeId,
@@ -1500,6 +1696,7 @@ export const useAppStore = defineStore('app', {
               a.published,
           )
           if (isAssignmentConfirmedLocked(published)) return
+          if (isScheduleHistoryDate(targetDate)) return
           const src = this.getAssignment(employeeId, srcDate)
           if (!src || src.teamId !== teamId) return
           this.upsertAssignment({
@@ -1528,6 +1725,8 @@ export const useAppStore = defineStore('app', {
               a.published &&
               a.teamId === teamId,
           )
+          if (isScheduleHistoryDate(date)) return
+          if (published && isScheduleShiftHistorical(date, resolveAssignmentStartTime(published, this.shifts))) return
           // 已确认班次不可进入草稿编辑，须走取消班次
           if (isAssignmentConfirmedLocked(published)) return
           const draft = this.assignments.find(
@@ -1667,7 +1866,7 @@ export const useAppStore = defineStore('app', {
       })
       this.manualOverrides[key] = {
         ...prev,
-        workHours: prev.workHours,
+        workHours,
         hoursConfirmed: true,
         hoursConfirmedAt: now,
         hoursConfirmedBy: operator,
@@ -1709,9 +1908,12 @@ export const useAppStore = defineStore('app', {
       if (workHours < 0) {
         throw new Error('工时不能为负数')
       }
-      const autoConfirm = options?.autoConfirm !== false
       const key = `${employeeId}_${date}`
       const prev = this.manualOverrides[key] ?? {}
+      if (prev.hoursConfirmed) {
+        throw new Error('工时已确认，不可再矫正')
+      }
+      const autoConfirm = options?.autoConfirm !== false
       const now = new Date().toISOString()
       const history = [...(prev.hoursHistory ?? [])]
       history.unshift({
@@ -2203,6 +2405,7 @@ export const useAppStore = defineStore('app', {
         Pick<
           GrabShiftSlot,
           | 'positionRequirement'
+          | 'positionProfile'
           | 'requirements'
           | 'breakMinutes'
           | 'workHours'
@@ -2527,6 +2730,100 @@ export const useAppStore = defineStore('app', {
       this.persist('grabShiftWhitelist')
     },
 
+    getEnterprisePositions(enterpriseId: string) {
+      return this.enterprisePositions
+        .filter((p) => p.enterpriseId === enterpriseId)
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    },
+
+    getEnterprisePosition(id: string) {
+      return this.enterprisePositions.find((p) => p.id === id) ?? null
+    },
+
+    upsertEnterprisePosition(
+      enterpriseId: string,
+      template: Omit<EnterprisePosition, 'enterpriseId' | 'updatedAt'> & {
+        enterpriseId?: string
+        updatedAt?: string
+      },
+    ) {
+      const name = (template.name || template.profile?.positionName || '').trim()
+      if (!name) throw new Error('请填写岗位名称')
+      const profile = {
+        ...template.profile,
+        positionName: (template.profile?.positionName || name).trim(),
+      }
+      const next: EnterprisePosition = {
+        ...template,
+        id: template.id || generateId('epos'),
+        enterpriseId,
+        name,
+        profile,
+        updatedAt: new Date().toISOString(),
+      }
+      const idx = this.enterprisePositions.findIndex((p) => p.id === next.id)
+      if (idx >= 0) this.enterprisePositions[idx] = next
+      else this.enterprisePositions.push(next)
+
+      // 同步面试配置内的模版库镜像
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      const list = cfg.positionTemplates ?? (cfg.positionTemplates = [])
+      const tIdx = list.findIndex((t) => t.id === next.id)
+      if (tIdx >= 0) list[tIdx] = next
+      else list.push(next)
+      cfg.updatedAt = new Date().toISOString()
+
+      this.persist('enterprisePositions')
+      this.persist('grabInterviewConfigs')
+      return next
+    },
+
+    removeEnterprisePosition(enterpriseId: string, positionId: string) {
+      const usedByEmployee = this.employees.some(
+        (e) => e.positionId === positionId && (e.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId,
+      )
+      if (usedByEmployee) throw new Error('该岗位仍有人员关联，无法删除')
+
+      const cfg = this.getGrabInterviewConfig(enterpriseId)
+      const usedByInterview = (cfg?.deptRules ?? []).some((r) =>
+        (r.positions ?? []).some((p) => p.templateId === positionId),
+      )
+      if (usedByInterview) throw new Error('该岗位仍被抢班面试配置引用，无法删除')
+
+      const usedByGrab = this.grabShiftSlots.some(
+        (s) =>
+          s.positionId === positionId &&
+          (s.publishStatus === 'pending' ||
+            s.publishStatus === 'published' ||
+            s.publishStatus === undefined) &&
+          s.status !== 'cancelled',
+      )
+      if (usedByGrab) throw new Error('该岗位仍被抢班班次引用，无法删除')
+
+      this.enterprisePositions = this.enterprisePositions.filter((p) => p.id !== positionId)
+      if (cfg) {
+        cfg.positionTemplates = (cfg.positionTemplates ?? []).filter((t) => t.id !== positionId)
+        cfg.updatedAt = new Date().toISOString()
+        this.persist('grabInterviewConfigs')
+      }
+      this.persist('enterprisePositions')
+    },
+
+    upsertGrabInterviewPositionTemplate(
+      enterpriseId: string,
+      template: Omit<GrabInterviewPositionTemplate, 'enterpriseId' | 'updatedAt'> & {
+        enterpriseId?: string
+        updatedAt?: string
+      },
+    ) {
+      return this.upsertEnterprisePosition(enterpriseId, template)
+    },
+
+    removeGrabInterviewPositionTemplate(enterpriseId: string, templateId: string) {
+      this.removeEnterprisePosition(enterpriseId, templateId)
+    },
+
     getGrabInterviewConfig(enterpriseId: string) {
       return this.grabInterviewConfigs.find((c) => c.enterpriseId === enterpriseId) ?? null
     },
@@ -2548,6 +2845,15 @@ export const useAppStore = defineStore('app', {
       }
       if (!cfg.positionTemplates) {
         cfg.positionTemplates = []
+        dirty = true
+      }
+      // 岗位模版库以 enterprisePositions 为准
+      const catalog = this.enterprisePositions.filter((p) => p.enterpriseId === enterpriseId)
+      if (
+        catalog.length !== (cfg.positionTemplates?.length ?? 0) ||
+        catalog.some((p, i) => cfg.positionTemplates?.[i]?.id !== p.id)
+      ) {
+        cfg.positionTemplates = catalog
         dirty = true
       }
       const needNorm = cfg.deptRules.some(
@@ -2597,36 +2903,6 @@ export const useAppStore = defineStore('app', {
     removeGrabInterviewDeptRule(enterpriseId: string, departmentId: string) {
       const cfg = this.ensureGrabInterviewConfig(enterpriseId)
       cfg.deptRules = cfg.deptRules.filter((r) => r.departmentId !== departmentId)
-      cfg.updatedAt = new Date().toISOString()
-      this.persist('grabInterviewConfigs')
-    },
-
-    upsertGrabInterviewPositionTemplate(
-      enterpriseId: string,
-      template: Omit<GrabInterviewPositionTemplate, 'enterpriseId' | 'updatedAt'> & {
-        enterpriseId?: string
-        updatedAt?: string
-      },
-    ) {
-      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
-      const next: GrabInterviewPositionTemplate = {
-        ...template,
-        id: template.id || generateId('gitpl'),
-        enterpriseId,
-        updatedAt: new Date().toISOString(),
-      }
-      const list = cfg.positionTemplates ?? (cfg.positionTemplates = [])
-      const idx = list.findIndex((t) => t.id === next.id)
-      if (idx >= 0) list[idx] = next
-      else list.push(next)
-      cfg.updatedAt = new Date().toISOString()
-      this.persist('grabInterviewConfigs')
-      return next
-    },
-
-    removeGrabInterviewPositionTemplate(enterpriseId: string, templateId: string) {
-      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
-      cfg.positionTemplates = (cfg.positionTemplates ?? []).filter((t) => t.id !== templateId)
       cfg.updatedAt = new Date().toISOString()
       this.persist('grabInterviewConfigs')
     },
@@ -2687,6 +2963,7 @@ export const useAppStore = defineStore('app', {
           status: 'active',
           onboardingStage: undefined,
           personnelCategory: 'grab',
+          dataSource: emp.dataSource ?? 'recruit',
         })
       } else {
         emp = this.addEmployee({
@@ -2702,6 +2979,7 @@ export const useAppStore = defineStore('app', {
           unavailableDates: [],
           status: 'active',
           personnelCategory: 'grab',
+          dataSource: 'recruit',
         })
       }
       reg.status = 'passed'
@@ -2847,8 +3125,8 @@ export const useAppStore = defineStore('app', {
     updateTaskWorkflow(id: string, data: Partial<Omit<TaskWorkflow, 'id' | 'boundTaskTypeCount'>>) {
       const wf = this.taskWorkflows.find((w) => w.id === id)
       if (!wf) throw new Error('工作流不存在')
-      if (wf.boundTaskTypeCount > 0 && data.nodes) {
-        throw new Error('工作流已绑定任务类型，不可修改节点，请停用后创建新版本')
+      if (countWorkflowBoundTasks(this.tasks, id) > 0 && data.nodes) {
+        throw new Error('工作流已绑定任务，不可修改节点，请停用后创建新版本')
       }
       Object.assign(wf, data, { updatedAt: new Date().toISOString() })
       this.persist('taskWorkflows')
@@ -2872,7 +3150,9 @@ export const useAppStore = defineStore('app', {
       const wf = this.taskWorkflows.find((w) => w.id === id)
       if (!wf) throw new Error('工作流不存在')
       if (wf.status === 'enabled') throw new Error('请先停用工作流再删除')
-      if (wf.boundTaskTypeCount > 0) throw new Error('工作流已被任务类型引用，无法删除')
+      if (countWorkflowBoundTasks(this.tasks, id) > 0) {
+        throw new Error('工作流已被任务引用，无法删除')
+      }
       this.taskWorkflows = this.taskWorkflows.filter((w) => w.id !== id)
       this.persist('taskWorkflows')
     },
@@ -2897,7 +3177,6 @@ export const useAppStore = defineStore('app', {
       if (approved) {
         const wf = this.taskWorkflows.find((w) => w.id === tt.workflowId)
         if (wf) {
-          wf.boundTaskTypeCount += 1
           this.persist('taskWorkflows')
         }
       }
@@ -3846,6 +4125,22 @@ export const useAppStore = defineStore('app', {
       return task
     },
 
+    /** 进行中的任务：仅可修改数量与期限 */
+    updateActiveEnterpriseTask(
+      id: string,
+      edits: Pick<
+        Task,
+        'plannedTotal' | 'unlimitedQuantity' | 'longTerm' | 'startTime' | 'endTime'
+      >,
+    ) {
+      const task = this.tasks.find((t) => t.id === id)
+      if (!task) throw new Error('任务不存在')
+      if (task.status !== 'active') throw new Error('仅进行中的任务可修改')
+      Object.assign(task, edits)
+      this.persist('tasks')
+      return task
+    },
+
     cancelEnterpriseTask(id: string) {
       const task = this.tasks.find((t) => t.id === id)
       if (!task) throw new Error('任务不存在')
@@ -3882,6 +4177,12 @@ export const useAppStore = defineStore('app', {
       }
       if (!nodeHasAction(currentNode, action)) {
         throw new Error('当前节点不支持该操作')
+      }
+      const actionConfig = currentNode.actions.find(
+        (a) => a.action === action || (action === 'confirm' && a.action === 'approve'),
+      )
+      if (actionConfig && !isActionAllowedForRole(actionConfig, currentNode, 'enterprise')) {
+        throw new Error('当前角色无权执行此操作')
       }
 
       const nodeId = instance.currentNodeId
@@ -3936,6 +4237,7 @@ export const useAppStore = defineStore('app', {
         logDesc = note || '审核通过，任务已完成'
         if (isWorkflowCompletedEndNode(target)) {
           task.completedCount += instance.claimQuantity ?? 1
+          task.approvedCount += instance.claimQuantity ?? 1
         }
         this.addMiniAppMessage(
           instance.workerId,
@@ -3978,6 +4280,8 @@ export const useAppStore = defineStore('app', {
         })
       }
 
+      const nodeFieldEntries = buildNodeFieldEntries(workflow, nodeId, instance.fieldValues)
+
       instance.logs.push({
         id: generateId('tilog'),
         title: logTitle,
@@ -3986,6 +4290,7 @@ export const useAppStore = defineStore('app', {
         time: now,
         description: logDesc,
         kind: 'manual',
+        fieldEntries: nodeFieldEntries.length ? nodeFieldEntries : undefined,
       })
       instance.logs.push({
         id: generateId('tilog'),
@@ -4101,12 +4406,14 @@ export const useAppStore = defineStore('app', {
       const workflow = this.taskWorkflows.find((w) => w.id === task?.workflowId)
       if (!task || !workflow) throw new Error('关联任务或工作流不存在')
 
-      const cancelNode = getCancelledEndNode(workflow.nodes)
-      if (!cancelNode) throw new Error('工作流缺少取消节点')
+      const cancelNode = resolveCancelEndNode(workflow.nodes)
+      if (!cancelNode) throw new Error('工作流缺少结束节点')
 
       const now = new Date().toISOString()
       instance.currentNodeId = cancelNode.id
-      instance.currentNodeName = cancelNode.name
+      instance.currentNodeName = cancelNode.name.includes('取消')
+        ? cancelNode.name
+        : '已取消'
       instance.updatedAt = now
       instance.timeoutAt = undefined
       task.acceptedCount = Math.max(0, task.acceptedCount - instance.claimQuantity)
@@ -6141,10 +6448,8 @@ export const useAppStore = defineStore('app', {
       const pricing = resolveTaskPricing(task, this.taskTypes)
       const workflow = this.taskWorkflows.find((w) => w.id === task.workflowId)
       if (!workflow) throw new Error('工作流不存在')
-      const startNode = workflow.nodes.find((n) => n.nodeType === 'start')
-      const execNode = getWorkerExecutingNode(workflow)
-      const node = startNode ?? execNode
-      if (!node) throw new Error('工作流节点异常')
+      const claimNode = getWorkflowClaimNode(workflow)
+      if (!claimNode) throw new Error('工作流节点异常')
       const settlementUnit =
         task.settlementUnitPrice != null
           ? task.settlementUnitPrice
@@ -6162,8 +6467,8 @@ export const useAppStore = defineStore('app', {
         enterpriseName: task.enterpriseName,
         workerId: employeeId,
         workerName: emp.name,
-        currentNodeId: node.id,
-        currentNodeName: node.name,
+        currentNodeId: claimNode.id,
+        currentNodeName: claimNode.name,
         claimQuantity: q,
         amount,
         fieldValues: {},
@@ -6202,12 +6507,49 @@ export const useAppStore = defineStore('app', {
       const submitAction = action ?? pickWorkerSubmitAction(workflow, instance.currentNodeId)
       if (!submitAction) throw new Error('当前节点无可执行操作')
 
+      const currentNode = getNodeById(workflow.nodes, instance.currentNodeId)
+      if (!currentNode) throw new Error('当前节点不存在')
+      const actionConfig = currentNode.actions.find((a) => a.action === submitAction)
+      if (!actionConfig) throw new Error('当前节点无可执行操作')
+      if (!isActionAllowedForRole(actionConfig, currentNode, 'worker')) {
+        throw new Error('当前角色无权执行此操作')
+      }
+
+      const prevNodeId = instance.currentNodeId
+      const prevNodeName = instance.currentNodeName
+      const nodeFieldEntries = buildNodeFieldEntries(workflow, prevNodeId, instance.fieldValues)
+
       const target = resolveTransitionTarget(workflow, instance.currentNodeId, submitAction)
       if (!target) throw new Error('流程流转失败')
 
+      const now = new Date().toISOString()
       instance.currentNodeId = target.id
       instance.currentNodeName = target.name
-      instance.updatedAt = new Date().toISOString()
+      instance.updatedAt = now
+
+      if (!instance.logs) instance.logs = []
+      instance.logs.forEach((l) => {
+        if (l.tag === '当前') l.tag = undefined
+      })
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: `灵工提交：${prevNodeName}`,
+        tag: '灵工操作',
+        operator: instance.workerName,
+        time: now,
+        description: `已完成「${prevNodeName}」节点提交，进入「${target.name}」。`,
+        kind: 'system',
+        fieldEntries: nodeFieldEntries.length ? nodeFieldEntries : undefined,
+      })
+      instance.logs.push({
+        id: generateId('tilog'),
+        title: `进入「${target.name}」节点`,
+        tag: '当前',
+        operator: instance.workerName,
+        time: now,
+        description: `流程已流转至「${target.name}」。`,
+        kind: 'system',
+      })
 
       if (target.nodeType === 'end' && target.name.includes('完成')) {
         task.completedCount += instance.claimQuantity ?? 1

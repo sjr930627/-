@@ -158,7 +158,7 @@ function label(s: RecruitmentQualStatus) {
 }
 .ok {
   border: none;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
 }
 .empty {

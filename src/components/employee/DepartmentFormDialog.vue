@@ -360,8 +360,8 @@ defineExpose({ loadDraft })
               </el-upload>
               <el-button v-if="form.imageUrl" link type="danger" @click="form.imageUrl = ''">清除</el-button>
             </div>
-            <div class="field-hint">非必填，用于部门展示</div>
-            <img v-if="form.imageUrl" :src="form.imageUrl" alt="部门图片" class="dept-image-preview" />
+              <div class="field-hint">非必填；统一 16:9 横版展示，推荐尺寸 960×540px / 1280×720px</div>
+              <img v-if="form.imageUrl" :src="form.imageUrl" alt="部门图片" class="dept-image-preview" />
           </el-form-item>
         </el-form>
       </div>
@@ -643,11 +643,14 @@ defineExpose({ loadDraft })
 
 .dept-image-preview {
   margin-top: 10px;
-  max-width: 200px;
-  max-height: 120px;
+  width: 240px;
+  aspect-ratio: 16 / 9;
   border-radius: 8px;
   object-fit: cover;
+  object-position: center;
   border: 1px solid #e2e8f0;
+  display: block;
+  background: #f8fafc;
 }
 
 .auth-card {

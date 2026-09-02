@@ -9,6 +9,7 @@ import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { calcInstanceProgress, isTaskInstanceCancelled } from '@/composables/useMiniWorkerTasks'
 import {
   formatTaskUnitPrice,
+  getPendingPunchEntryForInstance,
   getTaskPricingUnit,
   getWorkflowFieldsForNode,
   isPendingEnterpriseAction,
@@ -95,6 +96,12 @@ const submitLabel = computed(() =>
   submitAction.value ? workflowActionMap[submitAction.value] : '提交',
 )
 
+const punchEntryPending = computed(() =>
+  instance.value && workflow.value
+    ? getPendingPunchEntryForInstance(instance.value, workflow.value, store.punches)
+    : undefined,
+)
+
 const unitLabel = computed(() => taskPricingUnitMap[getTaskPricingUnit(pricing.value)])
 
 const priceLabel = computed(
@@ -112,6 +119,8 @@ const workflowSteps = computed(() =>
       )
     : [],
 )
+
+const taskMetadataFields = computed(() => task.value?.metadataFields ?? [])
 
 function initForm() {
   if (!instance.value) return
@@ -138,6 +147,11 @@ function submitWorkflow() {
   } catch (e) {
     ElMessage.warning(e instanceof Error ? e.message : '提交失败')
   }
+}
+
+function goPunchPage() {
+  if (!instance.value) return
+  router.push({ path: '/miniapp/punch', query: { fromTask: instance.value.id } })
 }
 </script>
 
@@ -207,6 +221,14 @@ function submitWorkflow() {
         </ul>
       </div>
 
+      <div v-if="taskMetadataFields.length" class="section-card">
+        <div class="section-head">任务信息</div>
+        <div v-for="meta in taskMetadataFields" :key="meta.key" class="template-field-row">
+          <div class="template-field-label">{{ meta.label }}</div>
+          <div class="template-field-value">{{ meta.value }}</div>
+        </div>
+      </div>
+
       <div class="section-card">
         <div class="section-head">
           <el-icon :size="16"><Clock /></el-icon>
@@ -260,6 +282,16 @@ function submitWorkflow() {
           <div>
             <div class="cancel-title">任务已取消</div>
             <div class="cancel-desc">该任务已中途结束，不会继续结算奖励</div>
+          </div>
+        </div>
+
+        <div v-else-if="punchEntryPending" class="punch-banner">
+          <div class="punch-icon">📍</div>
+          <div class="punch-main">
+            <div class="punch-title">待打卡</div>
+            <div class="punch-desc">{{ punchEntryPending.incompletePrompt || '请先完成打卡' }}</div>
+            <div class="punch-hint">系统已生成待打卡记录，请前往打卡页完成（非任务内操作）</div>
+            <button type="button" class="punch-go-btn" @click="goPunchPage">去打卡</button>
           </div>
         </div>
 
@@ -409,8 +441,8 @@ function submitWorkflow() {
 }
 
 .tag.blue {
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
 }
 
 .reward-box {
@@ -469,8 +501,8 @@ function submitWorkflow() {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -502,6 +534,28 @@ function submitWorkflow() {
   font-size: 14px;
   color: var(--mini-text-secondary);
   line-height: 1.6;
+}
+
+.template-field-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--mini-border, #f0f0f0);
+}
+
+.template-field-row:last-child {
+  border-bottom: none;
+}
+
+.template-field-label {
+  font-size: 12px;
+  color: var(--mini-text-muted);
+  margin-bottom: 4px;
+}
+
+.template-field-value {
+  font-size: 14px;
+  color: var(--mini-text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .bullets {
@@ -552,8 +606,8 @@ function submitWorkflow() {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-size: 12px;
   font-weight: 700;
   display: flex;
@@ -627,6 +681,59 @@ function submitWorkflow() {
   border-radius: 10px;
 }
 
+.punch-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  background: #fff7ed;
+  border-radius: 10px;
+  border: 1px solid #fed7aa;
+}
+
+.punch-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #ffedd5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.punch-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #9a3412;
+  margin-bottom: 4px;
+}
+
+.punch-desc {
+  font-size: 14px;
+  color: #c2410c;
+  margin-bottom: 4px;
+}
+
+.punch-hint {
+  font-size: 12px;
+  color: #9a3412;
+  opacity: 0.85;
+  margin-bottom: 12px;
+}
+
+.punch-go-btn {
+  border: none;
+  background: var(--mini-primary);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .cancel-banner {
   display: flex;
   gap: 12px;
@@ -670,7 +777,7 @@ function submitWorkflow() {
 .wait-title {
   font-size: 15px;
   font-weight: 600;
-  color: #7c3aed;
+  color: var(--mini-primary);
 }
 
 .wait-desc {

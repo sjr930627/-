@@ -86,8 +86,13 @@ function isActive(key: (typeof rows)[number]['key'], value: PartTimeTriChoice) {
 }
 
 .pref-option.active {
-  background: #f0fdf4;
-  box-shadow: inset 0 0 0 1.5px #86efac;
+  background: var(--mini-primary-light);
+  box-shadow: inset 0 0 0 1.5px var(--mini-primary);
+}
+
+.pref-option.active .pref-label {
+  color: var(--mini-primary-dark);
+  font-weight: 600;
 }
 
 .pref-icon {
@@ -100,10 +105,5 @@ function isActive(key: (typeof rows)[number]['key'], value: PartTimeTriChoice) {
   color: #64748b;
   text-align: center;
   line-height: 1.3;
-}
-
-.pref-option.active .pref-label {
-  color: #15803d;
-  font-weight: 600;
 }
 </style>

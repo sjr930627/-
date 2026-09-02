@@ -7,9 +7,12 @@ export const confirmStatusMap = {
 /** 演示锚定「今天」，用于历史/未来排班分界（对齐种子数据） */
 export const SCHEDULE_DEMO_TODAY = '2026-07-28'
 
+/** 演示当前时刻，用于判断当天班次是否已开始（对齐取消班次） */
+export const SCHEDULE_DEMO_NOW = `${SCHEDULE_DEMO_TODAY}T07:00:00`
+
 export type ScheduleScope = 'history' | 'future'
 
-/** 历史排班：严格早于今天；未来排班：今天及以后 */
+/** 历史日期：严格早于今天；未来日期：今天及以后 */
 export function isScheduleHistoryDate(date: string, today = SCHEDULE_DEMO_TODAY) {
   return date < today
 }
@@ -26,6 +29,45 @@ export function filterDatesByScheduleScope(
   return dates.filter((d) =>
     scope === 'history' ? isScheduleHistoryDate(d, today) : isScheduleFutureDate(d, today),
   )
+}
+
+export function filterMutableScheduleDates(dates: string[], today = SCHEDULE_DEMO_TODAY) {
+  return dates.filter((d) => isScheduleFutureDate(d, today))
+}
+
+/** 排班开始时间：优先划线/自定义备注，否则取班次模板 */
+export function resolveAssignmentStartTime(
+  asn: { shiftId?: string; note?: string } | null | undefined,
+  shifts: { id: string; startTime: string }[],
+): string | undefined {
+  if (!asn) return undefined
+  const parsed = parseScheduleTimeNote(asn.note)
+  if (parsed) return parsed.startTime
+  return shifts.find((s) => s.id === asn.shiftId)?.startTime
+}
+
+/**
+ * 班次已进入历史（不可改/取消/发布）：
+ * 日期早于今天，或当天开始时间已到/已过。无开始时间的空格子：仅按日期判断。
+ */
+export function isScheduleShiftHistorical(
+  date: string,
+  startTime?: string,
+  nowIso = SCHEDULE_DEMO_NOW,
+) {
+  if (isScheduleHistoryDate(date)) return true
+  if (!startTime) return false
+  if (isScheduleFutureDate(date) && date > SCHEDULE_DEMO_TODAY) return false
+  const start = startTime.slice(0, 5)
+  return new Date(`${date}T${start}:00`).getTime() <= new Date(nowIso).getTime()
+}
+
+export function isScheduleSlotMutable(
+  date: string,
+  startTime?: string,
+  nowIso = SCHEDULE_DEMO_NOW,
+) {
+  return !isScheduleShiftHistorical(date, startTime, nowIso)
 }
 
 /** 旧数据「确认中」归并展示为待确认 */

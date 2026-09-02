@@ -83,7 +83,7 @@ const shiftGroups = computed(() => {
         shiftId: shift.id,
         shiftName: shift.name,
         period: `${shift.startTime} - ${shift.endTime}`,
-        color: shift.color || '#5b4fdb',
+        color: shift.color || '#228BFF',
         members: [],
       }
       byShift.set(shift.id, group)
@@ -109,7 +109,7 @@ const shiftGroups = computed(() => {
       workHours: row.workHours,
       scheduledHours: row.scheduledHours,
       workHoursCorrected: row.workHoursCorrected,
-      canCorrect: canCorrectWorkHours(row.status),
+      canCorrect: canCorrectWorkHours(row),
       statusLabel: getStatusLabel(row.status),
       tagType: getStatusTagType(row.status),
       note: override?.note,
@@ -362,7 +362,7 @@ function submitCorrect() {
 .tag.success { background: #ecfdf5; color: #059669; }
 .tag.warning { background: #fffbeb; color: #d97706; }
 .tag.danger { background: #fef2f2; color: #dc2626; }
-.tag.info { background: #eff6ff; color: #2563eb; }
+.tag.info { background: #eff6ff; color: #228BFF; }
 .punch-line,
 .hours-line {
   margin-top: 4px;
@@ -372,12 +372,12 @@ function submitCorrect() {
 .corrected {
   margin-left: 4px;
   font-size: 11px;
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .note {
   margin: 4px 0 0;
   font-size: 11px;
-  color: #4338ca;
+  color: #228BFF;
 }
 .punch-detail {
   margin: 8px 0 0;
@@ -396,7 +396,7 @@ function submitCorrect() {
 }
 .punch-detail em {
   font-style: normal;
-  color: #5b4fdb;
+  color: #228BFF;
   font-weight: 600;
 }
 .loc.out {
@@ -411,10 +411,10 @@ function submitCorrect() {
   margin-top: 8px;
   height: 30px;
   padding: 0 12px;
-  border: 1px solid #5b4fdb;
+  border: 1px solid #228BFF;
   border-radius: 999px;
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   font-size: 12px;
   font-weight: 600;
 }
@@ -476,7 +476,7 @@ function submitCorrect() {
   height: 42px;
   border: none;
   border-radius: 10px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-weight: 600;
 }

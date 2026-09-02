@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
+import { isUnassignedDepartment } from '@/constants/department'
+import { formatDepartmentGap, summarizeDepartmentGaps } from '@/services/departmentGap'
 import {
   buildDepartmentTree,
   getDepartmentDescendantIds,
@@ -11,6 +14,7 @@ import {
 import type { DepartmentTreeNode, Employee, EmployeePersonnelCategory } from '@/types'
 
 const store = useAppStore()
+const router = useRouter()
 const { enterpriseId } = useEnterpriseMiniAuth()
 
 const personnelTab = ref<EmployeePersonnelCategory>('schedule')
@@ -90,6 +94,22 @@ const selectedDeptName = computed(() =>
     : '全部',
 )
 
+const isUnassignedDept = computed(() => isUnassignedDepartment(selectedDeptId.value))
+
+const deptGap = computed(() => {
+  if (!selectedDeptId.value || isUnassignedDept.value) {
+    return { positionGap: 0, shiftGap: 0, total: 0 }
+  }
+  return summarizeDepartmentGaps({
+    departmentId: selectedDeptId.value,
+    departments: departments.value,
+    jobRequirements: store.jobRequirements,
+    grabShiftSlots: store.grabShiftSlots,
+    teams: store.teams,
+    attendanceGroups: store.attendanceGroups,
+  })
+})
+
 const listEmployees = computed(() => {
   let list: Employee[] = employees.value.filter(
     (e) => (e.status === 'active' || e.status === 'pending') && matchesTab(e),
@@ -129,6 +149,12 @@ const searchPlaceholder = computed(() =>
 <template>
   <div class="mini-page">
     <EntMiniNavBar title="人员管理" back-to="/enterprise-miniapp/attendance" />
+
+    <div class="top-actions">
+      <button type="button" class="pos-btn" @click="router.push('/enterprise-miniapp/positions')">
+        岗位管理
+      </button>
+    </div>
 
     <div class="tabs">
       <button
@@ -174,6 +200,13 @@ const searchPlaceholder = computed(() =>
           <strong>{{ selectedDeptName }}</strong>
           <span>{{ listEmployees.length }} 人</span>
         </div>
+        <div v-if="selectedDeptId && !isUnassignedDept" class="dept-gap-card">
+          <div class="dept-gap-row">
+            <span>部门缺口</span>
+            <strong :class="{ warn: deptGap.total > 0 }">{{ formatDepartmentGap(deptGap) }}</strong>
+          </div>
+          <p>含本部门及下属部门岗位缺口与抢班次缺口</p>
+        </div>
         <input v-model="keyword" class="search" type="search" :placeholder="searchPlaceholder" />
         <div v-if="!listEmployees.length" class="empty">{{ emptyText }}</div>
         <article v-for="e in listEmployees" :key="e.id" class="card">
@@ -193,6 +226,21 @@ const searchPlaceholder = computed(() =>
 </template>
 
 <style scoped>
+.top-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px 0;
+}
+.pos-btn {
+  border: 1px solid #228BFF;
+  background: #fff;
+  color: #228BFF;
+  border-radius: 999px;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
 .tabs {
   display: flex;
   gap: 0;
@@ -215,7 +263,7 @@ const searchPlaceholder = computed(() =>
   gap: 6px;
 }
 .tab.active {
-  color: #4338ca;
+  color: #228BFF;
   font-weight: 700;
 }
 .tab.active::after {
@@ -226,7 +274,7 @@ const searchPlaceholder = computed(() =>
   bottom: 0;
   height: 2px;
   border-radius: 2px;
-  background: #5b4fdb;
+  background: #228BFF;
 }
 .tab-count {
   font-size: 11px;
@@ -242,15 +290,15 @@ const searchPlaceholder = computed(() =>
   font-weight: 600;
 }
 .tab.active .tab-count {
-  background: #eef2ff;
-  color: #4338ca;
+  background: #D5E9FF;
+  color: #228BFF;
 }
 .layout {
   display: grid;
   grid-template-columns: 118px 1fr;
   gap: 0;
   min-height: calc(100vh - 140px);
-  background: #f5f6f8;
+  background: #fff;
 }
 .org {
   background: #fff;
@@ -278,8 +326,8 @@ const searchPlaceholder = computed(() =>
   text-align: left;
 }
 .org-item.active {
-  background: #eef2ff;
-  color: #4338ca;
+  background: #D5E9FF;
+  color: #228BFF;
   font-weight: 600;
 }
 .org-item .name {
@@ -310,6 +358,35 @@ const searchPlaceholder = computed(() =>
   font-size: 12px;
   color: #9ca3af;
 }
+.dept-gap-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+}
+.dept-gap-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dept-gap-row span {
+  font-size: 12px;
+  color: #6b7280;
+}
+.dept-gap-row strong {
+  font-size: 13px;
+  color: #111827;
+}
+.dept-gap-row strong.warn {
+  color: #d97706;
+}
+.dept-gap-card p {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #9ca3af;
+}
 .search {
   width: 100%;
   box-sizing: border-box;
@@ -333,8 +410,8 @@ const searchPlaceholder = computed(() =>
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background: #eef2ff;
-  color: #5b4fdb;
+  background: #228BFF;
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;

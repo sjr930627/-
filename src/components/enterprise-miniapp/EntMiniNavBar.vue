@@ -49,7 +49,7 @@ function goBack() {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: var(--mini-bg, #f5f6f8);
+  background: var(--ent-header-bg, #D5E9FF);
 }
 .back {
   width: 34px;

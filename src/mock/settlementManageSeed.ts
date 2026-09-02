@@ -231,7 +231,7 @@ export const seedSettlementManageOrders: SettlementManageOrder[] = [
     enterpriseName: '安联保险经纪有限公司',
     type: 'hourly',
     orderNo: 'SHIFT-20260725-AM',
-    orderName: '中石化朝阳站 白班',
+    orderName: '中国移动朝阳营业厅 白班',
     periodStart: '2026-07-25',
     periodEnd: '2026-07-25',
     workerLines: [
@@ -249,7 +249,7 @@ export const seedSettlementManageOrders: SettlementManageOrder[] = [
     enterpriseName: '华信通信服务有限公司',
     type: 'task',
     orderNo: 'TASK-20260722-01',
-    orderName: '会员拉新任务',
+    orderName: '套餐升档任务',
     periodStart: '2026-07-22',
     periodEnd: '2026-07-22',
     workerLines: [
@@ -264,7 +264,7 @@ export const seedSettlementManageOrders: SettlementManageOrder[] = [
     enterpriseName: '华信通信服务有限公司',
     type: 'task',
     orderNo: 'TASK-20260723-01',
-    orderName: '会员拉新任务',
+    orderName: '套餐升档任务',
     periodStart: '2026-07-23',
     periodEnd: '2026-07-23',
     workerLines: [
@@ -280,7 +280,7 @@ export const seedSettlementManageOrders: SettlementManageOrder[] = [
     enterpriseName: '华信通信服务有限公司',
     type: 'task',
     orderNo: 'TASK-20260724-01',
-    orderName: '便利店理货任务',
+    orderName: '终端陈列理货任务',
     periodStart: '2026-07-24',
     periodEnd: '2026-07-24',
     workerLines: [

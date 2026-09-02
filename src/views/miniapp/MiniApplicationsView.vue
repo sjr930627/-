@@ -202,7 +202,7 @@ function formatTime(iso: string) {
 }
 
 .mini-tag.blue {
-  background: #e6f7ff;
-  color: #1890ff;
+  background: var(--app-primary-light);
+  color: var(--app-primary);
 }
 </style>

@@ -74,7 +74,7 @@ function save() {
 <style scoped>
 .edit-page {
   min-height: 100%;
-  background: #f3f0ff;
+  background: var(--mini-bg, #f3f4f6);
 }
 
 .edit-content {

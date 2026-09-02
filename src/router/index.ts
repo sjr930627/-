@@ -717,6 +717,12 @@ const router = createRouter({
           meta: { title: '补卡申请详情', miniTab: false },
         },
         {
+          path: 'schedule/cancel-shift/:id',
+          name: 'MiniCancelShiftDetail',
+          component: () => import('@/views/miniapp/MiniCancelShiftDetailView.vue'),
+          meta: { title: '取消班次详情', miniTab: false },
+        },
+        {
           path: 'punch',
           name: 'MiniPunch',
           component: () => import('@/views/miniapp/MiniPunchView.vue'),
@@ -745,6 +751,12 @@ const router = createRouter({
           name: 'MiniGrabShiftDetail',
           component: () => import('@/views/miniapp/MiniGrabShiftDetailView.vue'),
           meta: { title: '抢班详情', miniTab: false },
+        },
+        {
+          path: 'recommend/interview/:postId',
+          name: 'MiniGrabInterviewDetail',
+          component: () => import('@/views/miniapp/MiniGrabInterviewDetailView.vue'),
+          meta: { title: '抢班直面', miniTab: false },
         },
         {
           path: 'task-hall/enterprise/:enterpriseId/tasks',
@@ -808,6 +820,12 @@ const router = createRouter({
           name: 'MiniApplications',
           component: () => import('@/views/miniapp/MiniApplicationsView.vue'),
           meta: { title: '我的报名', miniTab: false },
+        },
+        {
+          path: 'join-manage',
+          name: 'MiniJoinManage',
+          component: () => import('@/views/miniapp/MiniJoinManageView.vue'),
+          meta: { title: '入驻管理', miniTab: false },
         },
         {
           path: 'applications/job/:id',
@@ -1030,6 +1048,18 @@ const router = createRouter({
           meta: { title: '任务管理', entMiniTab: true },
         },
         {
+          path: 'tasks/:taskId',
+          name: 'EntMiniTaskShow',
+          component: () => import('@/views/enterprise-miniapp/EntMiniTaskShowView.vue'),
+          meta: { title: '任务详情', entMiniTab: false },
+        },
+        {
+          path: 'task-instances/:instanceId',
+          name: 'EntMiniTaskInstanceShow',
+          component: () => import('@/views/enterprise-miniapp/EntMiniTaskInstanceShowView.vue'),
+          meta: { title: '子任务详情', entMiniTab: false },
+        },
+        {
           path: 'stats',
           name: 'EntMiniStats',
           component: () => import('@/views/enterprise-miniapp/EntMiniStatsView.vue'),
@@ -1078,16 +1108,47 @@ const router = createRouter({
           meta: { title: '人员管理', entMiniTab: false },
         },
         {
+          path: 'positions',
+          name: 'EntMiniPositions',
+          component: () => import('@/views/enterprise-miniapp/EntMiniPositionManageView.vue'),
+          meta: { title: '岗位管理', entMiniTab: false },
+        },
+        {
           path: 'onboard',
           name: 'EntMiniOnboard',
           component: () => import('@/views/enterprise-miniapp/EntMiniOnboardView.vue'),
           meta: { title: '入驻管理', entMiniTab: false },
         },
         {
+          path: 'attendance-groups',
+          name: 'EntMiniAttendanceGroups',
+          component: () => import('@/views/enterprise-miniapp/EntMiniAttendanceGroupView.vue'),
+          meta: { title: '考勤组配置', entMiniTab: false },
+        },
+        {
+          path: 'attendance-groups/create',
+          name: 'EntMiniAttendanceGroupCreate',
+          component: () =>
+            import('@/views/enterprise-miniapp/EntMiniAttendanceGroupDetailView.vue'),
+          meta: { title: '新建考勤组', entMiniTab: false },
+        },
+        {
+          path: 'attendance-groups/:id/edit',
+          name: 'EntMiniAttendanceGroupEdit',
+          component: () =>
+            import('@/views/enterprise-miniapp/EntMiniAttendanceGroupDetailView.vue'),
+          meta: { title: '编辑考勤组', entMiniTab: false },
+        },
+        {
+          path: 'attendance-groups/:id',
+          name: 'EntMiniAttendanceGroupShow',
+          component: () =>
+            import('@/views/enterprise-miniapp/EntMiniAttendanceGroupShowView.vue'),
+          meta: { title: '考勤组详情', entMiniTab: false },
+        },
+        {
           path: 'shift-demand',
-          name: 'EntMiniShiftDemand',
-          component: () => import('@/views/enterprise-miniapp/EntMiniShiftDemandView.vue'),
-          meta: { title: '需求总览', entMiniTab: false },
+          redirect: '/enterprise-miniapp/attendance-groups',
         },
         {
           path: 'grab-manage',

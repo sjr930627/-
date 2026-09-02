@@ -41,7 +41,7 @@ function takeExam(courseId: string) {
             <span>{{ c.progress }}%</span>
           </div>
           <div style="height: 6px; background: #f0f0f0; border-radius: 3px; overflow: hidden">
-            <div :style="{ width: `${c.progress}%`, height: '100%', background: '#e60012', borderRadius: '3px' }" />
+            <div class="training-progress-fill" :style="{ width: `${c.progress}%` }" />
           </div>
         </div>
         <div v-if="c.record.examPassed !== undefined" style="margin-top: 8px; font-size: 12px">
@@ -63,3 +63,11 @@ function takeExam(courseId: string) {
     </div>
   </div>
 </template>
+
+<style scoped>
+.training-progress-fill {
+  height: 100%;
+  background: var(--mini-primary);
+  border-radius: 3px;
+}
+</style>

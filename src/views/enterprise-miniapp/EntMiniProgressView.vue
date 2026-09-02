@@ -99,8 +99,8 @@ function advance(id: string) {
 .row em {
   font-style: normal;
   font-size: 11px;
-  color: #5b4fdb;
-  background: #eef2ff;
+  color: #228BFF;
+  background: #D5E9FF;
   padding: 2px 8px;
   border-radius: 999px;
   white-space: nowrap;
@@ -119,7 +119,7 @@ function advance(id: string) {
   padding: 0 12px;
   border: none;
   border-radius: 8px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-size: 12px;
 }

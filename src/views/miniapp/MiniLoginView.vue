@@ -67,7 +67,7 @@ async function handleLogin() {
 <style scoped>
 .auth-page {
   min-height: 100%;
-  background: linear-gradient(180deg, #3b82f6 0%, #eff6ff 42%, #f5f6f8 100%);
+  background: linear-gradient(180deg, #4FD1C5 0%, #E6FFFA 42%, #f5f6f8 100%);
   padding: 48px 20px 24px;
 }
 
@@ -106,7 +106,7 @@ async function handleLogin() {
   background: #fff;
   border-radius: 20px;
   padding: 24px 20px;
-  box-shadow: 0 8px 32px rgba(59, 130, 246, 0.12);
+  box-shadow: 0 8px 32px rgba(79, 209, 197, 0.12);
 }
 
 .card-title {
@@ -151,7 +151,7 @@ async function handleLogin() {
 .link-btn {
   border: none;
   background: none;
-  color: #3b82f6;
+  color: #4FD1C5;
   font-weight: 600;
   cursor: pointer;
   padding: 0;

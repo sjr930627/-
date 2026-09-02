@@ -1,7 +1,9 @@
-import type { PricingMode, Task, TaskInstance, TaskPricingUnit, TaskType, TaskWorkflow, TieredPrice, WorkflowAction } from '@/types'
+import type { AttendancePunch, PricingMode, Task, TaskInstance, TaskPricingUnit, TaskType, TaskWorkflow, TieredPrice, WorkflowAction, WorkflowEntryConditionGroup } from '@/types'
 import type { MiniTaskCategory } from '@/mock/miniTaskHallSeed'
 import { resolveTaskPricing, resolveTaskSettlementUnitPrice } from '@/constants/task'
 import { resolveTransitionTarget } from '@/services/task'
+import { localDateStr } from '@/composables/useMiniPunch'
+import { getNodePunchEntryCondition } from '@/utils/workflow'
 
 export const TASK_PREVIEW_LIMIT = 5
 
@@ -111,6 +113,24 @@ export function isPendingEnterpriseAction(
 ): boolean {
   const node = getWorkflowNode(workflow, instance.currentNodeId)
   return node?.role === 'enterprise'
+}
+
+/** 当前节点有待打卡进入条件且执行人今日尚未打卡 */
+export function getPendingPunchEntryForInstance(
+  instance: TaskInstance,
+  workflow: TaskWorkflow | undefined,
+  punches: AttendancePunch[],
+  today: string = localDateStr(new Date()),
+): WorkflowEntryConditionGroup | undefined {
+  if (!workflow) return undefined
+  const node = getWorkflowNode(workflow, instance.currentNodeId)
+  const punchEntry = getNodePunchEntryCondition(node)
+  if (!punchEntry) return undefined
+  const workerId = instance.workerId
+  const hasPunchedToday = punches.some(
+    (p) => p.employeeId === workerId && p.date === today && p.type === 'clock_in',
+  )
+  return hasPunchedToday ? undefined : punchEntry
 }
 
 export function resolveSubmitTarget(

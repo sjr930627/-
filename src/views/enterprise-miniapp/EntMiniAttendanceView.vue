@@ -2,14 +2,14 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import {
+  Calendar,
   ChatDotRound,
-  DataBoard,
   Document,
   Notebook,
+  Setting,
   Stamp,
   Timer,
   User,
-  UserFilled,
 } from '@element-plus/icons-vue'
 import EntMiniPageHeader from '@/components/enterprise-miniapp/EntMiniPageHeader.vue'
 import { useAppStore } from '@/stores/app'
@@ -67,11 +67,15 @@ const pendingHours = computed(() => {
   ).filter((d) => isDailyAttendanceVisible(d) && canConfirmWorkHours(d)).length
 })
 
-const pendingApprovals = computed(
+const pendingMakeup = computed(
   () =>
     store.makeupRequests.filter(
       (r) => r.status === 'pending' && employees.value.some((e) => e.id === r.employeeId),
-    ).length +
+    ).length,
+)
+
+const pendingCancelShift = computed(
+  () =>
     store.cancelShiftRequests.filter(
       (r) => r.status === 'pending' && employees.value.some((e) => e.id === r.employeeId),
     ).length,
@@ -98,10 +102,16 @@ const avatarNames = computed(() => employees.value.slice(0, 6).map((e) => e.name
 
 const tools = computed(() => [
   {
-    title: '审批',
+    title: '补卡申请',
     icon: Stamp,
-    path: '/enterprise-miniapp/exceptions',
-    badge: pendingApprovals.value,
+    path: '/enterprise-miniapp/exceptions?tab=makeup',
+    badge: pendingMakeup.value,
+  },
+  {
+    title: '取消班次申请',
+    icon: Calendar,
+    path: '/enterprise-miniapp/exceptions?tab=cancel',
+    badge: pendingCancelShift.value,
   },
   {
     title: '工时确认记录',
@@ -114,9 +124,9 @@ const tools = computed(() => [
     path: '/enterprise-miniapp/schedule',
   },
   {
-    title: '需求总览',
-    icon: DataBoard,
-    path: '/enterprise-miniapp/shift-demand',
+    title: '考勤组配置',
+    icon: Setting,
+    path: '/enterprise-miniapp/attendance-groups',
   },
   {
     title: '抢班面试配置',
@@ -136,7 +146,7 @@ const tools = computed(() => [
   },
   {
     title: '入驻管理',
-    icon: UserFilled,
+    icon: User,
     path: '/enterprise-miniapp/onboard',
     badge: onboardPending.value,
   },
@@ -177,10 +187,10 @@ const tools = computed(() => [
           <button
             type="button"
             class="icon-btn"
-            title="班次需求"
-            @click="router.push('/enterprise-miniapp/shift-demand')"
+            title="考勤组配置"
+            @click="router.push('/enterprise-miniapp/attendance-groups')"
           >
-            ▣
+            <el-icon :size="18"><Setting /></el-icon>
           </button>
           <button
             type="button"
@@ -188,7 +198,8 @@ const tools = computed(() => [
             title="人员管理"
             @click="router.push('/enterprise-miniapp/personnel')"
           >
-            {{ employees.length }}
+            <el-icon :size="18"><User /></el-icon>
+            <span>{{ employees.length }}</span>
           </button>
         </div>
       </section>
@@ -221,6 +232,10 @@ const tools = computed(() => [
 </template>
 
 <style scoped>
+.page {
+  min-height: 100%;
+  background: #fff;
+}
 .body {
   padding: 12px;
 }
@@ -248,7 +263,7 @@ const tools = computed(() => [
   cursor: pointer;
 }
 .stat-btn:active strong {
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .stats strong {
   display: block;
@@ -273,8 +288,8 @@ const tools = computed(() => [
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #ede9fe;
-  color: #5b4fdb;
+  background: #EBF4FF;
+  color: #228BFF;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -299,9 +314,9 @@ const tools = computed(() => [
 .assign {
   flex: 1;
   height: 40px;
-  border: 1px solid #5b4fdb;
+  border: 1px solid #228BFF;
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   border-radius: 999px;
   font-size: 14px;
   font-weight: 600;
@@ -311,14 +326,19 @@ const tools = computed(() => [
   height: 40px;
   border-radius: 12px;
   border: 1px solid #e5e7eb;
-  background: #fafafa;
-  color: #6b7280;
-  font-size: 14px;
+  background: #fff;
+  color: #374151;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  line-height: 1;
 }
-.icon-btn.count {
-  font-size: 12px;
+.icon-btn.count span {
+  font-size: 10px;
   font-weight: 700;
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .pending {
   margin-top: 10px;
@@ -341,7 +361,7 @@ const tools = computed(() => [
 }
 .pending button {
   border: none;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   border-radius: 999px;
   height: 32px;
@@ -372,9 +392,10 @@ const tools = computed(() => [
 .icon-wrap {
   width: 44px;
   height: 44px;
-  border-radius: 14px;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-radius: 12px;
+  background: #fff;
+  border: 1.5px solid #e5e7eb;
+  color: #228BFF;
   display: flex;
   align-items: center;
   justify-content: center;

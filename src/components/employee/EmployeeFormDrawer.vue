@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import { isUnassignedDepartment } from '@/constants/department'
+import { isUnassignedDepartment, DEFAULT_WORKFORCE_ENTERPRISE_ID } from '@/constants/department'
 import type {
   EmployeeGender,
   EmployeePersonnelCategory,
@@ -20,6 +20,7 @@ export interface EmployeeFormModel {
   hireDate: string
   address: string
   position: string
+  positionId: string
   departmentId: string
   remark: string
   status: EmployeeStatus
@@ -42,18 +43,6 @@ const emit = defineEmits<{
 
 const store = useAppStore()
 
-const positionOptions = [
-  '加油站营业员',
-  '班组长',
-  '操作工',
-  '质检员',
-  '设备维护',
-  '装卸工',
-  '调度员',
-  '营销专员',
-  '安全员',
-]
-
 const createCertificate = (): EmployeeSkillCertificate => ({
   id: `cert_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
   name: '',
@@ -72,6 +61,7 @@ const emptyForm = (): EmployeeFormModel => ({
   hireDate: new Date().toISOString().slice(0, 10),
   address: '',
   position: '',
+  positionId: '',
   departmentId: props.defaultDepartmentId ?? '',
   remark: '',
   status: isUnassignedDepartment(props.defaultDepartmentId) ? 'pending' : 'active',
@@ -86,6 +76,24 @@ const isEdit = computed(() => !!props.editingId)
 const editingEmployee = computed(() =>
   props.editingId ? store.employees.find((e) => e.id === props.editingId) : undefined,
 )
+
+const formEnterpriseId = computed(() => {
+  const dept = store.departments.find((d) => d.id === form.value.departmentId)
+  return (
+    dept?.enterpriseId ||
+    editingEmployee.value?.enterpriseId ||
+    store.currentEnterpriseId ||
+    DEFAULT_WORKFORCE_ENTERPRISE_ID
+  )
+})
+
+const enterprisePositions = computed(() => store.getEnterprisePositions(formEnterpriseId.value))
+
+function onPositionSelect(positionId: string) {
+  form.value.positionId = positionId
+  const pos = store.getEnterprisePosition(positionId)
+  form.value.position = pos?.profile.positionName || pos?.name || ''
+}
 
 const isRealNameVerified = computed(() => !!editingEmployee.value?.realNameVerified)
 
@@ -106,6 +114,7 @@ watch(
         hireDate: emp.hireDate,
         address: emp.address ?? '',
         position: emp.position,
+        positionId: emp.positionId ?? '',
         departmentId: emp.departmentId,
         remark: emp.remark ?? '',
         status: emp.status,
@@ -167,7 +176,7 @@ function submit() {
     ElMessage.warning('请选择入驻日期')
     return
   }
-  if (!form.value.position.trim()) {
+  if (!form.value.positionId && !form.value.position.trim()) {
     ElMessage.warning('请选择岗位')
     return
   }
@@ -200,6 +209,7 @@ function submit() {
     hireDate: form.value.hireDate,
     address: form.value.address.trim(),
     position: form.value.position.trim(),
+    positionId: form.value.positionId || undefined,
     departmentId: form.value.departmentId,
     remark: form.value.remark.trim(),
     status,
@@ -228,6 +238,7 @@ function submit() {
     const emp = store.addEmployee({
       ...payload,
       personnelCategory: props.defaultPersonnelCategory ?? 'schedule',
+      dataSource: 'manual',
     })
     ElMessage.success('人员已添加')
     emit('saved', emp.id)
@@ -345,14 +356,18 @@ function submit() {
               <el-col :span="12">
                 <el-form-item label="岗位" required>
                   <el-select
-                    v-model="form.position"
+                    :model-value="form.positionId"
                     filterable
-                    allow-create
-                    default-first-option
-                    placeholder="请选择岗位"
+                    placeholder="请选择企业岗位"
                     style="width: 100%"
+                    @update:model-value="onPositionSelect"
                   >
-                    <el-option v-for="p in positionOptions" :key="p" :label="p" :value="p" />
+                    <el-option
+                      v-for="p in enterprisePositions"
+                      :key="p.id"
+                      :label="p.profile.positionName || p.name"
+                      :value="p.id"
+                    />
                   </el-select>
                 </el-form-item>
               </el-col>

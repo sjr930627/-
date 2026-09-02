@@ -6,6 +6,9 @@ export type EmployeeOnboardingStage = 'awaiting_apply' | 'applied'
 /** 人员归属：排班人员 / 抢班人员 */
 export type EmployeePersonnelCategory = 'schedule' | 'grab'
 
+/** 人员数据来源：招聘推荐 / 手动录入 / 扫码申请 */
+export type EmployeeDataSource = 'recruit' | 'manual' | 'qr'
+
 export type DepartmentOrgType = 'department' | 'enterprise'
 export type DepartmentNodeType = 'branch' | 'leaf'
 
@@ -63,6 +66,8 @@ export interface Employee {
   departmentId: string
   enterpriseId?: string
   position: string
+  /** 关联企业岗位模版 ID */
+  positionId?: string
   /** 入驻日期 */
   hireDate: string
   skills: string[]
@@ -73,6 +78,8 @@ export interface Employee {
   onboardingStage?: EmployeeOnboardingStage
   /** 扫码申请入驻的目标部门 */
   applyDepartmentId?: string
+  /** 数据来源：招聘推荐 / 手动录入 / 扫码申请 */
+  dataSource?: EmployeeDataSource
   /** 是否在岗 */
   onDuty?: boolean
   phone?: string
@@ -90,6 +97,26 @@ export interface Employee {
   skillCertificates?: EmployeeSkillCertificate[]
   /** 是否已完成实名认证 */
   realNameVerified?: boolean
+}
+
+/** 灵工扫码入驻申请状态 */
+export type WorkerJoinApplicationStatus = 'pending' | 'approved' | 'rejected'
+
+/** 灵工扫码入驻企业-部门的申请记录 */
+export interface WorkerJoinApplication {
+  id: string
+  employeeId: string
+  enterpriseId: string
+  /** 扫码申请的目标部门 */
+  departmentId: string
+  status: WorkerJoinApplicationStatus
+  appliedAt: string
+  reviewedAt?: string
+  reviewNote?: string
+  /** 审批通过后实际入驻部门（可与申请部门不同） */
+  assignedDepartmentId?: string
+  assignedPosition?: string
+  source: 'qr' | 'assign'
 }
 
 export interface Shift {
@@ -239,6 +266,12 @@ export interface GrabInterviewPositionTemplate {
   updatedAt: string
 }
 
+/**
+ * 企业级岗位（人员 / 抢班 / 面试统一目录）。
+ * 与 GrabInterviewPositionTemplate 结构一致，作为顶层权威数据源。
+ */
+export type EnterprisePosition = GrabInterviewPositionTemplate
+
 /** 部门下的岗位配置 */
 export interface GrabInterviewDeptPosition {
   id: string
@@ -380,7 +413,11 @@ export interface GrabShiftSlot {
   wageFee?: number
   /** 岗位名称（发布时必填） */
   positionName?: string
-  /** 岗位要求说明（发布时必填） */
+  /** 关联企业岗位 ID */
+  positionId?: string
+  /** 发布时岗位画像快照（对齐企业岗位库字段） */
+  positionProfile?: GrabInterviewPositionProfile
+  /** 岗位要求说明（发布时必填，兼容旧数据） */
   positionRequirement?: string
   /** 技能要求 */
   requirements: string[]
@@ -569,6 +606,8 @@ export interface AttendanceDaily {
   clockOut?: string
   workHours: number
   scheduledHours: number
+  /** 系统按打卡算出的工时（不受人工矫正/确认覆盖） */
+  actualPunchHours?: number
   manualStatus?: AttendanceStatus
   manualNote?: string
   /** 是否已人工矫正工时 */
@@ -1510,12 +1549,94 @@ export type WorkflowPrerequisite =
   | 'related_training'
   | 'time_condition'
   | 'punch'
+
+/** 节点进入条件类型 */
+export type WorkflowEntryConditionType =
+  | 'punch_record'
+  | 'time_condition'
+  | 'field_filled'
+  | 'none'
+
+/** @deprecated 旧版外部事件，加载时迁移为 punch_record */
+export type WorkflowLegacyEntryConditionType = 'external_event'
+
+/** 外部事件来源模块（旧版兼容） */
+export type WorkflowEventSource = 'attendance' | 'task' | 'training' | 'finance'
+
+/** 进入条件监听对象 */
+export type WorkflowEntryListenTarget = 'task_executor' | 'specified_person'
+
+/** 打卡完成方式 */
+export type WorkflowPunchNavigateMode = 'jump_to_punch_page' | 'in_task'
+
+/** 节点打卡次数规则 */
+export type WorkflowPunchCountMode = 'clock_in_only' | 'clock_in_out' | 'each_service_period'
+
+/** 打卡地点取自任务何处 */
+export type WorkflowPunchLocationSource = 'task_region' | 'task_field' | 'attendance_group'
+
+/** 服务时间段取自任务何处 */
+export type WorkflowPunchTimeSource = 'task_schedule' | 'task_field' | 'fixed_window'
+
+/** 进入条件未满足时的超时处理 */
+export type WorkflowEntryTimeoutAction = 'auto_cancel' | 'auto_advance' | 'notify_only'
+
+/** 节点进入条件组（多组之间为「或」关系） */
+export interface WorkflowEntryConditionGroup {
+  id: string
+  type: WorkflowEntryConditionType | WorkflowLegacyEntryConditionType
+  /** 进入节点时自动生成待打卡记录 */
+  generatePunchRecord?: boolean
+  /** 用户如何完成打卡 */
+  punchNavigateMode?: WorkflowPunchNavigateMode
+  listenTarget?: WorkflowEntryListenTarget
+  /** 条件未满足时的提示文案 */
+  incompletePrompt?: string
+  timeoutDays?: number
+  timeoutAction?: WorkflowEntryTimeoutAction
+  timeoutTargetNodeId?: string
+  /** 打卡次数：仅上班 / 上下班 / 每个服务时段 */
+  punchCountMode?: WorkflowPunchCountMode
+  /** 允许的打卡方式（未填默认 GPS） */
+  allowedPunchMethods?: PunchMethod[]
+  /** 打卡地点来源 */
+  locationSource?: WorkflowPunchLocationSource
+  /** 地点取自流程字段时关联 field.id */
+  locationFieldId?: string
+  /** 服务时间来源 */
+  serviceTimeSource?: WorkflowPunchTimeSource
+  /** 时段取自流程字段时关联 field.id */
+  serviceTimeFieldId?: string
+  /** 固定服务时段开始（HH:mm） */
+  serviceStartTime?: string
+  /** 固定服务时段结束（HH:mm） */
+  serviceEndTime?: string
+  /** 仅上班打卡时的默认计薪工时（小时） */
+  defaultWorkHours?: number
+  /** 是否须在服务时段内打卡 */
+  requireWithinServiceWindow?: boolean
+  /** @deprecated */
+  eventSource?: WorkflowEventSource
+  /** @deprecated */
+  eventName?: string
+  /** @deprecated */
+  conditionNote?: string
+}
+
 export type WorkflowFieldType = 'text' | 'select' | 'date' | 'amount' | 'attachment' | 'textarea' | 'switch'
 
 export interface WorkflowActionConfig {
   action: WorkflowAction
+  /** 自定义操作按钮文案（未填则使用默认映射） */
+  label?: string
   /** 执行该动作后流转的目标节点（分叉/结束节点） */
   targetNodeId?: string
+  /** 流转前置条件说明（展示在流转规则配置中） */
+  prerequisiteNote?: string
+  /** 允许触发该操作的角色（未填则默认为节点执行角色） */
+  allowedRoles?: WorkflowRole[]
+  /** 触发方式：按钮点击 / 超时自动 */
+  triggerType?: 'manual' | 'timeout'
   requireProof?: boolean
   requireSignature?: boolean
   requireTraining?: boolean
@@ -1526,12 +1647,18 @@ export interface WorkflowActionConfig {
 export interface WorkflowNode {
   id: string
   name: string
+  /** 阶段说明，如「验收阶段」 */
+  stageLabel?: string
   nodeType: WorkflowNodeType
   role: WorkflowRole
+  /** 可查看该节点的角色（未填则全部可见） */
+  visibleRoles?: WorkflowRole[]
   actions: WorkflowActionConfig[]
   /** 无动作时的默认下一节点（如系统自动节点） */
   defaultNextNodeId?: string
   prerequisites?: WorkflowPrerequisite[]
+  /** 进入该节点需满足的条件组（任一组满足即可进入） */
+  entryConditionGroups?: WorkflowEntryConditionGroup[]
   timeConditionNote?: string
   notifySms?: boolean
   notifyMiniProgram?: boolean
@@ -1541,6 +1668,10 @@ export interface WorkflowNode {
   timeoutTargetNodeId?: string
   triggerSettlement?: boolean
   sort: number
+  /** 画布坐标（扣子式自由编排） */
+  position?: { x: number; y: number }
+  /** 来自节点面板的预设 key */
+  paletteKey?: string
 }
 
 export interface WorkflowFieldConfig {
@@ -1657,6 +1788,8 @@ export interface Task {
   reviewedBy?: string
   reviewedAt?: string
   reviewNote?: string
+  /** 大任务级自定义元数据 */
+  metadataFields?: { key: string; label: string; value: string }[]
   createdAt: string
 }
 
@@ -1692,6 +1825,14 @@ export interface TaskInstanceLog {
   description?: string
   /** system=流程节点, manual=人工干预, operation=操作日志 */
   kind: 'system' | 'manual' | 'operation'
+  /** 该次操作写入的节点配置字段快照 */
+  fieldEntries?: TaskInstanceLogFieldEntry[]
+}
+
+export interface TaskInstanceLogFieldEntry {
+  fieldId: string
+  name: string
+  value: string
 }
 
 // --- Recruitment module ---
@@ -1767,6 +1908,8 @@ export interface JobRequirement {
   enterpriseName: string
   title: string
   department: string
+  /** 关联组织部门；有值时按部门树汇总缺口 */
+  departmentId?: string
   headcount: number
   filledCount: number
   salaryMin: number
@@ -2415,6 +2558,9 @@ export interface WorkerIncomeRecord {
   netAmount?: number
   status: WorkerIncomeStatus
   source: 'task' | 'attendance' | 'bonus'
+  /** 所属企业（待结算按企业+工时/任务汇总） */
+  enterpriseId?: string
+  enterpriseName?: string
   period?: string
   createdAt: string
   claimedAt?: string

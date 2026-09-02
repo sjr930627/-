@@ -19,7 +19,18 @@ import {
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import { detectComplianceConflicts } from '@/services/scheduleCompliance'
-import type { AttendanceGroupCompliance } from '@/types'
+import {
+  confirmStatusMap,
+  formatLineAssignmentLabel,
+  isAssignmentConfirmedLocked,
+  isScheduleHistoryDate,
+  isScheduleFutureDate,
+  isScheduleShiftHistorical,
+  resolveAssignmentStartTime,
+  normalizeConfirmStatus,
+  SCHEDULE_DEMO_TODAY,
+} from '@/constants/schedule'
+import type { AttendanceGroupCompliance, ScheduleAssignment, SchedulePublishRecord } from '@/types'
 import { calcShiftHours } from '@/utils'
 
 dayjs.extend(isoWeek)
@@ -48,8 +59,13 @@ const continuousMode = ref(true)
 const moreOpen = ref(false)
 const cellMenu = ref<{ employeeId: string; date: string } | null>(null)
 const conflictTip = ref<{ employeeId: string; date: string; messages: string[] } | null>(null)
+const cellDetail = ref<{ employeeId: string; date: string } | null>(null)
+const publishLogOpen = ref(false)
+const selectedPublishRecord = ref<SchedulePublishRecord | null>(null)
 const landscapeTip = ref(false)
 const selectedRowId = ref('')
+/** 默认发布态（只读查看）；点击「编辑排班」后进入编辑态 */
+const editMode = ref(false)
 
 type HistItem = { employeeId: string; date: string; prev: string | null; next: string | null }
 const undoStack = ref<HistItem[][]>([])
@@ -147,10 +163,190 @@ const compliance = computed(() => {
   return group?.compliance || defaultCompliance
 })
 
-function getAsn(employeeId: string, date: string) {
+function getPublishedAssignment(employeeId: string, date: string) {
   const all = store.assignments.filter((a) => a.employeeId === employeeId && a.date === date)
-  return all.find((a) => !a.published) ?? all.find((a) => a.published)
+  return all.find((a) => a.published)
 }
+
+function getDraftAssignment(employeeId: string, date: string) {
+  const all = store.assignments.filter((a) => a.employeeId === employeeId && a.date === date)
+  return all.find((a) => !a.published)
+}
+
+function getAsn(employeeId: string, date: string) {
+  const published = getPublishedAssignment(employeeId, date)
+  const draft = getDraftAssignment(employeeId, date)
+  if (isScheduleHistoryDate(date, SCHEDULE_DEMO_TODAY)) return published
+  if (!editMode.value) return published
+  return draft ?? published
+}
+
+function isCellLocked(employeeId: string, date: string) {
+  return isAssignmentConfirmedLocked(getPublishedAssignment(employeeId, date))
+}
+
+function isCellHistorical(employeeId: string, date: string, nextShiftId?: string) {
+  if (isScheduleHistoryDate(date, SCHEDULE_DEMO_TODAY)) return true
+  if (nextShiftId && nextShiftId !== 'eraser' && nextShiftId !== 'leave') {
+    return isScheduleShiftHistorical(date, store.shifts.find((s) => s.id === nextShiftId)?.startTime)
+  }
+  const asn = getAsn(employeeId, date)
+  return isScheduleShiftHistorical(date, resolveAssignmentStartTime(asn, store.shifts))
+}
+
+function canEditCell(employeeId: string, date: string, nextShiftId?: string) {
+  if (!editMode.value) return false
+  if (isCellHistorical(employeeId, date, nextShiftId)) return false
+  if (isCellLocked(employeeId, date)) return false
+  return true
+}
+
+function displayConfirmStatus(employeeId: string, date: string) {
+  const asn = getPublishedAssignment(employeeId, date)
+  if (!asn?.published) return undefined
+  return normalizeConfirmStatus(asn.confirmStatus)
+}
+
+const hasMutableWeekDates = computed(() =>
+  weekDays.value.some((d) => isScheduleFutureDate(d, SCHEDULE_DEMO_TODAY)),
+)
+
+const hasDraftInWeek = computed(() =>
+  employees.value.some((emp) =>
+    weekDays.value.some((date) => {
+      const draft = getDraftAssignment(emp.id, date)
+      return Boolean(draft && !isScheduleHistoryDate(date, SCHEDULE_DEMO_TODAY))
+    }),
+  ),
+)
+
+const weekPublishRecord = computed(() => {
+  const month = weekDays.value[0]?.slice(0, 7)
+  const tid = teamId.value || enterpriseTeams.value[0]?.id
+  if (!tid || !month) return undefined
+  return store.publishRecords.find((r) => r.teamId === tid && r.month === month)
+})
+
+const statusBar = computed(() => {
+  if (!hasMutableWeekDates.value) {
+    return {
+      tone: 'info' as const,
+      label: '已过期',
+      desc: '本周班次均已过期，仅可查看',
+    }
+  }
+  if (!editMode.value) {
+    if (weekPublishRecord.value) {
+      const t = new Date(weekPublishRecord.value.publishedAt).toLocaleString('zh-CN')
+      return {
+        tone: 'success' as const,
+        label: '已发布',
+        desc: `已于 ${t} 发布；点击「编辑排班」可调整待确认班次，已确认班次置灰锁定`,
+      }
+    }
+    return {
+      tone: 'success' as const,
+      label: '发布视图',
+      desc: '当前展示已发布排班；点击「编辑排班」开始划线调整',
+    }
+  }
+  if (hasDraftInWeek.value) {
+    return {
+      tone: 'warning' as const,
+      label: '编辑中',
+      desc: '待确认班次可改，发布后通知灵工；已确认班次置灰锁定',
+    }
+  }
+  return {
+    tone: 'warning' as const,
+    label: '编辑中',
+    desc: '划线后请点击「发布排班」，发布后灵工将收到确认通知',
+  }
+})
+
+const confirmStats = computed(() => {
+  let pending = 0
+  let confirmed = 0
+  let rejected = 0
+  employees.value.forEach((emp) => {
+    weekDays.value.forEach((date) => {
+      const status = displayConfirmStatus(emp.id, date)
+      if (status === 'pending') pending += 1
+      else if (status === 'confirmed') confirmed += 1
+      else if (status === 'rejected') rejected += 1
+    })
+  })
+  return { pending, confirmed, rejected }
+})
+
+const publishHistory = computed(() => {
+  const tid = teamId.value || enterpriseTeams.value[0]?.id
+  const month = weekDays.value[0]?.slice(0, 7)
+  if (!tid) return []
+  return store.getSchedulePublishHistory(tid, month)
+})
+
+const currentPublishVersion = computed(() => {
+  const list = publishHistory.value.filter((r) => r.version)
+  return list.length ? Math.max(...list.map((r) => r.version ?? 0)) : 0
+})
+
+function formatPublishTime(iso: string) {
+  return new Date(iso).toLocaleString('zh-CN')
+}
+
+function shiftLabel(asn: ScheduleAssignment | undefined) {
+  if (!asn) return '未排班'
+  const shift = store.shifts.find((s) => s.id === asn.shiftId)
+  return formatLineAssignmentLabel(asn, shift ?? null) || shift?.name || '未排班'
+}
+
+function openCellDetail(employeeId: string, date: string) {
+  cellDetail.value = { employeeId, date }
+}
+
+function openPublishRecord(record: SchedulePublishRecord) {
+  selectedPublishRecord.value = record
+}
+
+function closePublishRecord() {
+  selectedPublishRecord.value = null
+}
+
+const detailEmployee = computed(() => {
+  if (!cellDetail.value) return null
+  return store.employees.find((e) => e.id === cellDetail.value!.employeeId) ?? null
+})
+
+const detailPublishedAssignment = computed(() => {
+  if (!cellDetail.value) return undefined
+  return getPublishedAssignment(cellDetail.value.employeeId, cellDetail.value.date)
+})
+
+const detailDraftAssignment = computed(() => {
+  if (!cellDetail.value) return undefined
+  return getDraftAssignment(cellDetail.value.employeeId, cellDetail.value.date)
+})
+
+const detailAssignment = computed(() => {
+  if (!cellDetail.value) return undefined
+  return getAsn(cellDetail.value.employeeId, cellDetail.value.date)
+})
+
+const detailConfirmStatus = computed(() => {
+  if (!detailPublishedAssignment.value?.published) return undefined
+  return normalizeConfirmStatus(detailPublishedAssignment.value.confirmStatus)
+})
+
+const detailIsLocked = computed(() => {
+  if (!cellDetail.value) return false
+  return isCellLocked(cellDetail.value.employeeId, cellDetail.value.date)
+})
+
+const detailIsHistory = computed(() => {
+  if (!cellDetail.value) return false
+  return isCellHistorical(cellDetail.value.employeeId, cellDetail.value.date)
+})
 
 function avatarChar(name: string) {
   return name.slice(0, 1)
@@ -180,6 +376,9 @@ function cellDisplay(employeeId: string, date: string) {
   const asn = getAsn(employeeId, date)
   if (!asn) return null
 
+  const locked = isCellLocked(employeeId, date)
+  const rejected = asn.published && normalizeConfirmStatus(asn.confirmStatus) === 'rejected'
+
   if (asn.shiftId === 'shift_rest' || asn.note?.includes('请假')) {
     if (asn.note?.includes('请假')) {
       return {
@@ -204,9 +403,11 @@ function cellDisplay(employeeId: string, date: string) {
   return {
     kind: 'shift' as const,
     short: brush?.short || shift?.name?.slice(0, 1) || '班',
-    color: brush?.color || shift?.color || '#3B82F6',
+    color: locked ? '#CBD5E1' : brush?.color || shift?.color || '#3B82F6',
     soft: brush?.soft || '#DBEAFE',
-    text: '#fff',
+    text: locked ? '#64748B' : '#fff',
+    locked,
+    rejected,
   }
 }
 
@@ -275,6 +476,7 @@ function resolveTeamId(employeeId: string) {
 }
 
 function applyCell(employeeId: string, date: string, nextShiftId: string | null, note?: string) {
+  if (!canEditCell(employeeId, date, nextShiftId ?? undefined)) return null
   const prevAsn = getAsn(employeeId, date)
   const prev = prevAsn?.shiftId ?? null
   const prevNote = prevAsn?.note
@@ -322,6 +524,18 @@ function applyCell(employeeId: string, date: string, nextShiftId: string | null,
 const dragBatch = ref<HistItem[]>([])
 
 function paint(employeeId: string, date: string, overrideShiftId?: string, batching = false) {
+  if (!canEditCell(employeeId, date)) {
+    if (!batching) {
+      if (isCellLocked(employeeId, date)) {
+        ElMessage.info('该班次灵工已确认，不可直接编辑')
+        openCellDetail(employeeId, date)
+      } else if (isCellHistorical(employeeId, date)) {
+        ElMessage.info('历史班次不可编辑')
+        openCellDetail(employeeId, date)
+      }
+    }
+    return
+  }
   const target = overrideShiftId ?? brushId.value
   const item = applyCell(employeeId, date, target === 'eraser' ? 'eraser' : target)
   if (!item) return
@@ -341,6 +555,11 @@ function paint(employeeId: string, date: string, overrideShiftId?: string, batch
 
 function paintBrush(employeeId: string, date: string, shiftKey: string) {
   cellMenu.value = null
+  if (!canEditCell(employeeId, date)) {
+    ElMessage.info(isCellLocked(employeeId, date) ? '该班次灵工已确认，不可直接编辑' : '历史班次不可编辑')
+    openCellDetail(employeeId, date)
+    return
+  }
   const item = applyCell(
     employeeId,
     date,
@@ -433,6 +652,11 @@ function onCellPointerUp() {
 function onCellClick(employeeId: string, date: string) {
   if (continuousMode.value) return
   if (openConflict(employeeId, date)) return
+  const published = getPublishedAssignment(employeeId, date)
+  if (published || isScheduleHistoryDate(date, SCHEDULE_DEMO_TODAY) || !canEditCell(employeeId, date)) {
+    openCellDetail(employeeId, date)
+    return
+  }
   paint(employeeId, date)
 }
 
@@ -460,6 +684,7 @@ function coverConflictWithBrush() {
 
 let longPressTimer: ReturnType<typeof setTimeout> | null = null
 function onCellTouchStart(employeeId: string, date: string) {
+  if (!editMode.value) return
   longPressTimer = setTimeout(() => {
     cellMenu.value = { employeeId, date }
     try {
@@ -601,6 +826,14 @@ function saveDraft() {
   ElMessage.success('排班草稿已保存')
 }
 
+function enterEditMode() {
+  if (!hasMutableWeekDates.value) {
+    ElMessage.warning('当前周没有可编辑的未来班次')
+    return
+  }
+  editMode.value = true
+}
+
 async function publishWeek() {
   const teams = teamId.value
     ? enterpriseTeams.value.filter((t) => t.id === teamId.value)
@@ -609,17 +842,24 @@ async function publishWeek() {
     ElMessage.warning('暂无可用班组')
     return
   }
+  const dates = weekDays.value.filter((d) => isScheduleFutureDate(d, SCHEDULE_DEMO_TODAY))
+  if (!dates.length) {
+    ElMessage.warning('没有可发布的未来班次')
+    return
+  }
   try {
     await ElMessageBox.confirm(
-      `确认发布 ${weekLabel.value} 的排班？发布后灵工端可见。`,
+      `确认发布 ${weekLabel.value} 的排班？变更的待确认班次将通知灵工重新确认；已确认班次保持不变。`,
       '发布排班',
       { type: 'warning', confirmButtonText: '确认发布' },
     )
     teams.forEach((t) => {
-      store.publishSchedulePeriod(t.id, weekDays.value, '企业小程序')
+      store.publishSchedulePeriod(t.id, dates, '企业小程序')
     })
-    ElMessage.success('排班已发布')
-    router.replace('/enterprise-miniapp/attendance')
+    editMode.value = false
+    undoStack.value = []
+    redoStack.value = []
+    ElMessage.success('排班已发布，可在矩阵中查看灵工确认状态')
   } catch {
     /* cancel */
   }
@@ -631,6 +871,12 @@ function onOrientation() {
 }
 
 watch([weekAnchor, teamId, brushId], persistDraft)
+
+watch([weekAnchor, teamId], () => {
+  editMode.value = false
+  undoStack.value = []
+  redoStack.value = []
+})
 
 onMounted(() => {
   restoreDraft()
@@ -656,9 +902,16 @@ onUnmounted(() => {
         <el-icon :size="20"><ArrowLeft /></el-icon>
       </button>
       <h1>划线排班</h1>
-      <button type="button" class="nav-btn" aria-label="更多" @click="moreOpen = true">
+      <button
+        v-if="editMode && !!hasMutableWeekDates"
+        type="button"
+        class="nav-btn"
+        aria-label="更多"
+        @click="moreOpen = true"
+      >
         <el-icon :size="20"><MoreFilled /></el-icon>
       </button>
+      <span v-else class="nav-spacer" aria-hidden="true" />
     </header>
 
     <div class="filter-bar">
@@ -680,9 +933,23 @@ onUnmounted(() => {
       </select>
     </div>
 
+    <div class="status-bar" :class="statusBar.tone">
+      <strong>{{ statusBar.label }}</strong>
+      <span>{{ statusBar.desc }}</span>
+      <button
+        v-if="publishHistory.length"
+        type="button"
+        class="status-link"
+        @click="publishLogOpen = true"
+      >
+        发布记录
+        <template v-if="currentPublishVersion">V{{ currentPublishVersion }}</template>
+      </button>
+    </div>
+
     <p v-if="landscapeTip" class="landscape">建议竖屏使用；横屏可展示更多日期列</p>
 
-    <div class="brushes">
+    <div v-if="editMode && !!hasMutableWeekDates" class="brushes">
       <button
         v-for="b in brushes"
         :key="b.id"
@@ -697,9 +964,19 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <div class="hint">
+    <div v-if="editMode && !!hasMutableWeekDates" class="hint">
       <el-icon class="hint-icon"><WarningFilled /></el-icon>
-      <span>选择画笔后，点击或滑动日期格子即可划线排班</span>
+      <span>选择画笔后划线；已过期与已确认班次置灰不可改，点击格子可查看详情</span>
+    </div>
+
+    <div v-else-if="!!hasMutableWeekDates" class="hint view-hint">
+      <el-icon class="hint-icon"><WarningFilled /></el-icon>
+      <span>点击格子查看详情；已过期班次只读，未来班次可点「编辑排班」调整</span>
+    </div>
+
+    <div v-else class="hint history-hint">
+      <el-icon class="hint-icon"><WarningFilled /></el-icon>
+      <span>本周班次均已过期，仅可查看当时班次与灵工确认状态</span>
     </div>
 
     <div class="matrix-wrap">
@@ -747,7 +1024,12 @@ onUnmounted(() => {
                   v-for="d in weekDays"
                   :key="d"
                   class="cell"
-                  :class="{ conflict: conflictMap.has(`${emp.id}_${d}`) }"
+                  :class="{
+                    conflict: conflictMap.has(`${emp.id}_${d}`),
+                    locked: isCellLocked(emp.id, d),
+                    rejected: displayConfirmStatus(emp.id, d) === 'rejected',
+                    history: isCellHistorical(emp.id, d),
+                  }"
                   :data-employee-id="emp.id"
                   :data-date="d"
                   @click="onCellClick(emp.id, d)"
@@ -755,12 +1037,12 @@ onUnmounted(() => {
                   @touchstart.passive="onCellTouchStart(emp.id, d)"
                   @touchend="onCellTouchEnd"
                   @touchcancel="onCellTouchEnd"
-                  @contextmenu.prevent="cellMenu = { employeeId: emp.id, date: d }"
+                  @contextmenu.prevent="editMode && (cellMenu = { employeeId: emp.id, date: d })"
                 >
                   <span
                     v-if="cellDisplay(emp.id, d)"
                     class="chip"
-                    :class="cellDisplay(emp.id, d)!.kind"
+                    :class="[cellDisplay(emp.id, d)!.kind, { locked: cellDisplay(emp.id, d)!.locked }]"
                     :style="chipStyle(emp.id, d)"
                   >
                     <template v-if="cellDisplay(emp.id, d)!.kind === 'conflict'">
@@ -769,6 +1051,16 @@ onUnmounted(() => {
                     <template v-else>
                       {{ cellDisplay(emp.id, d)!.short }}
                     </template>
+                  </span>
+                  <span
+                    v-if="displayConfirmStatus(emp.id, d)"
+                    class="confirm-badge"
+                    :style="{
+                      color: confirmStatusMap[displayConfirmStatus(emp.id, d)!].color,
+                      background: confirmStatusMap[displayConfirmStatus(emp.id, d)!].bg,
+                    }"
+                  >
+                    {{ confirmStatusMap[displayConfirmStatus(emp.id, d)!].short }}
                   </span>
                 </td>
               </tr>
@@ -787,6 +1079,14 @@ onUnmounted(() => {
       <span class="lg"><i style="background: #e5e7eb" />休息</span>
       <span class="lg"><i style="background: #fde68a" />请假</span>
       <span class="lg"><i style="background: #ef4444" />冲突</span>
+      <span
+        v-for="(cfg, key) in confirmStatusMap"
+        :key="key"
+        class="lg"
+      >
+        <i :style="{ background: cfg.bg, border: `1px solid ${cfg.color}` }" />{{ cfg.label }}
+      </span>
+      <span class="lg"><i class="dot-locked" />已确认（置灰）</span>
     </div>
 
     <footer class="dock">
@@ -794,13 +1094,24 @@ onUnmounted(() => {
         <span>已划线 <b>{{ stats.count }}</b> 条</span>
         <span class="sep">|</span>
         <span>总工时 <b>{{ stats.hours }}h</b></span>
+        <template v-if="confirmStats.pending + confirmStats.confirmed + confirmStats.rejected > 0">
+          <span class="sep">|</span>
+          <span>待确认 <b>{{ confirmStats.pending }}</b></span>
+          <span class="sep">·</span>
+          <span>已确认 <b>{{ confirmStats.confirmed }}</b></span>
+          <span v-if="confirmStats.rejected" class="sep">·</span>
+          <span v-if="confirmStats.rejected">已拒绝 <b>{{ confirmStats.rejected }}</b></span>
+        </template>
         <span class="sep">|</span>
         <span class="conflict-stat">
           <i class="c-dot" />
-          <b>{{ stats.conflicts }}</b> 个
+          <b>{{ stats.conflicts }}</b> 冲突
         </span>
       </div>
-      <div class="actions">
+      <div v-if="!!hasMutableWeekDates && !editMode" class="actions view-actions">
+        <button type="button" class="btn edit" @click="enterEditMode">编辑排班</button>
+      </div>
+      <div v-else-if="!!hasMutableWeekDates && editMode" class="actions">
         <button type="button" class="icon-btn" :disabled="!undoStack.length" @click="undo">
           <el-icon :size="18"><RefreshLeft /></el-icon>
         </button>
@@ -819,6 +1130,9 @@ onUnmounted(() => {
           <el-icon><Promotion /></el-icon>
           发布排班
         </button>
+      </div>
+      <div v-else class="actions readonly-actions">
+        <button type="button" class="btn save" @click="publishLogOpen = true">查看发布记录</button>
       </div>
     </footer>
 
@@ -885,6 +1199,119 @@ onUnmounted(() => {
         <button type="button" class="sheet-cancel" @click="conflictTip = null">知道了</button>
       </div>
     </div>
+
+    <div v-if="cellDetail && detailEmployee" class="sheet-mask" @click="cellDetail = null">
+      <div class="sheet detail-sheet" @click.stop>
+        <h3>排班详情</h3>
+        <div class="detail-row">
+          <span class="detail-label">员工</span>
+          <span>{{ detailEmployee.name }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">日期</span>
+          <span>{{ cellDetail.date }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">班次</span>
+          <span>{{ shiftLabel(detailAssignment) }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">发布状态</span>
+          <span v-if="detailPublishedAssignment">已发布</span>
+          <span v-else-if="detailDraftAssignment">草稿（未发布）</span>
+          <span v-else>未排班</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">灵工确认</span>
+          <span
+            v-if="detailConfirmStatus"
+            class="confirm-pill"
+            :style="{
+              color: confirmStatusMap[detailConfirmStatus].color,
+              background: confirmStatusMap[detailConfirmStatus].bg,
+            }"
+          >
+            {{ confirmStatusMap[detailConfirmStatus].label }}
+          </span>
+          <span v-else-if="detailPublishedAssignment">—</span>
+          <span v-else>—</span>
+        </div>
+        <p v-if="detailIsLocked" class="detail-tip warn">
+          灵工已确认该班次，不可直接编辑，请通过取消班次流程处理。
+        </p>
+        <p v-else-if="detailIsHistory" class="detail-tip">
+          该班次已过期，不可修改、取消或发布。
+        </p>
+        <p v-else-if="detailDraftAssignment && detailPublishedAssignment" class="detail-tip">
+          存在未发布修改，重新发布后将通知灵工确认。
+        </p>
+        <button type="button" class="sheet-cancel" @click="cellDetail = null">关闭</button>
+      </div>
+    </div>
+
+    <div v-if="publishLogOpen" class="sheet-mask" @click="publishLogOpen = false">
+      <div class="sheet publish-sheet" @click.stop>
+        <h3>排班发布记录</h3>
+        <p class="publish-sub">
+          {{ weekLabel }} · 当前版本
+          <strong v-if="currentPublishVersion">V{{ currentPublishVersion }}</strong>
+          <strong v-else>未发布</strong>
+        </p>
+        <div v-if="!publishHistory.length" class="empty-inline">暂无发布记录</div>
+        <button
+          v-for="row in publishHistory"
+          :key="row.id"
+          type="button"
+          class="publish-row"
+          @click="openPublishRecord(row)"
+        >
+          <div class="publish-row-head">
+            <span v-if="row.version" class="ver">V{{ row.version }}</span>
+            <span class="time">{{ formatPublishTime(row.publishedAt) }}</span>
+          </div>
+          <div class="publish-row-meta">
+            {{ row.periodStart }} ~ {{ row.periodEnd }} · {{ row.assignmentCount }} 条 · {{ row.publishedBy }}
+          </div>
+          <div class="publish-row-note">{{ row.changeNote || '—' }}</div>
+        </button>
+        <button type="button" class="sheet-cancel" @click="publishLogOpen = false">关闭</button>
+      </div>
+    </div>
+
+    <div v-if="selectedPublishRecord" class="sheet-mask" @click="closePublishRecord">
+      <div class="sheet publish-sheet" @click.stop>
+        <h3>版本 V{{ selectedPublishRecord.version }} 快照</h3>
+        <p class="publish-sub">
+          {{ formatPublishTime(selectedPublishRecord.publishedAt) }} · {{ selectedPublishRecord.publishedBy }}
+        </p>
+        <div class="snapshot-list">
+          <div
+            v-for="row in selectedPublishRecord.snapshot ?? []"
+            :key="`${row.employeeId}_${row.date}`"
+            class="snapshot-item"
+          >
+            <div class="snapshot-main">
+              <strong>{{ store.employees.find((e) => e.id === row.employeeId)?.name ?? row.employeeId }}</strong>
+              <span>{{ row.date }}</span>
+            </div>
+            <div class="snapshot-sub">
+              {{ store.shifts.find((s) => s.id === row.shiftId)?.name ?? row.shiftId }}
+              <span
+                v-if="row.published && normalizeConfirmStatus(row.confirmStatus)"
+                class="confirm-pill small"
+                :style="{
+                  color: confirmStatusMap[normalizeConfirmStatus(row.confirmStatus)!].color,
+                  background: confirmStatusMap[normalizeConfirmStatus(row.confirmStatus)!].bg,
+                }"
+              >
+                {{ confirmStatusMap[normalizeConfirmStatus(row.confirmStatus)!].label }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <button type="button" class="sheet-cancel" @click="closePublishRecord">返回</button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -915,6 +1342,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.nav-spacer {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
 }
 h1 {
   margin: 0;
@@ -1184,6 +1616,211 @@ h1 {
 }
 .cell.conflict {
   animation: blink 1.1s ease infinite;
+}
+.cell.locked {
+  background: #f8fafc;
+}
+.cell.rejected {
+  background: #fff5f5;
+}
+.cell.history {
+  background: #fafafa;
+}
+.cell {
+  position: relative;
+  vertical-align: middle;
+}
+.confirm-badge {
+  display: block;
+  margin: 2px auto 0;
+  font-size: 9px;
+  line-height: 1.2;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-weight: 600;
+  max-width: 42px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip.locked {
+  opacity: 0.85;
+}
+.status-bar {
+  margin: 0 12px 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+.status-bar strong {
+  font-size: 13px;
+}
+.status-bar span {
+  flex: 1;
+  min-width: 0;
+  color: #64748b;
+}
+.status-bar.info {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.status-bar.success {
+  background: #f0fdf4;
+  color: #15803d;
+}
+.status-bar.warning {
+  background: #fffbeb;
+  color: #b45309;
+}
+.status-bar.neutral {
+  background: #f8fafc;
+  color: #475569;
+}
+.status-link {
+  border: none;
+  background: none;
+  color: #228BFF;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0;
+  flex-shrink: 0;
+}
+.history-hint {
+  background: #f8fafc;
+}
+.dot-locked {
+  background: #cbd5e1 !important;
+  border: 1px solid #94a3b8 !important;
+}
+.detail-sheet .detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 14px;
+}
+.detail-label {
+  color: #94a3b8;
+  flex-shrink: 0;
+}
+.detail-tip {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+}
+.detail-tip.warn {
+  color: #b45309;
+  background: #fffbeb;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.confirm-pill {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.confirm-pill.small {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+.publish-sheet {
+  max-height: 78vh;
+  overflow: auto;
+}
+.publish-sub {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #64748b;
+}
+.publish-row {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.publish-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.publish-row-head .ver {
+  font-weight: 700;
+  color: #228BFF;
+}
+.publish-row-head .time {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.publish-row-meta,
+.publish-row-note {
+  font-size: 12px;
+  color: #64748b;
+}
+.snapshot-list {
+  max-height: 50vh;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+.snapshot-item {
+  padding: 10px 0;
+  border-bottom: 1px solid #f1f5f9;
+}
+.snapshot-main {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+.snapshot-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.empty-inline {
+  padding: 24px 0;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.view-hint {
+  background: #f0fdf4;
+  color: #166534;
+}
+.view-hint .hint-icon {
+  color: #22c55e;
+}
+.readonly-actions {
+  justify-content: center;
+}
+.readonly-actions .btn,
+.view-actions .btn {
+  width: 100%;
+}
+.view-actions {
+  justify-content: center;
+}
+.btn.edit {
+  background: #3b82f6;
+  color: #fff;
+}
+.readonly-actions .btn {
+  width: 100%;
 }
 @keyframes blink {
   50% {

@@ -5,7 +5,6 @@ import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import {
-  EMPLOYEE_POSITION_OPTIONS,
   buildDepartmentJoinQrPayload,
   departmentJoinQrImageUrl,
   enterpriseUnassignedDepartmentId,
@@ -27,8 +26,15 @@ const approveOpen = ref(false)
 const approveTarget = ref<Employee | null>(null)
 const approveForm = ref({
   departmentId: '',
-  position: '',
+  positionId: '',
   employeeNo: '',
+})
+
+const enterprisePositions = computed(() => store.getEnterprisePositions(enterpriseId.value))
+
+const selectedApprovePositionName = computed(() => {
+  const pos = store.getEnterprisePosition(approveForm.value.positionId)
+  return pos?.profile.positionName || pos?.name || ''
 })
 
 const qrDeptId = ref('')
@@ -102,7 +108,7 @@ function openApprove(emp: Employee) {
   approveTarget.value = emp
   approveForm.value = {
     departmentId: preferred,
-    position: '',
+    positionId: emp.positionId || '',
     employeeNo: emp.employeeNo || '',
   }
   approveOpen.value = true
@@ -119,8 +125,8 @@ function submitApprove() {
     ElMessage.warning('请选择入驻部门')
     return
   }
-  if (!approveForm.value.position.trim()) {
-    ElMessage.warning('请选择或填写岗位')
+  if (!approveForm.value.positionId || !selectedApprovePositionName.value) {
+    ElMessage.warning('请选择岗位')
     return
   }
   if (!approveForm.value.employeeNo.trim()) {
@@ -131,8 +137,9 @@ function submitApprove() {
     const isApplied = approveTarget.value.onboardingStage === 'applied'
     const payload = {
       departmentId: approveForm.value.departmentId,
-      position: approveForm.value.position.trim(),
+      position: selectedApprovePositionName.value,
       employeeNo: approveForm.value.employeeNo.trim(),
+      positionId: approveForm.value.positionId,
     }
     if (isApplied) {
       store.approveOnboardApplication(approveTarget.value.id, payload)
@@ -259,9 +266,11 @@ async function copyPayload() {
           </option>
         </select>
         <label>岗位</label>
-        <select v-model="approveForm.position">
-          <option value="" disabled>请选择岗位</option>
-          <option v-for="p in EMPLOYEE_POSITION_OPTIONS" :key="p" :value="p">{{ p }}</option>
+        <select v-model="approveForm.positionId">
+          <option value="" disabled>请选择企业岗位</option>
+          <option v-for="p in enterprisePositions" :key="p.id" :value="p.id">
+            {{ p.profile.positionName || p.name }}
+          </option>
         </select>
         <label>人员 ID（必填）</label>
         <input v-model="approveForm.employeeNo" placeholder="如 E1008">
@@ -291,7 +300,7 @@ async function copyPayload() {
 }
 .tabs button.active {
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
@@ -329,9 +338,9 @@ async function copyPayload() {
   font-size: 12px;
 }
 .filters button.active {
-  border-color: #5b4fdb;
-  color: #5b4fdb;
-  background: #eef2ff;
+  border-color: #228BFF;
+  color: #fff;
+  background: #228BFF;
 }
 .hint {
   margin: 0 0 10px;
@@ -354,8 +363,8 @@ async function copyPayload() {
   width: 40px;
   height: 40px;
   border-radius: 12px;
-  background: #eef2ff;
-  color: #5b4fdb;
+  background: #228BFF;
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -398,10 +407,10 @@ async function copyPayload() {
   margin-top: 10px;
   width: 100%;
   height: 32px;
-  border: 1px solid #5b4fdb;
+  border: 1px solid #228BFF;
   border-radius: 999px;
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   font-size: 13px;
   font-weight: 600;
 }
@@ -454,7 +463,7 @@ input {
   padding: 0 16px;
   border: none;
   border-radius: 999px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-size: 13px;
   font-weight: 600;
@@ -504,7 +513,7 @@ input {
   height: 42px;
   border: none;
   border-radius: 10px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-weight: 600;
 }

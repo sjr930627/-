@@ -1,11 +1,12 @@
 const STORAGE_PREFIX = 'shift-attendance:'
-const DEMO_BRANDING_VERSION = 'sinopec-v19'
+const DEMO_BRANDING_VERSION = 'sinopec-v25'
 
 const DEMO_BRANDING_KEYS = [
   'enterprises',
   'departments',
   'teams',
   'employees',
+  'enterprisePositions',
   'punches',
   'assignments',
   'manualOverrides',
@@ -13,17 +14,21 @@ const DEMO_BRANDING_KEYS = [
   'grabShiftSlots',
   'grabShiftApplications',
   'grabShiftWhitelist',
+  'grabInterviewConfigs',
   'jobRequirements',
   'recruitmentLeads',
   'tasks',
   'taskInstances',
   'taskTypes',
   'taskWorkflows',
+  'makeupRequests',
+  'cancelShiftRequests',
   'miniAppMessages',
   'miniJobApplications',
   'workerIncomeRecords',
   'workerProfileExts',
   'workerAgreements',
+  'workerJoinApplications',
   'trainingCourses',
   'trainingMaterials',
   'trainingMaterialCategories',
@@ -232,6 +237,15 @@ export function ensureWorkerIncomeSeed(
       }
       if (current.status === 'pending_settlement' && s.status === 'pending_settlement') {
         patch.amount = s.amount
+        if (s.title) patch.title = s.title
+        if (s.enterpriseId) patch.enterpriseId = s.enterpriseId
+        if (s.enterpriseName) patch.enterpriseName = s.enterpriseName
+      }
+      if (current.status === 'claimable' && s.status === 'claimable') {
+        if (s.title) patch.title = s.title
+        if (s.enterpriseId) patch.enterpriseId = s.enterpriseId
+        if (s.enterpriseName) patch.enterpriseName = s.enterpriseName
+        if (s.amount != null) patch.amount = s.amount
       }
       if (current.status === 'claimed' && s.status === 'claimed' && !current.claimBatchId && s.claimBatchId) {
         patch.claimBatchId = s.claimBatchId

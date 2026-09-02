@@ -209,7 +209,7 @@ function markAllRead() {
 }
 
 .msg-tab.active {
-  background: var(--mini-primary, #3b82f6);
+  background: var(--mini-primary, #4FD1C5);
   color: #fff;
   font-weight: 600;
 }
@@ -250,7 +250,7 @@ function markAllRead() {
   gap: 4px;
   border: none;
   background: none;
-  color: var(--mini-primary, #3b82f6);
+  color: var(--mini-primary, #4FD1C5);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -287,7 +287,7 @@ function markAllRead() {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--mini-primary, #3b82f6);
+  background: var(--mini-primary, #4FD1C5);
 }
 
 .msg-item-body {
@@ -362,8 +362,8 @@ function markAllRead() {
 }
 
 .msg-action.primary {
-  border-color: var(--mini-primary, #3b82f6);
-  background: var(--mini-primary, #3b82f6);
+  border-color: var(--mini-primary, #4FD1C5);
+  background: var(--mini-primary, #4FD1C5);
   color: #fff;
 }
 

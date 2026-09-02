@@ -102,6 +102,7 @@ async function handleImport() {
         })),
         preferredShiftIds: [],
         unavailableDates: [],
+        dataSource: 'manual',
       })
     })
 

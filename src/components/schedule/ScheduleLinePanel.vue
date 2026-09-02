@@ -2,7 +2,7 @@
 import { computed, ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
-import { parseScheduleTimeNote, FLEX_SHIFT_ID, FLEX_SHIFT_COLOR, formatLineAssignmentLabel, cellKey } from '@/constants/schedule'
+import { parseScheduleTimeNote, FLEX_SHIFT_ID, FLEX_SHIFT_COLOR, formatLineAssignmentLabel, cellKey, isScheduleHistoryDate, isScheduleShiftHistorical } from '@/constants/schedule'
 import { getWeekday } from '@/utils'
 import { useAppStore } from '@/stores/app'
 
@@ -209,6 +209,7 @@ function isLocked(employeeId: string, date: string) {
 
 function upsertLineAssignment(employeeId: string, date: string, startTime: string, endTime: string) {
   if (isLocked(employeeId, date)) return
+  if (isScheduleHistoryDate(date) || isScheduleShiftHistorical(date, startTime)) return
   if (props.shiftContext) {
     const st = props.shiftContext.startTime.slice(0, 5)
     const et = props.shiftContext.endTime.slice(0, 5)
@@ -239,8 +240,8 @@ function onHourDown(employeeId: string, hour: number) {
     emit('enterEdit')
     return
   }
-  if (isLocked(employeeId, props.selectedDate)) {
-    ElMessage.info('该班次已确认，不可编辑，请走取消班次流程')
+  if (isLocked(employeeId, props.selectedDate) || isScheduleHistoryDate(props.selectedDate)) {
+    ElMessage.info(isScheduleHistoryDate(props.selectedDate) ? '历史班次不可编辑' : '该班次已确认，不可编辑，请走取消班次流程')
     return
   }
   draggingEmployeeId.value = employeeId
@@ -287,8 +288,8 @@ function onWeekDayDown(employeeId: string, dayIdx: number) {
     return
   }
   const date = props.weekDates[dayIdx]
-  if (date && isLocked(employeeId, date)) {
-    ElMessage.info('该班次已确认，不可编辑，请走取消班次流程')
+  if (date && (isLocked(employeeId, date) || isScheduleHistoryDate(date))) {
+    ElMessage.info(isScheduleHistoryDate(date) ? '历史班次不可编辑' : '该班次已确认，不可编辑，请走取消班次流程')
     return
   }
   weekDraggingEmployeeId.value = employeeId
@@ -320,10 +321,10 @@ function onWeekDayUp(employeeId: string) {
   const end = weekDragEndIdx.value ?? weekDragStartIdx.value
   const lo = Math.min(weekDragStartIdx.value, end)
   const hi = Math.max(weekDragStartIdx.value, end)
-  const dates = props.weekDates.slice(lo, hi + 1).filter((date) => !isLocked(employeeId, date))
+  const dates = props.weekDates.slice(lo, hi + 1).filter((date) => !isLocked(employeeId, date) && !isScheduleHistoryDate(date))
   const skipped = hi - lo + 1 - dates.length
   if (!dates.length) {
-    ElMessage.warning('所选日期均为已确认班次，不可编辑')
+    ElMessage.warning('所选日期均为已过期或已确认班次，不可编辑')
     resetWeekDrag()
     return
   }
@@ -334,7 +335,7 @@ function onWeekDayUp(employeeId: string) {
     : `${startTime}-${endTime}`
   ElMessage.success(
     skipped
-      ? `${empName} 已为 ${dates.length} 天排 ${label}（跳过 ${skipped} 个已确认）`
+      ? `${empName} 已为 ${dates.length} 天排 ${label}（跳过 ${skipped} 个已过期或已确认）`
       : `${empName} 已为 ${dates.length} 天排 ${label}`,
   )
   void notifyAssignmentConflicts(employeeId, dates)
@@ -544,6 +545,7 @@ watch(
           v-for="date in weekDates"
           :key="date"
           class="day-head-col"
+          :class="{ history: isScheduleHistoryDate(date) }"
         >
           <div>{{ date.slice(5) }}</div>
           <div class="day-week">周{{ getWeekday(date) }}</div>
@@ -578,8 +580,8 @@ watch(
             locked: isLocked(emp.id, date),
           }"
           :title="
-            isLocked(emp.id, date)
-              ? '已确认，不可编辑'
+            isLocked(emp.id, date) || isScheduleHistoryDate(date)
+              ? isScheduleHistoryDate(date) ? '历史班次不可编辑' : '已确认，不可编辑'
               : getCellConflictMessages(emp.id, date).join('；')
           "
           @mousedown.prevent="onWeekDayDown(emp.id, dayIdx)"
@@ -743,6 +745,11 @@ watch(
   border-right: 1px solid var(--app-border);
   font-weight: 600;
   color: #606266;
+}
+
+.day-head-col.history {
+  color: #909399;
+  background: #f5f7fa;
 }
 
 .day-week {

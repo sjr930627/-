@@ -1,4 +1,4 @@
-import type { Department } from '@/types'
+import type { Department, Employee, EmployeeDataSource, WorkerJoinApplication } from '@/types'
 
 export const DEFAULT_WORKFORCE_ENTERPRISE_ID = 'ent_stars_telecom'
 
@@ -8,6 +8,40 @@ export const UNASSIGNED_DEPARTMENT_ID = 'dept_unassigned'
 export const UNASSIGNED_DEPARTMENT_NAME = '待入驻人员'
 
 export const UNASSIGNED_POSITION = '待入驻'
+
+export const employeeDataSourceMap: Record<EmployeeDataSource, string> = {
+  recruit: '招聘推荐',
+  manual: '手动录入',
+  qr: '扫码申请',
+}
+
+export const employeeDataSourceTagType: Record<
+  EmployeeDataSource,
+  'success' | 'info' | 'warning'
+> = {
+  recruit: 'success',
+  manual: 'info',
+  qr: 'warning',
+}
+
+/** 演示种子在未写入 dataSource 时的回退（兼容本地已缓存人员） */
+const DEMO_EMPLOYEE_DATA_SOURCE: Record<string, EmployeeDataSource> = {
+  emp_001: 'qr',
+  emp_002: 'recruit',
+  emp_pending_001: 'recruit',
+  emp_pending_002: 'qr',
+  emp_pj_pending: 'recruit',
+}
+
+export function resolveEmployeeDataSource(
+  emp: Pick<Employee, 'id' | 'dataSource' | 'applyDepartmentId'>,
+  joinApps: Pick<WorkerJoinApplication, 'employeeId' | 'source'>[] = [],
+): EmployeeDataSource {
+  if (emp.dataSource) return emp.dataSource
+  if (emp.applyDepartmentId) return 'qr'
+  if (joinApps.some((a) => a.employeeId === emp.id && a.source === 'qr')) return 'qr'
+  return DEMO_EMPLOYEE_DATA_SOURCE[emp.id] ?? 'manual'
+}
 
 export function enterpriseRootDepartmentId(enterpriseId: string) {
   if (enterpriseId === DEFAULT_WORKFORCE_ENTERPRISE_ID) return 'dept_root'
@@ -91,7 +125,7 @@ export function departmentJoinQrImageUrl(enterpriseId: string, departmentId: str
 }
 
 export const EMPLOYEE_POSITION_OPTIONS = [
-  '加油站营业员',
+  '营业厅营业员',
   '班组长',
   '操作工',
   '质检员',

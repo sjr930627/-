@@ -20,14 +20,16 @@ import {
   getGrabShiftScopeOptions,
   getGrabShiftTemplateOptions,
   GRAB_SHIFT_GLOBAL_TEAM_ID,
-  grabShiftPositionOptions,
   grabShiftPublishStatusMap,
   isGrabShiftPublished,
   isGrabShiftUrgent,
   parseBreakMinutes,
+  formatGrabPositionAgeRange,
+  formatGrabPositionGender,
   resolveGrabShiftBaseHourlyRateDetail,
   resolveGrabSlotDepartmentId,
   resolveGrabSlotDepartmentName,
+  resolveGrabSlotPositionProfile,
   resolveGrabSlotShiftName,
 } from '@/services/grabShift'
 import type { GrabShiftSlot } from '@/types'
@@ -161,10 +163,51 @@ const publishForm = ref({
   enrollFloatMode: 'absolute' as 'absolute' | 'percent',
   enrollFloatValue: 0,
   hourlySubsidy: 0,
+  positionId: '',
   positionName: '',
+  jobType: '',
   positionRequirement: '',
+  description: '',
+  ageMin: undefined as number | undefined,
+  ageMax: undefined as number | undefined,
+  gender: 'any' as 'any' | 'male' | 'female',
+  experience: '不限',
   requirements: [] as string[],
 })
+
+const publishEnterpriseId = computed(() =>
+  resolveEnterpriseIdByAttendanceGroupId(
+    selectedGroupId.value,
+    store.attendanceGroups,
+    store.departments,
+  ),
+)
+
+const enterprisePositionOptions = computed(() =>
+  publishEnterpriseId.value
+    ? store.getEnterprisePositions(publishEnterpriseId.value)
+    : [],
+)
+
+function applyPublishPosition(positionId: string) {
+  publishForm.value.positionId = positionId
+  const pos = store.getEnterprisePosition(positionId)
+  if (!pos) return
+  const p = pos.profile
+  publishForm.value.positionName = p.positionName || pos.name
+  publishForm.value.jobType = p.jobType || ''
+  publishForm.value.positionRequirement = p.requirements?.trim() || ''
+  publishForm.value.description = p.description?.trim() || ''
+  publishForm.value.ageMin = p.ageMin
+  publishForm.value.ageMax = p.ageMax
+  publishForm.value.gender = p.gender || 'any'
+  publishForm.value.experience = p.experience || '不限'
+  publishForm.value.requirements = [...(p.skills ?? [])]
+}
+
+function onPublishPositionSelect(positionId: string) {
+  applyPublishPosition(positionId)
+}
 
 const publishEnrollCap = computed(() =>
   calcGrabEnrollCap(
@@ -208,14 +251,7 @@ watch(
   { immediate: true },
 )
 
-const skillOptions = ['普通话二级', '客服证', '夜班资质', '叉车证', '电工证', '中石化安全作业证', '加油操作证', '健康证']
-
-const positionRequirementPresets = [
-  '协助完成加油引导、车辆秩序维护及现场安全提示',
-  '完成收银结算、非油产品推介与基础陈列整理',
-  '配合站长完成高峰时段疏导与设备点检',
-  '按规范完成交接班记录，维护作业区域整洁',
-]
+const skillOptions = ['普通话二级', '客服证', '夜班资质', '叉车证', '电工证', '中国移动业务合规证', '营业厅业务操作证', '健康证']
 
 const grabStatusMap: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
   open: { label: '招募中', type: 'danger' },
@@ -237,7 +273,10 @@ const departmentFilterOptions = computed(() => {
 })
 
 const positionFilterOptions = computed(() => {
-  const names = new Set<string>(grabShiftPositionOptions)
+  const names = new Set<string>()
+  enterprisePositionOptions.value.forEach((p) => {
+    names.add(p.profile.positionName || p.name)
+  })
   store.grabShiftSlots.forEach((s) => {
     if (s.positionName?.trim()) names.add(s.positionName.trim())
   })
@@ -481,10 +520,19 @@ function openPublish() {
     enrollFloatMode: 'absolute',
     enrollFloatValue: 0,
     hourlySubsidy: 0,
-    positionName: '加油站营业员',
-    positionRequirement: positionRequirementPresets.join('\n'),
-    requirements: ['中石化安全作业证'],
+    positionId: '',
+    positionName: '',
+    jobType: '',
+    positionRequirement: '',
+    description: '',
+    ageMin: undefined,
+    ageMax: undefined,
+    gender: 'any',
+    experience: '不限',
+    requirements: [] as string[],
   }
+  const firstPos = enterprisePositionOptions.value[0]
+  if (firstPos) applyPublishPosition(firstPos.id)
   publishVisible.value = true
 }
 
@@ -509,16 +557,15 @@ function submitPublish() {
       return
     }
   }
-  if (!publishForm.value.positionName.trim()) {
-    ElMessage.warning('请填写岗位名称')
+  if (!publishForm.value.positionId || !publishForm.value.positionName.trim()) {
+    ElMessage.warning('请选择岗位')
     return
   }
-  if (!publishForm.value.positionRequirement.trim()) {
-    ElMessage.warning('请填写岗位要求')
-    return
-  }
-  if (!publishForm.value.requirements.length) {
-    ElMessage.warning('请至少选择一项技能要求')
+  if (
+    !publishForm.value.positionRequirement.trim() &&
+    !publishForm.value.description.trim()
+  ) {
+    ElMessage.warning('请填写任职要求或岗位描述')
     return
   }
 
@@ -544,7 +591,21 @@ function submitPublish() {
       enrollFloatValue: publishForm.value.enrollFloatValue,
       hourlySubsidy: publishForm.value.hourlySubsidy,
       positionName: publishForm.value.positionName,
-      positionRequirement: publishForm.value.positionRequirement,
+      positionId: publishForm.value.positionId,
+      positionProfile: {
+        positionName: publishForm.value.positionName.trim(),
+        jobType: publishForm.value.jobType.trim() || undefined,
+        skills: publishForm.value.requirements,
+        requirements: publishForm.value.positionRequirement.trim() || undefined,
+        description: publishForm.value.description.trim() || undefined,
+        ageMin: publishForm.value.ageMin,
+        ageMax: publishForm.value.ageMax,
+        gender: publishForm.value.gender,
+        experience: publishForm.value.experience.trim() || undefined,
+      },
+      positionRequirement:
+        publishForm.value.positionRequirement.trim() ||
+        publishForm.value.description.trim(),
       requirements: publishForm.value.requirements,
       teams: store.teams,
       shifts: store.shifts,
@@ -648,6 +709,10 @@ function showSlotDetail(slot: GrabShiftSlot) {
   detailVisible.value = true
 }
 
+const currentSlotProfile = computed(() =>
+  currentSlot.value ? resolveGrabSlotPositionProfile(currentSlot.value) : null,
+)
+
 function openPublishReview(slot: GrabShiftSlot) {
   currentSlot.value = slot
   const breakMinutes =
@@ -713,6 +778,11 @@ async function approvePublishSlot() {
       wageFee: reviewWageFee.value,
       positionRequirement: reviewForm.value.positionRequirement.trim(),
       requirements: requirements.length ? requirements : slot.requirements,
+      positionProfile: {
+        ...resolveGrabSlotPositionProfile(slot),
+        requirements: reviewForm.value.positionRequirement.trim(),
+        skills: requirements.length ? requirements : slot.requirements,
+      },
     })
     reviewVisible.value = false
     ElMessage.success('已发布到抢班大厅，灵工可报名')
@@ -1122,32 +1192,72 @@ watch(
         </el-form-item>
         <el-form-item label="岗位名称" required>
           <el-select
-            v-model="publishForm.positionName"
+            :model-value="publishForm.positionId"
+            filterable
+            placeholder="请选择企业岗位"
+            style="width: 100%"
+            @update:model-value="onPublishPositionSelect"
+          >
+            <el-option
+              v-for="p in enterprisePositionOptions"
+              :key="p.id"
+              :label="p.profile.positionName || p.name"
+              :value="p.id"
+            />
+          </el-select>
+          <p class="field-hint text-muted">选自企业岗位库，选择后带出岗位画像，可按本次发布调整</p>
+        </el-form-item>
+        <el-form-item label="岗位类型">
+          <el-input v-model="publishForm.jobType" placeholder="如：零售服务" />
+        </el-form-item>
+        <el-form-item label="技能要求">
+          <el-select
+            v-model="publishForm.requirements"
+            multiple
             filterable
             allow-create
-            default-first-option
-            placeholder="选择或输入岗位名称"
+            placeholder="多个技能可直接输入"
             style="width: 100%"
           >
-            <el-option v-for="p in grabShiftPositionOptions" :key="p" :label="p" :value="p" />
+            <el-option v-for="s in skillOptions" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
-        <el-form-item label="岗位要求" required>
+        <el-form-item label="任职要求">
           <el-input
             v-model="publishForm.positionRequirement"
             type="textarea"
-            :rows="4"
-            placeholder="描述岗位职责与工作内容，建议每行一条"
+            :rows="3"
+            placeholder="任职要求，灵工端抢班详情展示"
             maxlength="500"
             show-word-limit
           />
-          <p class="field-hint text-muted">灵工端抢班详情页展示，请明确工作内容与职责</p>
         </el-form-item>
-        <el-form-item label="技能要求" required>
-          <el-select v-model="publishForm.requirements" multiple filterable allow-create style="width: 100%">
-            <el-option v-for="s in skillOptions" :key="s" :label="s" :value="s" />
-          </el-select>
-          <p class="field-hint text-muted">至少选择一项，可输入自定义技能/证书要求</p>
+        <el-form-item label="岗位描述">
+          <el-input
+            v-model="publishForm.description"
+            type="textarea"
+            :rows="2"
+            placeholder="岗位职责与工作内容"
+            maxlength="300"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item label="年龄范围">
+          <div class="subsidy-row">
+            <el-input-number v-model="publishForm.ageMin" :min="16" :max="70" controls-position="right" />
+            <span>—</span>
+            <el-input-number v-model="publishForm.ageMax" :min="16" :max="70" controls-position="right" />
+          </div>
+        </el-form-item>
+        <el-form-item label="性别要求">
+          <el-radio-group v-model="publishForm.gender">
+            <el-radio value="any">不限</el-radio>
+            <el-radio value="male">男</el-radio>
+            <el-radio value="female">女</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="经验要求">
+          <el-input v-model="publishForm.experience" placeholder="如：不限 / 1年以上" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -1222,6 +1332,7 @@ watch(
       <template v-if="currentSlot">
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="岗位名称">{{ currentSlot.positionName || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="岗位类型">{{ currentSlotProfile?.jobType || '—' }}</el-descriptions-item>
           <el-descriptions-item label="班次">{{ resolveGrabSlotShiftName(currentSlot) }}</el-descriptions-item>
           <el-descriptions-item label="部门">{{ resolveSlotDepartmentName(currentSlot) }}</el-descriptions-item>
           <el-descriptions-item label="日期">{{ currentSlot.date }}</el-descriptions-item>
@@ -1247,12 +1358,22 @@ watch(
           <el-descriptions-item label="进度">
             {{ currentSlot.grabbedCount }}/{{ currentSlot.requiredCount }} 人
           </el-descriptions-item>
-          <el-descriptions-item label="岗位要求">
-            <div class="req-text">{{ currentSlot.positionRequirement || '—' }}</div>
+          <el-descriptions-item label="任职要求">
+            <div class="req-text">{{ currentSlotProfile?.requirements || currentSlot.positionRequirement || '—' }}</div>
           </el-descriptions-item>
+          <el-descriptions-item label="岗位描述">
+            <div class="req-text">{{ currentSlotProfile?.description || '—' }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="年龄范围">
+            {{ formatGrabPositionAgeRange(currentSlotProfile?.ageMin, currentSlotProfile?.ageMax) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="性别要求">
+            {{ formatGrabPositionGender(currentSlotProfile?.gender) }}
+          </el-descriptions-item>
+          <el-descriptions-item label="经验要求">{{ currentSlotProfile?.experience || '—' }}</el-descriptions-item>
           <el-descriptions-item label="技能要求">
             <el-tag
-              v-for="r in currentSlot.requirements"
+              v-for="r in currentSlotProfile?.skills?.length ? currentSlotProfile.skills : currentSlot.requirements"
               :key="r"
               size="small"
               effect="plain"
@@ -1260,7 +1381,10 @@ watch(
             >
               {{ r }}
             </el-tag>
-            <span v-if="!currentSlot.requirements.length" class="text-muted">—</span>
+            <span
+              v-if="!(currentSlotProfile?.skills?.length || currentSlot.requirements.length)"
+              class="text-muted"
+            >—</span>
           </el-descriptions-item>
         </el-descriptions>
 

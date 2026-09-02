@@ -71,8 +71,8 @@ const rawAttendanceGroups: AttendanceGroupSeed[] = [
   {
     id: 'ag_factory',
     code: 'HQ-ATT-002',
-    name: '中石化朝阳站考勤组',
-    description: '中石化朝阳加油站三班倒考勤',
+    name: '中国移动朝阳营业厅考勤组',
+    description: '中国移动朝阳营业厅三班倒考勤',
     status: 'enabled',
     attendanceType: 'shift',
     shiftTemplates: [
@@ -83,8 +83,8 @@ const rawAttendanceGroups: AttendanceGroupSeed[] = [
     gpsEnabled: true,
     gpsRadiusMeters: 300,
     punchLocations: [
-      { id: 'loc_factory', name: '中石化朝阳加油站', address: '北京 · 朝阳区 · 望京西路88号' },
-      { id: 'loc_hz_store', name: '中石化西湖加油站', address: '杭州 · 西湖区 · 文三路188号' },
+      { id: 'loc_factory', name: '中国移动朝阳营业厅', address: '北京 · 朝阳区 · 望京西路88号' },
+      { id: 'loc_hz_store', name: '中国移动西湖营业厅', address: '杭州 · 西湖区 · 文三路188号' },
     ],
     wifiEnabled: true,
     wifiName: 'ShiftStore-5G',
@@ -100,7 +100,7 @@ const rawAttendanceGroups: AttendanceGroupSeed[] = [
       forbidNightShiftForFemale: true,
     }),
     departmentBindings: [
-      { departmentId: 'dept_prod_a', departmentName: '中石化朝阳加油站', headcount: 20, managerName: '李娜' },
+      { departmentId: 'dept_prod_a', departmentName: '中国移动朝阳营业厅', headcount: 20, managerName: '李娜' },
     ],
     payRule: {
       baseHourlyRate: 38,
@@ -110,7 +110,7 @@ const rawAttendanceGroups: AttendanceGroupSeed[] = [
     },
     pricingConfig: createDefaultPricingConfig(38),
     minMonthlyOnlineHours: 176,
-    attendanceArea: '中石化朝阳加油站',
+    attendanceArea: '中国移动朝阳营业厅',
     createdAt: '2026-06-05T08:00:00.000Z',
     updatedAt: '2026-07-15T14:00:00.000Z',
   },

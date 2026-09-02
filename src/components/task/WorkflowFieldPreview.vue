@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { WorkflowFieldConfig } from '@/types'
+import type { WorkflowFieldConfig, WorkflowRole } from '@/types'
 import { workflowFieldTypeMap } from '@/constants/task'
 
-const props = defineProps<{
-  fields: WorkflowFieldConfig[]
-  previewNodeId?: string
-  nodeLabel?: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    fields: WorkflowFieldConfig[]
+    previewNodeId?: string
+    nodeLabel?: string
+    nodeRole?: WorkflowRole
+    compact?: boolean
+  }>(),
+  { compact: false, nodeRole: 'worker' },
+)
+
+const isEnterpriseDialog = computed(() => props.nodeRole === 'enterprise')
+const previewTitle = computed(() => (isEnterpriseDialog.value ? '弹窗预览' : '填报预览'))
+const dialogTitle = computed(() => `企业操作 · ${props.nodeLabel || '当前节点'}`)
 
 const visibleFields = computed(() =>
   props.fields
@@ -21,12 +30,67 @@ const visibleFields = computed(() =>
 </script>
 
 <template>
-  <div class="field-preview">
+  <div class="field-preview" :class="{ compact, enterprise: isEnterpriseDialog }">
     <div class="preview-header">
-      <span class="preview-title">页面字段预览</span>
+      <span class="preview-title">{{ previewTitle }}</span>
       <span v-if="nodeLabel" class="preview-node">{{ nodeLabel }}</span>
     </div>
-    <div class="preview-device">
+
+    <div v-if="isEnterpriseDialog" class="preview-enterprise-stage">
+      <div class="preview-backdrop" />
+      <div class="preview-dialog">
+        <div class="dialog-header">
+          <div>
+            <h4>{{ dialogTitle }}</h4>
+            <p class="dialog-sub">企业端操作弹窗 · 填写采集字段后执行</p>
+          </div>
+          <span class="dialog-close">×</span>
+        </div>
+        <div class="dialog-body">
+          <p v-if="visibleFields.length" class="dialog-tip">
+            请填写以下信息后，点击底部按钮完成「{{ nodeLabel || '当前节点' }}」操作
+          </p>
+          <div v-if="visibleFields.length" class="preview-form dialog-form">
+            <div v-for="field in visibleFields" :key="field.id" class="preview-field">
+              <label class="field-label">
+                {{ field.name }}
+                <span v-if="field.required" class="required">*</span>
+                <span class="field-type">{{ workflowFieldTypeMap[field.fieldType] }}</span>
+              </label>
+              <div class="field-control" :class="`type-${field.fieldType}`">
+                <div v-if="field.fieldType === 'textarea'" class="mock-textarea">请输入{{ field.name }}</div>
+                <template v-else-if="field.fieldType === 'select'">
+                  <div class="mock-select">
+                    {{ field.options?.[0] ?? `请选择${field.name}` }}
+                    <span class="mock-arrow">▼</span>
+                  </div>
+                  <p v-if="field.options?.length" class="mock-options-hint">
+                    共 {{ field.options.length }} 个选项
+                  </p>
+                </template>
+                <div v-else-if="field.fieldType === 'switch'" class="mock-switch-row">
+                  <span class="mock-switch-label">{{ field.name }}</span>
+                  <div class="mock-switch"><span class="mock-switch-knob" /></div>
+                </div>
+                <div v-else-if="field.fieldType === 'attachment'" class="mock-upload">
+                  + 上传{{ field.name }}
+                </div>
+                <div v-else-if="field.fieldType === 'date'" class="mock-input">请选择{{ field.name }}</div>
+                <div v-else-if="field.fieldType === 'amount'" class="mock-input mock-amount">¥ 0.00</div>
+                <div v-else class="mock-input">请输入{{ field.name }}</div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="preview-empty dialog-empty">填写字段名称后将在此预览企业端弹窗效果</div>
+        </div>
+        <div class="dialog-footer">
+          <el-button size="small" disabled>取消</el-button>
+          <el-button type="primary" size="small" disabled>确认提交</el-button>
+        </div>
+      </div>
+    </div>
+
+    <div v-else class="preview-device">
       <div class="preview-status-bar">
         <span>9:41</span>
         <span>任务填报</span>
@@ -41,35 +105,31 @@ const visibleFields = computed(() =>
               <span class="field-type">{{ workflowFieldTypeMap[field.fieldType] }}</span>
             </label>
             <div class="field-control" :class="`type-${field.fieldType}`">
-              <template v-if="field.fieldType === 'textarea'">
-                <div class="mock-textarea">请输入{{ field.name }}</div>
-              </template>
+              <div v-if="field.fieldType === 'textarea'" class="mock-textarea">请输入{{ field.name }}</div>
               <template v-else-if="field.fieldType === 'select'">
                 <div class="mock-select">
                   {{ field.options?.[0] ?? `请选择${field.name}` }}
                   <span class="mock-arrow">▼</span>
                 </div>
+                <p v-if="field.options?.length" class="mock-options-hint">
+                  共 {{ field.options.length }} 个选项
+                </p>
               </template>
-              <template v-else-if="field.fieldType === 'switch'">
+              <div v-else-if="field.fieldType === 'switch'" class="mock-switch-row">
+                <span class="mock-switch-label">{{ field.name }}</span>
                 <div class="mock-switch"><span class="mock-switch-knob" /></div>
-              </template>
-              <template v-else-if="field.fieldType === 'attachment'">
-                <div class="mock-upload">+ 上传附件</div>
-              </template>
-              <template v-else-if="field.fieldType === 'date'">
-                <div class="mock-input">请选择日期</div>
-              </template>
-              <template v-else-if="field.fieldType === 'amount'">
-                <div class="mock-input mock-amount">¥ 0.00</div>
-              </template>
-              <template v-else>
-                <div class="mock-input">请输入{{ field.name }}</div>
-              </template>
+              </div>
+              <div v-else-if="field.fieldType === 'attachment'" class="mock-upload">
+                + 上传{{ field.name }}
+              </div>
+              <div v-else-if="field.fieldType === 'date'" class="mock-input">请选择{{ field.name }}</div>
+              <div v-else-if="field.fieldType === 'amount'" class="mock-input mock-amount">¥ 0.00</div>
+              <div v-else class="mock-input">请输入{{ field.name }}</div>
             </div>
           </div>
           <el-button type="primary" class="preview-submit" disabled>提交</el-button>
         </div>
-        <div v-else class="preview-empty">当前节点暂无下发字段</div>
+        <div v-else class="preview-empty">填写字段名称后将在此预览灵工端展示效果</div>
       </div>
     </div>
   </div>
@@ -77,7 +137,14 @@ const visibleFields = computed(() =>
 
 <style scoped>
 .field-preview {
-  margin-top: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px dashed #ebeef5;
+}
+
+.field-preview.compact .preview-body,
+.field-preview.compact .preview-enterprise-stage {
+  min-height: 140px;
 }
 
 .preview-header {
@@ -96,6 +163,100 @@ const visibleFields = computed(() =>
 .preview-node {
   font-size: 12px;
   color: #909399;
+}
+
+.preview-enterprise-stage {
+  position: relative;
+  min-height: 260px;
+  border: 1px solid #e4e7ed;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #eef2f6;
+}
+
+.preview-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.preview-dialog {
+  position: relative;
+  z-index: 1;
+  width: calc(100% - 24px);
+  max-width: 320px;
+  margin: 28px auto 16px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+}
+
+.dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #ebeef5;
+  background: linear-gradient(180deg, #fafbfc, #fff);
+}
+
+.dialog-header h4 {
+  margin: 0;
+  font-size: 14px;
+  color: #303133;
+}
+
+.dialog-sub {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #909399;
+}
+
+.dialog-close {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #909399;
+  font-size: 16px;
+  line-height: 1;
+  background: #f5f7fa;
+}
+
+.dialog-body {
+  padding: 12px 14px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.dialog-tip {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.dialog-form {
+  padding: 0;
+  background: transparent;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px solid #ebeef5;
+  background: #fafafa;
+}
+
+.dialog-empty {
+  padding: 24px 8px;
+  background: transparent;
 }
 
 .preview-device {
@@ -172,6 +333,12 @@ const visibleFields = computed(() =>
   align-items: center;
 }
 
+.mock-options-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: #909399;
+}
+
 .mock-arrow {
   font-size: 10px;
 }
@@ -187,12 +354,25 @@ const visibleFields = computed(() =>
   background: #ecf5ff;
 }
 
+.mock-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+
+.mock-switch-label {
+  font-size: 13px;
+  color: #606266;
+}
+
 .mock-switch {
   width: 40px;
   height: 22px;
   border-radius: 11px;
   background: #409eff;
   position: relative;
+  flex-shrink: 0;
 }
 
 .mock-switch-knob {

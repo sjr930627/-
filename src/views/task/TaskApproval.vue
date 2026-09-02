@@ -341,6 +341,44 @@ async function rejectTask() {
   }
 }
 
+function saveActiveTask() {
+  const task = currentTask.value
+  if (!task || task.status !== 'active') return
+  if (
+    !reviewForm.value.unlimitedQuantity &&
+    (!reviewForm.value.plannedTotal || reviewForm.value.plannedTotal < 1)
+  ) {
+    ElMessage.warning('请填写任务数量或选择无上限')
+    return
+  }
+  if (
+    !reviewForm.value.longTerm &&
+    (!reviewForm.value.dateRange?.length || reviewForm.value.dateRange.length < 2)
+  ) {
+    ElMessage.warning('请设置任务期限或选择长期')
+    return
+  }
+  const { start, end } = buildTimeRange(
+    reviewForm.value.longTerm,
+    reviewForm.value.dateRange,
+  )
+  try {
+    store.updateActiveEnterpriseTask(task.id, {
+      unlimitedQuantity: reviewForm.value.unlimitedQuantity,
+      plannedTotal: reviewForm.value.unlimitedQuantity
+        ? undefined
+        : reviewForm.value.plannedTotal,
+      longTerm: reviewForm.value.longTerm,
+      startTime: start,
+      endTime: end,
+    })
+    detailVisible.value = false
+    ElMessage.success('任务数量与期限已更新')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  }
+}
+
 function resetPublishForm() {
   const enterpriseId = enterpriseOptions.value[0]?.id ?? ''
   const depts = departmentsOfEnterprise(enterpriseId)
@@ -600,16 +638,25 @@ function syncSettlementFromCustomer() {
         title="可修改任务发布内容，并配置灵工结算价后发布到任务大厅"
         style="margin-bottom: 16px"
       />
-      <el-form
-        label-position="top"
-        :disabled="currentTask.status !== 'pending'"
-      >
+      <el-alert
+        v-else-if="currentTask.status === 'active'"
+        type="warning"
+        :closable="false"
+        title="进行中的任务仅可修改任务数量与任务期限"
+        style="margin-bottom: 16px"
+      />
+      <el-form label-position="top">
         <TaskFormSection title="基本信息" subtitle="流程、部门与内容" icon="基" icon-variant="blue">
           <el-form-item label="企业">
             <el-input :model-value="currentTask.enterpriseName" disabled />
           </el-form-item>
           <el-form-item label="部门/公司" required>
-            <el-select v-model="reviewForm.departmentId" style="width: 100%" filterable>
+            <el-select
+              v-model="reviewForm.departmentId"
+              style="width: 100%"
+              filterable
+              :disabled="currentTask.status !== 'pending'"
+            >
               <el-option
                 v-for="d in reviewDepartmentOptions"
                 :key="d.id"
@@ -619,7 +666,11 @@ function syncSettlementFromCustomer() {
             </el-select>
           </el-form-item>
           <el-form-item label="任务流程配置" required>
-            <el-select v-model="reviewForm.workflowId" style="width: 100%">
+            <el-select
+              v-model="reviewForm.workflowId"
+              style="width: 100%"
+              :disabled="currentTask.status !== 'pending'"
+            >
               <el-option
                 v-for="opt in reviewWorkflowOptions"
                 :key="opt.value"
@@ -629,39 +680,66 @@ function syncSettlementFromCustomer() {
             </el-select>
           </el-form-item>
           <el-form-item label="任务名称" required>
-            <el-input v-model="reviewForm.name" />
+            <el-input v-model="reviewForm.name" :disabled="currentTask.status !== 'pending'" />
           </el-form-item>
           <el-form-item label="任务内容" required>
-            <el-input v-model="reviewForm.description" type="textarea" :rows="3" />
+            <el-input
+              v-model="reviewForm.description"
+              type="textarea"
+              :rows="3"
+              :disabled="currentTask.status !== 'pending'"
+            />
           </el-form-item>
           <el-form-item label="任务地点" required>
-            <el-input v-model="reviewForm.region" />
+            <el-input v-model="reviewForm.region" :disabled="currentTask.status !== 'pending'" />
           </el-form-item>
         </TaskFormSection>
 
-        <TaskFormSection title="客户定价" subtitle="企业侧发布单价，可随内容调整" icon="价" icon-variant="green">
+        <TaskFormSection
+          title="客户定价"
+          subtitle="企业侧发布单价，可随内容调整"
+          icon="价"
+          icon-variant="green"
+        >
           <el-form-item label="单价模式">
-            <el-radio-group v-model="reviewForm.pricingMode">
+            <el-radio-group v-model="reviewForm.pricingMode" :disabled="currentTask.status !== 'pending'">
               <el-radio value="fixed">固定单价</el-radio>
               <el-radio value="tiered">阶梯单价</el-radio>
             </el-radio-group>
           </el-form-item>
           <el-form-item v-if="reviewForm.pricingMode === 'fixed'" label="固定单价">
-            <el-input-number v-model="reviewForm.fixedPrice" :min="1" :max="9999" /> 元/单
+            <el-input-number
+              v-model="reviewForm.fixedPrice"
+              :min="1"
+              :max="9999"
+              :disabled="currentTask.status !== 'pending'"
+            />
+            元/单
           </el-form-item>
           <template v-else>
             <el-form-item label="阶梯单价">
               <div class="tier-list">
                 <div v-for="(tier, index) in reviewForm.tieredPrices" :key="index" class="tier-row">
-                  <el-input-number v-model="tier.minCount" :min="1" controls-position="right" />
+                  <el-input-number
+                    v-model="tier.minCount"
+                    :min="1"
+                    controls-position="right"
+                    :disabled="currentTask.status !== 'pending'"
+                  />
                   <span>~</span>
                   <el-input-number
                     v-model="tier.maxCount"
                     :min="tier.minCount"
                     controls-position="right"
+                    :disabled="currentTask.status !== 'pending'"
                   />
                   <span>单</span>
-                  <el-input-number v-model="tier.unitPrice" :min="1" controls-position="right" />
+                  <el-input-number
+                    v-model="tier.unitPrice"
+                    :min="1"
+                    controls-position="right"
+                    :disabled="currentTask.status !== 'pending'"
+                  />
                   <span>元/单</span>
                   <el-button
                     v-if="currentTask.status === 'pending'"
@@ -684,10 +762,18 @@ function syncSettlementFromCustomer() {
             </el-form-item>
           </template>
           <el-form-item label="任务激励">
-            <el-input v-model="reviewForm.incentive" placeholder="可选" />
+            <el-input
+              v-model="reviewForm.incentive"
+              placeholder="可选"
+              :disabled="currentTask.status !== 'pending'"
+            />
           </el-form-item>
           <el-form-item label="培训要求">
-            <el-input v-model="reviewForm.trainingCourseId" placeholder="可选，培训课程 ID" />
+            <el-input
+              v-model="reviewForm.trainingCourseId"
+              placeholder="可选，培训课程 ID"
+              :disabled="currentTask.status !== 'pending'"
+            />
           </el-form-item>
         </TaskFormSection>
 
@@ -699,6 +785,7 @@ function syncSettlementFromCustomer() {
                 :min="0"
                 :max="9999"
                 :step="1"
+                :disabled="currentTask.status !== 'pending'"
               />
               <span>元/单</span>
               <el-button
@@ -719,10 +806,14 @@ function syncSettlementFromCustomer() {
             <TaskQuantityField
               v-model="reviewForm.plannedTotal"
               v-model:unlimited="reviewForm.unlimitedQuantity"
+              :disabled="currentTask.status !== 'pending' && currentTask.status !== 'active'"
             />
           </el-form-item>
           <el-form-item label="任务期限">
-            <el-radio-group v-model="reviewForm.longTerm">
+            <el-radio-group
+              v-model="reviewForm.longTerm"
+              :disabled="currentTask.status !== 'pending' && currentTask.status !== 'active'"
+            >
               <el-radio :value="true">长期</el-radio>
               <el-radio :value="false">指定时间段</el-radio>
             </el-radio-group>
@@ -735,16 +826,23 @@ function syncSettlementFromCustomer() {
               start-placeholder="开始"
               end-placeholder="结束"
               style="width: 100%"
+              :disabled="currentTask.status !== 'pending' && currentTask.status !== 'active'"
             />
           </el-form-item>
           <el-form-item label="派单方式" required>
-            <el-radio-group v-model="reviewForm.dispatchMode">
+            <el-radio-group v-model="reviewForm.dispatchMode" :disabled="currentTask.status !== 'pending'">
               <el-radio value="hall">发布到任务大厅</el-radio>
               <el-radio value="assign">指派特定人员</el-radio>
             </el-radio-group>
           </el-form-item>
           <el-form-item v-if="reviewForm.dispatchMode === 'assign'" label="指派人员">
-            <el-select v-model="reviewForm.assigneeIds" multiple filterable style="width: 100%">
+            <el-select
+              v-model="reviewForm.assigneeIds"
+              multiple
+              filterable
+              style="width: 100%"
+              :disabled="currentTask.status !== 'pending'"
+            >
               <el-option
                 v-for="w in workerOptions"
                 :key="w.value"
@@ -760,6 +858,7 @@ function syncSettlementFromCustomer() {
               :min="1"
               :max="99"
               style="margin: 0 8px"
+              :disabled="currentTask.status !== 'pending'"
             />
             <span>单</span>
           </el-form-item>
@@ -781,6 +880,9 @@ function syncSettlementFromCustomer() {
       <div v-if="currentTask.status === 'pending'" class="drawer-actions">
         <el-button type="success" @click="approveTask">通过并发布到大厅</el-button>
         <el-button type="danger" @click="rejectTask">驳回</el-button>
+      </div>
+      <div v-else-if="currentTask.status === 'active'" class="drawer-actions">
+        <el-button type="primary" @click="saveActiveTask">保存修改</el-button>
       </div>
     </template>
   </el-drawer>

@@ -155,7 +155,7 @@ async function handleRegister() {
 .link-btn {
   border: none;
   background: none;
-  color: #3b82f6;
+  color: #4FD1C5;
   font-weight: 600;
   cursor: pointer;
 }

@@ -1,4 +1,4 @@
-/** 考试场景图（中石化加油站主题，public/exam 静态资源） */
+/** 考试场景图（中国移动营业厅主题，public/exam 静态资源） */
 export const EXAM_SCENE_IMAGES = {
   missingExtinguisher: '/exam/sinopec-missing-extinguisher.svg',
   violations: '/exam/sinopec-violations.svg',
@@ -11,7 +11,7 @@ export const EXAM_SCENE_IMAGES = {
   extinguisherWrong: '/exam/sinopec-extinguisher-wrong.svg',
 } as const
 
-/** AI 出题模板 imageSeed → 中石化场景图 */
+/** AI 出题模板 imageSeed → 中国移动场景图 */
 export const AI_EXAM_IMAGE_BY_SEED: Record<string, string> = {
   'ai-sec-1': EXAM_SCENE_IMAGES.passwordRisk,
   'ai-sec-2': EXAM_SCENE_IMAGES.printerRisk,

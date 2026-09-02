@@ -1,11 +1,12 @@
-/* 小程序端 — 蓝色主题，贴近设计稿 */
+/* 小程序端 — 青绿主色 #4FD1C5 */
 .mini-app-shell {
-  --mini-primary: #3b82f6;
-  --mini-primary-light: #eff6ff;
-  --mini-primary-dark: #2563eb;
-  --app-primary: #3b82f6;
-  --app-primary-light: #eff6ff;
-  --app-primary-dark: #2563eb;
+  --mini-primary: #4FD1C5;
+  --mini-primary-light: #E6FFFA;
+  --mini-primary-dark: #38B2AC;
+  --mini-primary-mid: #81E6D9;
+  --app-primary: #4FD1C5;
+  --app-primary-light: #E6FFFA;
+  --app-primary-dark: #38B2AC;
   --mini-success: #22c55e;
   --mini-warning: #f59e0b;
   --mini-danger: #ef4444;
@@ -212,7 +213,7 @@
 .mini-tag.red { background: #fef2f2; color: #ef4444; }
 .mini-tag.green { background: #f0fdf4; color: #22c55e; }
 .mini-tag.orange { background: #fff7ed; color: #f97316; }
-.mini-tag.blue { background: #eff6ff; color: #3b82f6; }
+.mini-tag.blue { background: var(--mini-primary-light); color: var(--mini-primary); }
 .mini-tag.purple { background: #faf5ff; color: #a855f7; }
 
 .mini-list-item {
@@ -318,7 +319,7 @@
   width: 140px;
   height: 140px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--mini-primary), #60a5fa);
+  background: linear-gradient(135deg, var(--mini-primary), var(--mini-primary-mid));
   color: #fff;
   display: flex;
   flex-direction: column;
@@ -326,7 +327,7 @@
   justify-content: center;
   margin: 0 auto;
   cursor: pointer;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35);
+  box-shadow: 0 8px 24px rgba(79, 209, 197, 0.35);
   border: none;
 }
 
@@ -350,4 +351,158 @@
   font-size: 12px;
   opacity: 0.9;
   margin-top: 4px;
+}
+
+/* Element Plus — 与主页青绿主题一致 */
+.mini-app-shell {
+  --el-color-primary: var(--mini-primary);
+  --el-color-primary-light-3: #7DE8DE;
+  --el-color-primary-light-5: #B2F5EA;
+  --el-color-primary-light-7: #CCFBF1;
+  --el-color-primary-light-8: #E6FFFA;
+  --el-color-primary-light-9: #F0FFFE;
+  --el-color-primary-dark-2: var(--mini-primary-dark);
+}
+
+.mini-app-shell .el-button--primary {
+  --el-button-bg-color: var(--mini-primary);
+  --el-button-border-color: var(--mini-primary);
+  --el-button-hover-bg-color: var(--mini-primary-dark);
+  --el-button-hover-border-color: var(--mini-primary-dark);
+  --el-button-active-bg-color: var(--mini-primary-dark);
+  --el-button-active-border-color: var(--mini-primary-dark);
+}
+
+.mini-app-shell .el-message-box__btns .el-button--primary {
+  --el-button-bg-color: var(--mini-primary);
+  --el-button-border-color: var(--mini-primary);
+  --el-button-hover-bg-color: var(--mini-primary-dark);
+  --el-button-hover-border-color: var(--mini-primary-dark);
+}
+
+.mini-app-shell .el-drawer.btt {
+  border-radius: 16px 16px 0 0;
+}
+
+.mini-app-shell .el-drawer__header {
+  margin-bottom: 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--mini-border);
+}
+
+.mini-app-shell .el-drawer__title {
+  font-weight: 700;
+  color: var(--mini-text);
+}
+
+.mini-app-shell .el-message-box {
+  border-radius: 16px;
+  max-width: calc(100vw - 32px);
+}
+
+/* 二级/三级页 — 底部操作栏 */
+.mini-footer-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  max-width: 430px;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.08);
+}
+
+.mini-footer-primary {
+  flex: 1;
+  padding: 14px 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--mini-primary);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mini-footer-primary:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
+.mini-footer-secondary {
+  flex: 0 0 88px;
+  padding: 14px 0;
+  border: none;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #64748b;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mini-footer-outline {
+  flex: 1;
+  padding: 12px 0;
+  border: 1px solid var(--mini-border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--mini-text-secondary);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 底部弹层 / 确认框 */
+.mini-sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.mini-sheet {
+  width: min(430px, 100%);
+  max-height: 92vh;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mini-sheet-submit {
+  margin-top: 8px;
+  height: 42px;
+  width: 100%;
+  border: none;
+  border-radius: 10px;
+  background: var(--mini-primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mini-sheet-submit:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
+.mini-dialog-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.mini-dialog-actions .mini-btn-outline,
+.mini-dialog-actions .mini-btn-primary,
+.mini-dialog-actions .mini-footer-outline,
+.mini-dialog-actions .mini-footer-primary {
+  flex: 1;
 }

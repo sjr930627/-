@@ -839,30 +839,16 @@ function confirmSaveTemplate() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: var(--app-primary);
 }
 
-.section-num--1 {
-  background: #3b82f6;
-}
-
-.section-num--2 {
-  background: #8b5cf6;
-}
-
-.section-num--3 {
-  background: #ec4899;
-}
-
-.section-num--4 {
-  background: #f59e0b;
-}
-
-.section-num--5 {
-  background: #10b981;
-}
-
+.section-num--1,
+.section-num--2,
+.section-num--3,
+.section-num--4,
+.section-num--5,
 .section-num--6 {
-  background: #06b6d4;
+  background: var(--app-primary);
 }
 
 .section-title {

@@ -281,7 +281,7 @@ function viewEnterprise(row: Enterprise) {
   >
     <el-form label-width="100px">
       <el-form-item label="企业名称" required>
-        <el-input v-model="tenantForm.name" placeholder="如：中石化北京朝阳分公司" />
+        <el-input v-model="tenantForm.name" placeholder="如：中国移动北京朝阳分公司" />
       </el-form-item>
       <el-form-item label="企业简称">
         <el-input v-model="tenantForm.shortName" placeholder="选填" />

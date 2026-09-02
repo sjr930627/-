@@ -283,9 +283,9 @@ const certCount = computed(() => selectedCertIds.value.length)
     </div>
 
     <!-- 技能证书底部操作栏 -->
-    <div v-if="stepMeta.key === 'certificates'" class="cert-footer">
-      <button type="button" class="footer-skip" @click="skipCertificates">跳过</button>
-      <button type="button" class="footer-next" @click="submitCertificates">
+    <div v-if="stepMeta.key === 'certificates'" class="mini-footer-bar cert-footer">
+      <button type="button" class="mini-footer-secondary" @click="skipCertificates">跳过</button>
+      <button type="button" class="mini-footer-primary" @click="submitCertificates">
         下一步
         <span class="footer-count">({{ certCount }}/{{ MINIAPP_SKILL_CERT_MAX }})</span>
       </button>
@@ -296,7 +296,7 @@ const certCount = computed(() => selectedCertIds.value.length)
 <style scoped>
 .onboarding-page {
   min-height: 100%;
-  background: #f3f0ff;
+  background: var(--mini-bg, #f3f4f6);
   display: flex;
   flex-direction: column;
 }
@@ -326,12 +326,12 @@ const certCount = computed(() => selectedCertIds.value.length)
 }
 
 .step-dot.active {
-  background: #22c55e;
+  background: var(--mini-primary);
   transform: scale(1.15);
 }
 
 .step-dot.done {
-  background: #86efac;
+  background: var(--mini-primary-light);
 }
 
 .page-title {
@@ -424,45 +424,8 @@ const certCount = computed(() => selectedCertIds.value.length)
 }
 
 .face-status.ok {
-  background: #ecfdf5;
-  color: #15803d;
-}
-
-.cert-footer {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 30;
-  display: flex;
-  gap: 12px;
-  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
-  background: #fff;
-  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.08);
-}
-
-.footer-skip {
-  flex: 0 0 88px;
-  padding: 14px 0;
-  border: none;
-  border-radius: 999px;
-  background: #f3f4f6;
-  color: #64748b;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.footer-next {
-  flex: 1;
-  padding: 14px 0;
-  border: none;
-  border-radius: 999px;
-  background: #86efac;
-  color: #14532d;
-  font-size: 16px;
-  font-weight: 700;
-  cursor: pointer;
+  background: var(--mini-primary-light);
+  color: var(--mini-primary-dark);
 }
 
 .footer-count {

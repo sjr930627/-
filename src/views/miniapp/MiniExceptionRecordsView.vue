@@ -29,6 +29,10 @@ const pendingCount = computed(
 function openRecord(record: (typeof allRecords.value)[number]) {
   if (record.type === 'makeup') {
     router.push(`/miniapp/schedule/makeup/${record.id}`)
+    return
+  }
+  if (record.type === 'cancel_shift') {
+    router.push(`/miniapp/schedule/cancel-shift/${record.id}`)
   }
 }
 
@@ -66,9 +70,8 @@ function formatTime(iso: string) {
       <div
         v-for="record in displayRecords"
         :key="`${record.type}-${record.id}`"
-        class="exc-card"
-        :class="{ clickable: record.type === 'makeup' }"
-        @click="record.type === 'makeup' && openRecord(record)"
+        class="exc-card clickable"
+        @click="openRecord(record)"
       >
         <div class="exc-head">
           <div>
@@ -80,8 +83,7 @@ function formatTime(iso: string) {
         <div class="exc-reason">{{ record.reason }}</div>
         <div class="exc-foot">
           <span>申请于 {{ formatTime(record.createdAt) }}</span>
-          <span v-if="record.type === 'makeup'">查看详情 ›</span>
-          <span v-else-if="record.status === 'approved'">排班已取消</span>
+          <span>查看详情 ›</span>
         </div>
       </div>
 
@@ -118,9 +120,9 @@ function formatTime(iso: string) {
 }
 
 .exc-tab.active {
-  border-color: #3b82f6;
-  background: #eff6ff;
-  color: #3b82f6;
+  border-color: #4FD1C5;
+  background: #E6FFFA;
+  color: #4FD1C5;
   font-weight: 600;
 }
 
@@ -129,7 +131,7 @@ function formatTime(iso: string) {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: #3b82f6;
+  background: #4FD1C5;
   color: #fff;
   font-size: 10px;
   line-height: 16px;

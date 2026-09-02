@@ -9,6 +9,7 @@ import {
   EditPen,
   List,
   Reading,
+  OfficeBuilding,
   SwitchButton,
   Tickets,
   User,
@@ -39,7 +40,9 @@ const incomeSummary = computed(() => {
     pending:
       pending?.estimatedIncome ??
       records.filter((r) => r.status === 'pending_settlement').reduce((s, r) => s + r.amount, 0),
-    claimed: records.filter((r) => r.status === 'claimed').reduce((s, r) => s + (r.netAmount ?? r.amount), 0),
+    claimed: records
+      .filter((r) => r.status === 'claimed')
+      .reduce((s, r) => s + (r.netAmount ?? r.amount), 0),
   }
 })
 
@@ -53,11 +56,12 @@ const iconItems: {
   { path: '/miniapp/training/materials', icon: Reading, label: '我的培训', bg: '#f0fdf4', color: '#22c55e' },
   { path: '/miniapp/training/exams', icon: EditPen, label: '我的考核', bg: '#fff7ed', color: '#f97316' },
   { path: '/miniapp/income', icon: Wallet, label: '我的收入', bg: '#fff7ed', color: '#f97316' },
-  { path: '/miniapp/tasks', icon: List, label: '任务进度', bg: '#eff6ff', color: '#3b82f6' },
-  { path: '/miniapp/applications', icon: Tickets, label: '我的报名', bg: '#eff6ff', color: '#3b82f6' },
+  { path: '/miniapp/tasks', icon: List, label: '任务进度', bg: '#E6FFFA', color: '#4FD1C5' },
+  { path: '/miniapp/applications', icon: Tickets, label: '我的报名', bg: '#E6FFFA', color: '#4FD1C5' },
+  { path: '/miniapp/join-manage', icon: OfficeBuilding, label: '入驻管理', bg: '#eff6ff', color: '#3b82f6' },
   { path: '/miniapp/payment', icon: CreditCard, label: '收款绑定', bg: '#fff7ed', color: '#f97316' },
   { path: '/miniapp/agreements', icon: Document, label: '协议管理', bg: '#faf5ff', color: '#a855f7' },
-  { path: '/miniapp/worker-archive', icon: User, label: '我的资料', bg: '#eff6ff', color: '#3b82f6' },
+  { path: '/miniapp/worker-archive', icon: User, label: '我的资料', bg: '#E6FFFA', color: '#4FD1C5' },
   { path: '/miniapp/part-time-pref', icon: Calendar, label: '兼职偏好', bg: '#f5f3ff', color: '#8b5cf6' },
 ]
 
@@ -187,7 +191,7 @@ async function handleLogout() {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6, #60a5fa);
+  background: linear-gradient(135deg, #4FD1C5, #81E6D9);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -221,8 +225,8 @@ async function handleLogout() {
 }
 
 .insurance-status.insured {
-  background: #eff6ff;
-  color: #3b82f6;
+  background: #E6FFFA;
+  color: #4FD1C5;
 }
 
 .insurance-status.uninsured {
@@ -300,20 +304,20 @@ async function handleLogout() {
   margin-bottom: 12px;
   padding: 14px 16px;
   border-radius: 14px;
-  background: linear-gradient(135deg, #eff6ff, #dbeafe);
+  background: linear-gradient(135deg, #E6FFFA, #CCFBF1);
   cursor: pointer;
 }
 
 .banner-title {
   font-size: 14px;
   font-weight: 700;
-  color: #1d4ed8;
+  color: #319795;
 }
 
 .banner-desc {
   margin-top: 4px;
   font-size: 12px;
-  color: #3b82f6;
+  color: #4FD1C5;
   line-height: 1.4;
 }
 
@@ -321,7 +325,7 @@ async function handleLogout() {
   flex-shrink: 0;
   font-size: 13px;
   font-weight: 600;
-  color: #2563eb;
+  color: #38B2AC;
 }
 
 .logout-btn {

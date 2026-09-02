@@ -1,14 +1,7 @@
 <script setup lang="ts">
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  Box,
-  Connection,
-  House,
-  OfficeBuilding,
-  User,
-} from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
@@ -18,11 +11,8 @@ import {
   resolvePricingForTask,
 } from '@/services/miniTask'
 import {
-  getCategoryLabel,
   getEnterpriseHallLabel,
   getTaskHallExtra,
-  miniTaskCategoryConfig,
-  type MiniTaskCategory,
 } from '@/mock/miniTaskHallSeed'
 
 const route = useRoute()
@@ -30,16 +20,6 @@ const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const { ensureActionAllowed } = useMiniAppActionGate()
-
-const taskCategory = ref<MiniTaskCategory>('main')
-
-const categoryIcons: Record<MiniTaskCategory, typeof Box> = {
-  main: Box,
-  personal: User,
-  family: House,
-  gov: OfficeBuilding,
-  converged: Connection,
-}
 
 const enterpriseId = computed(() => String(route.params.enterpriseId))
 const enterpriseNameFilter = computed(() => {
@@ -53,7 +33,7 @@ const enterpriseName = computed(() => {
   return task?.enterpriseName ?? '企业任务'
 })
 
-const allTaskRows = computed(() =>
+const taskRows = computed(() =>
   store.tasks
     .filter(
       (t) =>
@@ -70,12 +50,8 @@ const allTaskRows = computed(() =>
     }),
 )
 
-const taskRows = computed(() =>
-  allTaskRows.value.filter((row) => row.category === taskCategory.value),
-)
-
 const industryLabel = computed(
-  () => `${getEnterpriseHallLabel(enterpriseId.value)} · ${allTaskRows.value.length}个任务`,
+  () => `${getEnterpriseHallLabel(enterpriseId.value)} · ${taskRows.value.length}个任务`,
 )
 
 function openTaskDetail(taskId: string) {
@@ -114,24 +90,8 @@ async function openTaskClaim(taskId: string, e: Event) {
       </div>
     </div>
 
-    <div class="task-category-row">
-      <button
-        v-for="cat in miniTaskCategoryConfig"
-        :key="cat.key"
-        type="button"
-        class="task-category-item"
-        :class="{ active: taskCategory === cat.key }"
-        @click="taskCategory = cat.key"
-      >
-        <span class="cat-icon" :style="{ color: taskCategory === cat.key ? cat.color : '#9ca3af' }">
-          <el-icon :size="22"><component :is="categoryIcons[cat.key]" /></el-icon>
-        </span>
-        <span class="cat-label">{{ cat.label }}</span>
-      </button>
-    </div>
-
     <div class="task-list-head">
-      <span>{{ getCategoryLabel(taskCategory) }}任务 · {{ taskRows.length }}项</span>
+      <span>全部任务 · {{ taskRows.length }}项</span>
     </div>
 
     <div
@@ -155,7 +115,7 @@ async function openTaskClaim(taskId: string, e: Event) {
       </button>
     </div>
 
-    <div v-if="taskRows.length === 0" class="mini-empty">该分类暂无任务</div>
+    <div v-if="taskRows.length === 0" class="mini-empty">暂无任务</div>
   </div>
 </template>
 
@@ -213,50 +173,6 @@ async function openTaskClaim(taskId: string, e: Event) {
   color: var(--mini-text-muted);
 }
 
-.task-category-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 12px 8px;
-  background: #fff;
-  border-bottom: 1px solid #f3f4f6;
-  overflow-x: auto;
-}
-
-.task-category-item {
-  flex: 1;
-  min-width: 64px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  padding: 4px 2px;
-  position: relative;
-}
-
-.task-category-item.active::after {
-  content: '';
-  position: absolute;
-  bottom: -12px;
-  left: 20%;
-  right: 20%;
-  height: 3px;
-  background: var(--mini-primary);
-  border-radius: 2px;
-}
-
-.cat-label {
-  font-size: 11px;
-  color: var(--mini-text-muted);
-}
-
-.task-category-item.active .cat-label {
-  color: var(--mini-primary);
-  font-weight: 600;
-}
-
 .task-list-head {
   padding: 16px 16px 8px;
   font-size: 14px;
@@ -271,7 +187,7 @@ async function openTaskClaim(taskId: string, e: Event) {
   cursor: pointer;
 }
 
-.mobile-task-card.blue { background: linear-gradient(135deg, #eff6ff, #dbeafe); }
+.mobile-task-card.blue { background: linear-gradient(135deg, #E6FFFA, #CCFBF1); }
 .mobile-task-card.green { background: linear-gradient(135deg, #f0fdf4, #dcfce7); }
 .mobile-task-card.purple { background: linear-gradient(135deg, #faf5ff, #f3e8ff); }
 .mobile-task-card.orange { background: linear-gradient(135deg, #fff7ed, #ffedd5); }
@@ -330,9 +246,4 @@ async function openTaskClaim(taskId: string, e: Event) {
   font-weight: 600;
   cursor: pointer;
 }
-
-.mobile-task-card.green .mobile-task-btn { background: #22c55e; }
-.mobile-task-card.purple .mobile-task-btn { background: #a855f7; }
-.mobile-task-card.orange .mobile-task-btn { background: #f97316; }
-.mobile-task-card.pink .mobile-task-btn { background: #ec4899; }
 </style>

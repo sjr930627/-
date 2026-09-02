@@ -176,7 +176,7 @@ function goFeedback() {
 <style scoped>
 .page {
   min-height: 100%;
-  background: #f5f6f8;
+  background: #fff;
   padding-bottom: 16px;
 }
 .recruit-top {
@@ -187,15 +187,15 @@ function goFeedback() {
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
-  background: #5b4fdb;
+  background: #D5E9FF;
 }
 .recruit-top .brand {
   font-size: 17px;
   font-weight: 700;
-  color: #fff;
+  color: #111827;
 }
 .hero {
-  background: linear-gradient(180deg, #5b4fdb 0%, #7c6ff0 80px, #f5f6f8 160px);
+  background: #fff;
   padding: 4px 12px 12px;
 }
 .content {
@@ -270,7 +270,7 @@ function goFeedback() {
   bottom: -3px;
   width: 2em;
   height: 3px;
-  background: #5b4fdb;
+  background: #228BFF;
   border-radius: 2px;
 }
 .timeline {
@@ -316,12 +316,12 @@ function goFeedback() {
   white-space: nowrap;
 }
 .tag-offline {
-  background: #ede9fe;
-  color: #5b4fdb;
+  background: #EBF4FF;
+  color: #228BFF;
 }
 .tag-online {
   background: #eff6ff;
-  color: #2563eb;
+  color: #228BFF;
 }
 .tl-right {
   flex: 1;
@@ -344,7 +344,7 @@ function goFeedback() {
 .phone {
   border: none;
   background: none;
-  color: #5b4fdb;
+  color: #228BFF;
   padding: 0 2px;
   display: inline-flex;
   align-items: center;
@@ -373,8 +373,8 @@ function goFeedback() {
   padding: 0 12px;
   border-radius: 8px;
   border: 1px solid #c7c3f5;
-  background: #ede9fe;
-  color: #5b4fdb;
+  background: #EBF4FF;
+  color: #228BFF;
   font-size: 12px;
   font-weight: 600;
 }

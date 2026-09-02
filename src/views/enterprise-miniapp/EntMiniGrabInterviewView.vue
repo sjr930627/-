@@ -68,7 +68,7 @@ const requireInterview = computed({
   },
 })
 
-const positionTemplates = computed(() => config.value.positionTemplates ?? [])
+const positionTemplates = computed(() => store.getEnterprisePositions(enterpriseId.value))
 
 const scopedDepartments = computed(() =>
   store
@@ -137,7 +137,7 @@ watch(
 )
 
 const skillOptions = computed(() => {
-  const set = new Set([...SKILL_OPTIONS, '中石化安全作业证', '叉车证'])
+  const set = new Set([...SKILL_OPTIONS, '中国移动业务合规证', '叉车证'])
   return [...set]
 })
 
@@ -742,14 +742,14 @@ function markNoShow(row: GrabInterviewRegistration) {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: #5b4fdb;
+  color: #228BFF;
   font-weight: 600;
   flex-shrink: 0;
 }
 .switch input {
   width: 18px;
   height: 18px;
-  accent-color: #5b4fdb;
+  accent-color: #228BFF;
 }
 .tabs {
   display: grid;
@@ -769,7 +769,7 @@ function markNoShow(row: GrabInterviewRegistration) {
 }
 .tabs button.active {
   background: #fff;
-  color: #5b4fdb;
+  color: #228BFF;
   font-weight: 600;
 }
 .panel {
@@ -805,14 +805,14 @@ function markNoShow(row: GrabInterviewRegistration) {
   gap: 6px;
 }
 .dept-chip.active {
-  border-color: #5b4fdb;
-  color: #5b4fdb;
-  background: #eef2ff;
+  border-color: #228BFF;
+  color: #fff;
+  background: #228BFF;
 }
 .dept-chip em {
   font-style: normal;
   font-size: 10px;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   border-radius: 999px;
   min-width: 16px;
@@ -890,7 +890,7 @@ function markNoShow(row: GrabInterviewRegistration) {
   padding: 0;
 }
 .link {
-  color: #5b4fdb;
+  color: #228BFF;
 }
 .danger-link {
   color: #dc2626;
@@ -912,7 +912,7 @@ function markNoShow(row: GrabInterviewRegistration) {
   flex: 1;
   height: 40px;
   border: none;
-  background: #5b4fdb;
+  background: #228BFF;
   color: #fff;
   font-weight: 600;
 }
@@ -927,8 +927,8 @@ function markNoShow(row: GrabInterviewRegistration) {
   height: 30px;
   padding: 0 10px;
   border: 1px solid #c7d2fe;
-  background: #eef2ff;
-  color: #4338ca;
+  background: #D5E9FF;
+  color: #228BFF;
 }
 .filters {
   margin-bottom: 10px;
@@ -1025,9 +1025,9 @@ function markNoShow(row: GrabInterviewRegistration) {
   color: #6b7280;
 }
 .skill.on {
-  border-color: #5b4fdb;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-color: #228BFF;
+  background: #228BFF;
+  color: #fff;
 }
 .scope-row {
   display: grid;
@@ -1043,9 +1043,9 @@ function markNoShow(row: GrabInterviewRegistration) {
   color: #6b7280;
 }
 .scope-row button.on {
-  border-color: #5b4fdb;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-color: #228BFF;
+  background: #228BFF;
+  color: #fff;
   font-weight: 600;
 }
 .weekday-row {
@@ -1063,9 +1063,9 @@ function markNoShow(row: GrabInterviewRegistration) {
   color: #6b7280;
 }
 .weekday.on {
-  border-color: #5b4fdb;
-  background: #eef2ff;
-  color: #5b4fdb;
+  border-color: #228BFF;
+  background: #228BFF;
+  color: #fff;
   font-weight: 600;
 }
 .slot-row {

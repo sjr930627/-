@@ -4,6 +4,7 @@ import type {
   AttendancePunch,
   Department,
   Employee,
+  GrabInterviewPositionProfile,
   GrabShiftApplication,
   GrabShiftSlot,
   Holiday,
@@ -351,6 +352,8 @@ export function buildGrabShiftSlotPayload(options: {
   enrollFloatValue?: number
   hourlySubsidy: number
   positionName: string
+  positionId?: string
+  positionProfile?: GrabInterviewPositionProfile
   positionRequirement: string
   requirements: string[]
   teams: { id: string; name: string; departmentId: string; attendanceGroupId?: string }[]
@@ -373,6 +376,8 @@ export function buildGrabShiftSlotPayload(options: {
     enrollFloatValue = 0,
     hourlySubsidy,
     positionName,
+    positionId,
+    positionProfile,
     positionRequirement,
     requirements,
     teams,
@@ -437,6 +442,14 @@ export function buildGrabShiftSlotPayload(options: {
     enrollCap,
     requirements,
     positionName: positionName.trim(),
+    positionId: positionId || undefined,
+    positionProfile: positionProfile
+      ? {
+          ...positionProfile,
+          positionName: (positionProfile.positionName || positionName).trim(),
+          skills: requirements,
+        }
+      : undefined,
     positionRequirement: positionRequirement.trim(),
     hourlySubsidy: Math.max(0, hourlySubsidy),
     baseHourlyRate,
@@ -446,9 +459,9 @@ export function buildGrabShiftSlotPayload(options: {
 
 /** 抢班发布常用岗位名称 */
 export const grabShiftPositionOptions = [
-  '加油站营业员',
-  '便利店营业员',
-  '加油员',
+  '营业厅营业员',
+  '终端销售员',
+  '营业厅导购',
   '收银员',
   '班组长',
   '安全员',
@@ -498,4 +511,40 @@ export const grabShiftPublishStatusMap: Record<
   pending: { label: '待审核', type: 'warning' },
   published: { label: '已上架', type: 'success' },
   rejected: { label: '已驳回', type: 'danger' },
+}
+
+export function formatGrabPositionGender(
+  gender?: GrabInterviewPositionProfile['gender'],
+): string {
+  if (gender === 'male') return '男'
+  if (gender === 'female') return '女'
+  return '不限'
+}
+
+export function formatGrabPositionAgeRange(ageMin?: number, ageMax?: number): string {
+  if (ageMin != null && ageMax != null) return `${ageMin}–${ageMax}岁`
+  if (ageMin != null) return `${ageMin}岁以上`
+  if (ageMax != null) return `${ageMax}岁以下`
+  return '不限'
+}
+
+/** 班次岗位画像：优先用发布快照，旧数据回退岗位要求/技能 */
+export function resolveGrabSlotPositionProfile(slot: {
+  positionName?: string
+  positionProfile?: GrabInterviewPositionProfile
+  positionRequirement?: string
+  requirements?: string[]
+}): GrabInterviewPositionProfile {
+  const base = slot.positionProfile
+  return {
+    positionName: (base?.positionName || slot.positionName || '').trim(),
+    jobType: base?.jobType,
+    skills: base?.skills?.length ? base.skills : slot.requirements,
+    requirements: base?.requirements?.trim() || slot.positionRequirement,
+    description: base?.description,
+    ageMin: base?.ageMin,
+    ageMax: base?.ageMax,
+    gender: base?.gender ?? 'any',
+    experience: base?.experience,
+  }
 }

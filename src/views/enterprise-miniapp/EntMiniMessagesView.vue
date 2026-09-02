@@ -92,7 +92,7 @@ function openItem(id: string) {
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
 }
 .item.unread {
-  background: #f8f7ff;
+  background: #D5E9FF;
 }
 .dot {
   width: 8px;
