@@ -122,6 +122,7 @@ export const enterpriseMenuPermissionDefs: Omit<MenuPermissionEntry, 'view' | 'e
   { code: 'task', name: '任务管理', module: '任务管理' },
   { code: 'partnership', name: '合作管理', module: '合作管理' },
   { code: 'payroll', name: '财税管理', module: '财税管理' },
+  { code: 'statistics', name: '分析统计', module: '分析统计' },
   { code: 'system:accounts', name: '账号管理', module: '系统设置' },
   { code: 'system:roles', name: '权限管理', module: '系统设置' },
   { code: 'system:oplog', name: '操作日志', module: '系统设置' },

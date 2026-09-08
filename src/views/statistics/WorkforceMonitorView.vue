@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { registerMap } from 'echarts/core'
 import VChart from '@/components/statistics/VChart.vue'
+import { usePortal } from '@/composables/usePortal'
 import type { BiDrillPerson, BiKpiItem } from '@/mock/workforceBiSeed'
 import {
   cityHeatPoints,
@@ -46,6 +47,10 @@ import {
 import { chartColors } from '@/plugins/echarts'
 
 type BiPage = 'people' | 'ops'
+
+const { isEnterprise } = usePortal()
+const backTo = computed(() => (isEnterprise.value ? '/enterprise/dashboard' : '/dashboard'))
+const backLabel = computed(() => (isEnterprise.value ? '返回企业端' : '返回后台'))
 
 const pages: { key: BiPage; label: string }[] = [
   { key: 'people', label: '人员与分布' },
@@ -161,8 +166,8 @@ onUnmounted(() => { if (clockTimer) clearInterval(clockTimer) })
         <button class="bi-refresh" :class="{ spinning: refreshing }" @click="handleRefresh">
           <span class="dot" />刷新数据
         </button>
-        <router-link to="/dashboard" class="bi-back">
-          <el-button size="small">返回后台</el-button>
+        <router-link :to="backTo" class="bi-back">
+          <el-button size="small">{{ backLabel }}</el-button>
         </router-link>
       </div>
     </header>

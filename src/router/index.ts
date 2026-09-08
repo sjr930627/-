@@ -556,6 +556,30 @@ const enterpriseChildren: RouteRecordRaw[] = [
     component: () => import('@/views/payroll/InvoiceApplyView.vue'),
     meta: { title: '发票详情', group: '财税管理', hidden: true, portal: 'enterprise' },
   },
+  {
+    path: 'statistics/overview',
+    name: 'EnterpriseStatsOverview',
+    component: () => import('@/views/statistics/OverviewStatsView.vue'),
+    meta: { title: '概览看板', group: '分析统计', portal: 'enterprise' },
+  },
+  {
+    path: 'statistics/attendance',
+    name: 'EnterpriseStatsAttendance',
+    component: () => import('@/views/statistics/AttendanceStatsView.vue'),
+    meta: { title: '考勤分析', group: '分析统计', portal: 'enterprise' },
+  },
+  {
+    path: 'statistics/task',
+    name: 'EnterpriseStatsTask',
+    component: () => import('@/views/statistics/TaskStatsView.vue'),
+    meta: { title: '任务分析', group: '分析统计', portal: 'enterprise' },
+  },
+  {
+    path: 'statistics/settlement',
+    name: 'EnterpriseStatsSettlement',
+    component: () => import('@/views/statistics/SettlementStatsView.vue'),
+    meta: { title: '结算分析', group: '分析统计', portal: 'enterprise' },
+  },
 ]
 
 const router = createRouter({
@@ -584,6 +608,12 @@ const router = createRouter({
       name: 'WorkforceMonitor',
       component: () => import('@/views/statistics/WorkforceMonitorView.vue'),
       meta: { title: '灵工人员数据监控中心', portal: 'platform' },
+    },
+    {
+      path: '/enterprise/bi/monitor',
+      name: 'EnterpriseWorkforceMonitor',
+      component: () => import('@/views/statistics/WorkforceMonitorView.vue'),
+      meta: { title: '灵工人员数据监控中心', portal: 'enterprise' },
     },
     {
       path: '/punch',
@@ -1119,6 +1149,7 @@ const router = createRouter({
     { path: '/enterprise/task-publish', redirect: '/enterprise/task/publish' },
     { path: '/enterprise/task-acceptance', redirect: '/enterprise/task/progress' },
     { path: '/enterprise/task-progress', redirect: '/enterprise/task/progress' },
+    { path: '/enterprise/statistics', redirect: '/enterprise/statistics/overview' },
     { path: '/statistics', redirect: '/statistics/overview' },
     { path: '/payroll', redirect: '/payroll/bills' },
     // 招聘 / 系统设置模块已下线，旧入口统一回工作台
