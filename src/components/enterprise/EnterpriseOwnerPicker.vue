@@ -120,7 +120,7 @@ function removeOwner(id: string) {
 
     <div class="picker-layout">
       <div class="org-panel">
-        <div class="panel-title">组织架构树</div>
+        <div class="panel-title">灵工组织架构</div>
         <el-input
           v-model="treeKeyword"
           placeholder="搜索部门"

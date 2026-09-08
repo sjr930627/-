@@ -1,3 +1,5 @@
+import { groupSkillLibraryByCategory, seedSkillLibrary } from '@/constants/skillLibrary'
+
 export const MINIAPP_DEMO_PASSWORD = '123456'
 
 /** 不定时人脸复核间隔（小时）：2 或 4 */
@@ -89,44 +91,12 @@ export interface MiniAppSkillCertCategory {
   items: MiniAppSkillCertOption[]
 }
 
-export const MINIAPP_SKILL_CERT_CATALOG: MiniAppSkillCertCategory[] = [
-  {
-    title: '🔥 大家常选',
-    items: [
-      { id: 'driver', name: '机动车驾驶证', icon: '🚗' },
-      { id: 'barista', name: '咖啡师证', icon: '☕' },
-      { id: 'tea', name: '茶艺师', icon: '🍵' },
-      { id: 'lifeguard', name: '救生员证', icon: '🛟' },
-    ],
-  },
-  {
-    title: '通用能力类',
-    items: [
-      { id: 'computer', name: '计算机等级证', icon: '💻' },
-      { id: 'english', name: '英语等级证', icon: '🇺🇸' },
-      { id: 'mandarin', name: '普通话等级', icon: '🇨🇳' },
-      { id: 'health', name: '健康证', icon: '📋' },
-    ],
-  },
-  {
-    title: '餐饮/食品类',
-    items: [
-      { id: 'chef', name: '厨师证', icon: '👨‍🍳' },
-      { id: 'food_safety', name: '食品安全员', icon: '🥗' },
-      { id: 'nutrition', name: '营养师', icon: '🥦' },
-      { id: 'bar_tender', name: '调酒师', icon: '🍸' },
-    ],
-  },
-  {
-    title: '零售/服务类',
-    items: [
-      { id: 'cashier', name: '收银上岗证', icon: '🧾' },
-      { id: 'beauty', name: '美容师证', icon: '💅' },
-      { id: 'guide', name: '导游证', icon: '🧭' },
-      { id: 'security', name: '保安员证', icon: '🛡️' },
-    ],
-  },
-]
+/** @deprecated 请优先使用 store 技能库；保留静态目录兼容旧引用 */
+export const MINIAPP_SKILL_CERT_CATALOG: MiniAppSkillCertCategory[] =
+  groupSkillLibraryByCategory(seedSkillLibrary).map((g) => ({
+    title: g.title,
+    items: g.items.map((i) => ({ id: i.id, name: i.name, icon: i.icon || '📌' })),
+  }))
 
 export const MINIAPP_TIME_PREF_LABELS: Record<
   'timeOfDay' | 'commitment' | 'shiftDuration' | 'workDays',

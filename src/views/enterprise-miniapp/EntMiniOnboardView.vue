@@ -55,6 +55,12 @@ const pendingEmployees = computed(() => {
     .filter((e) => e.status === 'pending')
     .map((e) => {
       const stage = (e.onboardingStage ?? 'awaiting_apply') as EmployeeOnboardingStage
+      const pendingApp = store.workerJoinApplications.find(
+        (a) =>
+          a.employeeId === e.id &&
+          a.enterpriseId === enterpriseId.value &&
+          a.status === 'pending',
+      )
       return {
         ...e,
         stage,
@@ -62,6 +68,13 @@ const pendingEmployees = computed(() => {
         applyDeptName: e.applyDepartmentId
           ? getDepartmentName(departments.value, e.applyDepartmentId)
           : '—',
+        applyPositionName:
+          pendingApp?.positionName ||
+          (e.positionId
+            ? store.getEnterprisePosition(e.positionId)?.profile.positionName ||
+              store.getEnterprisePosition(e.positionId)?.name
+            : '') ||
+          (e.position && e.position !== '待入驻' ? e.position : ''),
       }
     })
     .sort((a, b) => {
@@ -105,10 +118,25 @@ function openApprove(emp: Employee) {
     businessDepartments.value.some((d) => d.id === emp.applyDepartmentId)
       ? emp.applyDepartmentId
       : businessDepartments.value[0]?.id || ''
+  const pendingApp = store.workerJoinApplications.find(
+    (a) =>
+      a.employeeId === emp.id &&
+      a.enterpriseId === enterpriseId.value &&
+      a.status === 'pending',
+  )
+  const appliedPositionId =
+    emp.positionId ||
+    pendingApp?.positionId ||
+    (pendingApp?.positionName
+      ? enterprisePositions.value.find(
+          (p) => p.profile.positionName === pendingApp.positionName || p.name === pendingApp.positionName,
+        )?.id
+      : '') ||
+    ''
   approveTarget.value = emp
   approveForm.value = {
     departmentId: preferred,
-    positionId: emp.positionId || '',
+    positionId: appliedPositionId,
     employeeNo: emp.employeeNo || '',
   }
   approveOpen.value = true
@@ -217,6 +245,7 @@ async function copyPayload() {
             <p>{{ e.phone || '未留手机' }} · {{ e.employeeNo }}</p>
             <p class="sub">
               申请部门：{{ e.applyDeptName }}
+              <template v-if="e.applyPositionName"> · 岗位 {{ e.applyPositionName }}</template>
               <template v-if="e.hireDate"> · {{ e.hireDate }}</template>
             </p>
           </div>

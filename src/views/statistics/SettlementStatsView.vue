@@ -127,7 +127,7 @@ const enterpriseRows = computed(() => {
     <div class="stats-header">
       <div>
         <h2 class="page-title">结算数据报表</h2>
-        <p class="text-muted">结算统计 · 账单、薪酬与服务费分析</p>
+        <p class="text-muted">结算分析 · 账单、薪酬与服务费洞察</p>
       </div>
       <el-select v-model="yearFilter" style="width: 120px">
         <el-option label="2024" value="2024" />

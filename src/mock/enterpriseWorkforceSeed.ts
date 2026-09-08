@@ -9,6 +9,7 @@ const ENT_PINGAN = 'ent_pingan_partner'
 const ENT_SH = 'ent_china_telecom_agent'
 
 const defaultCompliance = {
+  enabled: false,
   maxDailyHours: 12,
   maxWeeklyHours: 60,
   minShiftIntervalHours: 12,
@@ -20,7 +21,7 @@ const defaultCompliance = {
 export const seedMultiEnterpriseDepartments: Department[] = [
   {
     id: 'dept_root_ent_china_mobile_agent',
-    name: '中国移动北京朝阳分公司',
+    name: '中国移动朝阳企业公司',
     parentId: null,
     sort: 0,
     enterpriseId: ENT_CM,
@@ -58,7 +59,7 @@ export const seedMultiEnterpriseDepartments: Department[] = [
   },
   {
     id: 'dept_root_ent_pingan_partner',
-    name: '中国移动浙江分公司',
+    name: '中国移动浙江企业公司',
     parentId: null,
     sort: 0,
     enterpriseId: ENT_PINGAN,
@@ -96,7 +97,7 @@ export const seedMultiEnterpriseDepartments: Department[] = [
   },
   {
     id: 'dept_root_ent_china_telecom_agent',
-    name: '中国移动上海分公司',
+    name: '中国移动上海企业公司',
     parentId: null,
     sort: 0,
     enterpriseId: ENT_SH,
@@ -521,8 +522,10 @@ const rawExtraGroups = [
         name: '早班',
         startTime: '09:00',
         endTime: '17:00',
-        breakRule: '午休1小时',
-        workHours: 8,
+        hasBreakTime: true,
+        breakPeriods: [{ start: '12:00', end: '13:00' }],
+        breakRule: '12:00-13:00',
+        workHours: 7,
         requiredHeadcount: 6,
         weekendRequiredHeadcount: 8,
         holidayRequiredHeadcount: 4,
@@ -532,8 +535,10 @@ const rawExtraGroups = [
         name: '晚班',
         startTime: '13:00',
         endTime: '21:00',
-        breakRule: '晚餐休30分钟',
-        workHours: 8,
+        hasBreakTime: true,
+        breakPeriods: [{ start: '17:30', end: '18:00' }],
+        breakRule: '17:30-18:00',
+        workHours: 7.5,
         requiredHeadcount: 4,
         weekendRequiredHeadcount: 6,
         holidayRequiredHeadcount: 3,
@@ -583,7 +588,7 @@ export function patchBaseWorkforceEnterpriseIds(
   employees: Employee[],
 ): { departments: Department[]; employees: Employee[] } {
   const deptPatches: Record<string, Partial<Department>> = {
-    dept_root: { enterpriseId: ENT_STARS, name: '星辰通信集团' },
+    dept_root: { enterpriseId: ENT_STARS, name: '星辰通信企业公司' },
     dept_unassigned: { enterpriseId: ENT_STARS },
     dept_hr: { enterpriseId: ENT_STARS },
     dept_prod: { enterpriseId: ENT_STARS, name: '生产运营部' },

@@ -7,7 +7,9 @@ import {
   weekdayFromDate,
 } from '@/constants/grabInterview'
 import { MINIAPP_DEMO_ANCHOR_DATE } from '@/constants/miniapp'
+import { isGrabInterviewVisibleToWorker } from '@/services/grabShift'
 import type {
+  Employee,
   GrabInterviewDeptPosition,
   GrabInterviewDeptRule,
   GrabInterviewScheduleRule,
@@ -22,7 +24,10 @@ type StoreLike = {
     deptRules: GrabInterviewDeptRule[]
   }>
   enterprises: Array<{ id: string; name: string }>
-  departments: Array<{ id: string; name: string }>
+  departments: Array<{ id: string; name: string; parentId?: string | null; enterpriseId?: string }>
+  employees: Array<
+    Pick<Employee, 'id' | 'personnelCategory' | 'enterpriseId' | 'departmentId'>
+  >
   grabInterviewRegistrations: Array<{
     enterpriseId: string
     departmentId: string
@@ -254,6 +259,9 @@ export function listOpenGrabInterviewPosts(
   const previewLimit = options?.previewLimit ?? 2
   const fromDate = options?.fromDate ?? MINIAPP_DEMO_ANCHOR_DATE
   const posts: MiniGrabInterviewPost[] = []
+  const worker = employeeId
+    ? store.employees.find((e) => e.id === employeeId)
+    : undefined
 
   for (const cfg of store.grabInterviewConfigs) {
     if (!cfg.requireInterview) continue
@@ -262,6 +270,20 @@ export function listOpenGrabInterviewPosts(
 
     for (const rawDept of cfg.deptRules) {
       const dept = normalizeDeptInterviewRule(rawDept)
+      if (
+        employeeId &&
+        !isGrabInterviewVisibleToWorker(
+          {
+            enterpriseId: cfg.enterpriseId,
+            departmentId: dept.departmentId,
+            publishScope: dept.publishScope,
+          },
+          worker,
+          store.departments,
+        )
+      ) {
+        continue
+      }
       const deptEntity = store.departments.find((d) => d.id === dept.departmentId)
       const storeName = deptEntity?.name || brand
       const { payMin, payMax } = resolvePayRange(store, dept.departmentId)

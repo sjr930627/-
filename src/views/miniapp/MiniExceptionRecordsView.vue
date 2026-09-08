@@ -188,4 +188,5 @@ function formatTime(iso: string) {
 .mini-tag.orange { background: #fff7ed; color: #ea580c; }
 .mini-tag.green { background: #f0fdf4; color: #16a34a; }
 .mini-tag.red { background: #fef2f2; color: #ef4444; }
+.mini-tag.gray { background: #f3f4f6; color: #6b7280; }
 </style>

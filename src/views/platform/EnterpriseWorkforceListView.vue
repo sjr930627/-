@@ -119,7 +119,7 @@ onMounted(() => {
       <div class="filter-row">
         <el-input
           v-model="keyword"
-          placeholder="搜索企业编号、企业名称..."
+          placeholder="搜索企业编号、企业公司..."
           clearable
           prefix-icon="Search"
           class="search-input"
@@ -148,7 +148,7 @@ onMounted(() => {
       </div>
 
       <el-table :data="pagedData" border stripe>
-        <el-table-column label="企业名称" min-width="220">
+        <el-table-column label="企业公司" min-width="220">
           <template #default="{ row }">
             <div class="name-cell">
               <span class="name-avatar" :style="{ background: avatarColor(row.name) }">

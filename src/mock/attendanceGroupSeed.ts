@@ -4,6 +4,7 @@ import { getDefaultScheduleRuleForSeed } from '@/services/scheduleGroup'
 import { ensureGroupVersions } from '@/services/attendanceGroupVersion'
 
 const defaultCompliance = {
+  enabled: false,
   maxDailyHours: 12,
   maxWeeklyHours: 60,
   minShiftIntervalHours: 12,
@@ -27,8 +28,10 @@ const rawAttendanceGroups: AttendanceGroupSeed[] = [
         name: '早班',
         startTime: '09:00',
         endTime: '18:00',
-        breakRule: '上下午各休15分钟',
-        workHours: 9,
+        hasBreakTime: true,
+        breakPeriods: [{ start: '12:00', end: '13:00' }],
+        breakRule: '12:00-13:00',
+        workHours: 8,
         requiredHeadcount: 12,
         weekendRequiredHeadcount: 8,
         holidayRequiredHeadcount: 6,
@@ -76,9 +79,9 @@ const rawAttendanceGroups: AttendanceGroupSeed[] = [
     status: 'enabled',
     attendanceType: 'shift',
     shiftTemplates: [
-      { id: 'st_am', name: '早班', startTime: '08:00', endTime: '17:00', breakRule: '上下午各休15分钟', workHours: 9, requiredHeadcount: 31, weekendRequiredHeadcount: 24, holidayRequiredHeadcount: 18 },
-      { id: 'st_pm', name: '中班', startTime: '14:00', endTime: '23:00', breakRule: '晚餐休30分钟', workHours: 9, requiredHeadcount: 24, weekendRequiredHeadcount: 20, holidayRequiredHeadcount: 15 },
-      { id: 'st_night', name: '大晚班', startTime: '22:00', endTime: '07:00', breakRule: '夜宵休30分钟', workHours: 9, requiredHeadcount: 12, weekendRequiredHeadcount: 10, holidayRequiredHeadcount: 8 },
+      { id: 'st_am', name: '早班', startTime: '08:00', endTime: '17:00', hasBreakTime: true, breakPeriods: [{ start: '12:00', end: '13:00' }], breakRule: '12:00-13:00', workHours: 8, requiredHeadcount: 31, weekendRequiredHeadcount: 24, holidayRequiredHeadcount: 18 },
+      { id: 'st_pm', name: '中班', startTime: '14:00', endTime: '23:00', hasBreakTime: true, breakPeriods: [{ start: '18:00', end: '18:30' }], breakRule: '18:00-18:30', workHours: 8.5, requiredHeadcount: 24, weekendRequiredHeadcount: 20, holidayRequiredHeadcount: 15 },
+      { id: 'st_night', name: '大晚班', startTime: '22:00', endTime: '07:00', hasBreakTime: true, breakPeriods: [{ start: '02:00', end: '02:30' }], breakRule: '02:00-02:30', workHours: 8.5, requiredHeadcount: 12, weekendRequiredHeadcount: 10, holidayRequiredHeadcount: 8 },
     ],
     gpsEnabled: true,
     gpsRadiusMeters: 300,

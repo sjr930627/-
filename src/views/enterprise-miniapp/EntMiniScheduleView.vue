@@ -18,7 +18,7 @@ import {
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
-import { detectComplianceConflicts } from '@/services/scheduleCompliance'
+import { detectComplianceConflicts, filterAssignmentsByEnterprise, normalizeAttendanceGroupCompliance } from '@/services/scheduleCompliance'
 import {
   confirmStatusMap,
   formatLineAssignmentLabel,
@@ -72,6 +72,7 @@ const undoStack = ref<HistItem[][]>([])
 const redoStack = ref<HistItem[][]>([])
 
 const defaultCompliance: AttendanceGroupCompliance = {
+  enabled: false,
   maxDailyHours: 12,
   maxWeeklyHours: 60,
   maxMonthlyHours: 220,
@@ -160,8 +161,17 @@ const selectedBrush = computed(() => brushes.value.find((b) => b.id === brushId.
 const compliance = computed(() => {
   const team = enterpriseTeams.value[0]
   const group = store.attendanceGroups.find((g) => g.id === team?.attendanceGroupId)
-  return group?.compliance || defaultCompliance
+  return normalizeAttendanceGroupCompliance(group?.compliance || defaultCompliance)
 })
+
+const enterpriseScopedAssignments = computed(() =>
+  filterAssignmentsByEnterprise(
+    store.assignments,
+    enterpriseId.value,
+    store.teams,
+    store.departments,
+  ),
+)
 
 function getPublishedAssignment(employeeId: string, date: string) {
   const all = store.assignments.filter((a) => a.employeeId === employeeId && a.date === date)
@@ -413,6 +423,8 @@ function cellDisplay(employeeId: string, date: string) {
 
 const conflictMap = computed(() => {
   const map = new Map<string, string[]>()
+  if (!compliance.value.enabled) return map
+  const scoped = enterpriseScopedAssignments.value
   employees.value.forEach((emp) => {
     weekDays.value.forEach((date) => {
       const asn = getAsn(emp.id, date)
@@ -421,7 +433,7 @@ const conflictMap = computed(() => {
         emp.id,
         date,
         asn.shiftId,
-        store.assignments,
+        scoped,
         store.shifts,
         compliance.value,
       )

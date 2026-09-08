@@ -30,6 +30,7 @@ import {
 } from '@/constants/cancelShift'
 import { getShiftDemandHeadcount } from '@/services/schedule'
 import { resolveShiftIdForTemplate } from '@/services/scheduleGroup'
+import { normalizeAttendanceGroupCompliance } from '@/services/scheduleCompliance'
 import {
   addDays,
   getMonthDays,
@@ -129,15 +130,18 @@ const selectedGroup = computed(() => {
 })
 
 const groupCompliance = computed(() => {
-  if (selectedGroup.value?.compliance) return selectedGroup.value.compliance
+  if (selectedGroup.value?.compliance) {
+    return normalizeAttendanceGroupCompliance(selectedGroup.value.compliance)
+  }
   const rule = scheduleRule.value
-  return {
+  return normalizeAttendanceGroupCompliance({
+    enabled: false,
     maxDailyHours: rule.maxDailyHours,
     maxWeeklyHours: rule.maxWeeklyHours,
     maxMonthlyHours: rule.maxMonthlyHours,
     maxConsecutiveWorkdays: rule.maxConsecutiveDays,
     minShiftIntervalHours: rule.minRestHours,
-  }
+  })
 })
 
 const board = useScheduleBoard({

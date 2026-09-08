@@ -15,7 +15,7 @@ import {
 const store = useAppStore()
 const { enterpriseId, displayName } = useEnterpriseMiniAuth()
 
-const date = ref('2026-07-24')
+const date = ref('2026-07-27')
 
 const correctionOpen = ref(false)
 const correctionTarget = ref<{
@@ -48,7 +48,7 @@ const shiftGroups = computed(() => {
     store.leaveRequests,
     store.attendanceRule,
     store.manualOverrides,
-  ).filter((d) => d.shiftId && d.shiftId !== 'shift_rest')
+  ).filter((d) => d.shiftId)
 
   const byShift = new Map<
     string,
@@ -57,6 +57,7 @@ const shiftGroups = computed(() => {
       shiftName: string
       period: string
       color: string
+      isRest: boolean
       members: {
         employeeId: string
         name: string
@@ -79,11 +80,13 @@ const shiftGroups = computed(() => {
     if (!shift) continue
     let group = byShift.get(shift.id)
     if (!group) {
+      const isRest = shift.code === 'REST' || shift.id === 'shift_rest'
       group = {
         shiftId: shift.id,
         shiftName: shift.name,
-        period: `${shift.startTime} - ${shift.endTime}`,
+        period: isRest ? '休息日' : `${shift.startTime} - ${shift.endTime}`,
         color: shift.color || '#228BFF',
+        isRest,
         members: [],
       }
       byShift.set(shift.id, group)
@@ -117,19 +120,36 @@ const shiftGroups = computed(() => {
     })
   }
 
-  return [...byShift.values()].sort((a, b) => a.period.localeCompare(b.period))
+  return [...byShift.values()].sort((a, b) => {
+    if (a.isRest !== b.isRest) return a.isRest ? 1 : -1
+    return a.period.localeCompare(b.period)
+  })
 })
 
+const workGroups = computed(() =>
+  shiftGroups.value.filter((g) => !g.isRest && g.shiftId !== 'shift_free_punch'),
+)
+const freePunchGroup = computed(
+  () => shiftGroups.value.find((g) => g.shiftId === 'shift_free_punch') ?? null,
+)
+const restGroup = computed(() => shiftGroups.value.find((g) => g.isRest) ?? null)
+
 const totalMembers = computed(() =>
-  shiftGroups.value.reduce((sum, g) => sum + g.members.length, 0),
+  workGroups.value.reduce((sum, g) => sum + g.members.length, 0),
 )
 
-const punchedCount = computed(() =>
-  shiftGroups.value.reduce(
-    (sum, g) => sum + g.members.filter((m) => m.clockIn !== '—').length,
-    0,
-  ),
-)
+const freePunchCount = computed(() => freePunchGroup.value?.members.length ?? 0)
+
+const restCount = computed(() => restGroup.value?.members.length ?? 0)
+
+const punchedCount = computed(() => {
+  const empIds = empIdSet.value
+  return new Set(
+    store.punches
+      .filter((p) => p.date === date.value && empIds.has(p.employeeId))
+      .map((p) => p.employeeId),
+  ).size
+})
 
 function shiftDay(delta: number) {
   date.value = dayjs(date.value).add(delta, 'day').format('YYYY-MM-DD')
@@ -193,12 +213,13 @@ function submitCorrect() {
 
     <div class="summary">
       <span>排班 {{ totalMembers }} 人</span>
+      <span>自由打卡 {{ freePunchCount }} 人</span>
       <span>已打卡 {{ punchedCount }} 人</span>
-      <span>班次 {{ shiftGroups.length }} 个</span>
+      <span>休息 {{ restCount }} 人</span>
     </div>
 
     <div class="list">
-      <section v-for="group in shiftGroups" :key="group.shiftId" class="shift-card">
+      <section v-for="group in workGroups" :key="group.shiftId" class="shift-card">
         <header class="shift-head">
           <i class="dot" :style="{ background: group.color }" />
           <div>
@@ -242,8 +263,59 @@ function submitCorrect() {
         </article>
       </section>
 
-      <div v-if="!shiftGroups.length" class="empty">
-        {{ empIdSet.size ? '当日无排班人员' : '暂无企业人员' }}
+      <section v-if="freePunchGroup" class="shift-card">
+        <header class="shift-head">
+          <i class="dot" :style="{ background: freePunchGroup.color }" />
+          <div>
+            <strong>{{ freePunchGroup.shiftName }}</strong>
+            <p>打卡即出勤 · {{ freePunchGroup.members.length }} 人</p>
+          </div>
+        </header>
+
+        <article v-for="m in freePunchGroup.members" :key="m.employeeId" class="member">
+          <div class="member-top">
+            <strong>{{ m.name }}</strong>
+            <span class="tag" :class="m.tagType">{{ m.statusLabel }}</span>
+          </div>
+          <div class="punch-line">
+            上班 {{ m.clockIn }} · 下班 {{ m.clockOut }}
+          </div>
+          <div class="hours-line">
+            工时 {{ m.workHours }}h
+            <span v-if="m.workHoursCorrected" class="corrected">已矫正</span>
+          </div>
+          <ul v-if="m.punches.length" class="punch-detail">
+            <li v-for="(p, idx) in m.punches" :key="idx">
+              <em>{{ p.typeLabel }}</em>
+              <span>{{ p.time }}</span>
+              <span class="loc" :class="{ out: !p.inRange }">
+                {{ p.location || '—' }}{{ p.inRange ? '' : '（范围外）' }}
+              </span>
+            </li>
+          </ul>
+          <p v-else class="empty-punch">暂无打卡记录</p>
+        </article>
+      </section>
+
+      <section v-if="restGroup" class="shift-card rest">
+        <header class="shift-head">
+          <i class="dot" style="background: #94a3b8" />
+          <div>
+            <strong>{{ restGroup.shiftName }}</strong>
+            <p>休息人次 · {{ restGroup.members.length }} 人</p>
+          </div>
+        </header>
+        <article v-for="m in restGroup.members" :key="m.employeeId" class="member">
+          <div class="member-top">
+            <strong>{{ m.name }}</strong>
+            <span class="tag info">休息</span>
+          </div>
+          <p class="empty-punch">当日休息，无需打卡</p>
+        </article>
+      </section>
+
+      <div v-if="!workGroups.length && !freePunchGroup && !restGroup" class="empty">
+        {{ empIdSet.size ? '当日无出勤人员' : '暂无企业人员' }}
       </div>
     </div>
 
@@ -309,6 +381,9 @@ function submitCorrect() {
   border-radius: 14px;
   padding: 12px 14px;
   box-shadow: var(--mini-shadow);
+}
+.shift-card.rest {
+  background: #f8fafc;
 }
 .shift-head {
   display: flex;

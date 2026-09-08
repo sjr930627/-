@@ -7,7 +7,6 @@ import MiniSkillCertPicker from '@/components/miniapp/MiniSkillCertPicker.vue'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useAppStore } from '@/stores/app'
 import {
-  MINIAPP_SKILL_CERT_CATALOG,
   MINIAPP_SKILL_CERT_MAX,
 } from '@/constants/miniappAuth'
 import type { WorkerSkillCertificate } from '@/types'
@@ -21,9 +20,8 @@ const selectedCertIds = ref<string[]>(
 )
 
 function certIdsToRecords(ids: string[]): WorkerSkillCertificate[] {
-  const all = MINIAPP_SKILL_CERT_CATALOG.flatMap((c) => c.items)
   return ids.map((id) => {
-    const item = all.find((i) => i.id === id)
+    const item = store.resolveSkillLibraryItem(id)
     return { id, name: item?.name ?? id }
   })
 }

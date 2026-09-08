@@ -9,11 +9,16 @@ import {
 } from '@/services/smartSchedule'
 import { resolveShiftIdForTemplate } from '@/services/scheduleGroup'
 import {
+  filterAssignmentsByEnterprise,
+  normalizeAttendanceGroupCompliance,
+} from '@/services/scheduleCompliance'
+import {
   createShiftDemandHeadcountResolver,
   hasShiftDemandInRange,
   summarizeConfiguredShiftDemands,
 } from '@/services/shiftDemandPlan'
 import { getMonthDays } from '@/utils'
+import { resolveEnterpriseIdByTeamDepartment } from '@/utils/enterpriseScope'
 
 const store = useAppStore()
 const route = useRoute()
@@ -36,15 +41,18 @@ const selectedGroup = computed(() =>
 const activeScheduleRule = computed(() => store.getScheduleRuleForGroup(selectedGroupId.value))
 
 const groupCompliance = computed(() => {
-  if (selectedGroup.value?.compliance) return selectedGroup.value.compliance
+  if (selectedGroup.value?.compliance) {
+    return normalizeAttendanceGroupCompliance(selectedGroup.value.compliance)
+  }
   const rule = activeScheduleRule.value
-  return {
+  return normalizeAttendanceGroupCompliance({
+    enabled: false,
     maxDailyHours: rule.maxDailyHours,
     maxWeeklyHours: rule.maxWeeklyHours,
     maxMonthlyHours: rule.maxMonthlyHours,
     maxConsecutiveWorkdays: rule.maxConsecutiveDays,
     minShiftIntervalHours: rule.minRestHours,
-  }
+  })
 })
 
 watch(
@@ -68,6 +76,19 @@ watch(
 )
 
 const team = computed(() => availableTeams.value.find((t) => t.id === selectedTeamId.value))
+
+const enterpriseScopedAssignments = computed(() => {
+  const enterpriseId = resolveEnterpriseIdByTeamDepartment(
+    team.value?.departmentId,
+    store.departments,
+  )
+  return filterAssignmentsByEnterprise(
+    store.assignments,
+    enterpriseId,
+    store.teams,
+    store.departments,
+  )
+})
 
 const employeeOptions = computed(() =>
   store.activeEmployees.filter((e) => team.value?.memberIds.includes(e.id)),
@@ -158,7 +179,7 @@ function runSmartSchedule() {
     store.shifts,
     store.holidays,
     store.leaveRequests,
-    store.assignments,
+    enterpriseScopedAssignments.value,
     groupCompliance.value,
     {
       teamId: selectedTeamId.value,
@@ -197,7 +218,7 @@ const recommendations = computed(() => {
     recommendShiftId.value,
     team.value,
     store.employees,
-    store.assignments,
+    enterpriseScopedAssignments.value,
     store.shifts,
     store.holidays,
     groupCompliance.value,

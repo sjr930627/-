@@ -34,14 +34,28 @@ const employees = computed(() =>
 
 const today = '2026-07-27'
 
-const todayAssignments = computed(() =>
+const todayAllAssignments = computed(() =>
   store.assignments.filter(
-    (a) =>
-      a.date === today &&
-      employees.value.some((e) => e.id === a.employeeId) &&
-      a.shiftId !== 'shift_rest',
+    (a) => a.date === today && employees.value.some((e) => e.id === a.employeeId),
   ),
 )
+
+const todayAssignments = computed(() =>
+  todayAllAssignments.value.filter((a) => a.shiftId !== 'shift_rest'),
+)
+
+const todayRestCount = computed(
+  () => todayAllAssignments.value.filter((a) => a.shiftId === 'shift_rest').length,
+)
+
+const todayPresentCount = computed(() => {
+  const empIds = new Set(employees.value.map((e) => e.id))
+  return new Set(
+    store.punches
+      .filter((p) => p.date === today && empIds.has(p.employeeId))
+      .map((p) => p.employeeId),
+  ).size
+})
 
 const todayExceptions = computed(() =>
   store.exceptions.filter(
@@ -165,10 +179,14 @@ const tools = computed(() => [
             <strong>{{ todayAssignments.length }}</strong>
             <span>今日班次</span>
           </button>
-          <div>
-            <strong>{{ Math.max(todayAssignments.length - todayExceptions.length, 0) }}</strong>
+          <button type="button" class="stat-btn" @click="router.push('/enterprise-miniapp/punch-records')">
+            <strong>{{ todayPresentCount }}</strong>
             <span>今日出勤</span>
-          </div>
+          </button>
+          <button type="button" class="stat-btn" @click="router.push('/enterprise-miniapp/today-schedule')">
+            <strong>{{ todayRestCount }}</strong>
+            <span>休息人次</span>
+          </button>
           <div class="warn">
             <strong>{{ todayExceptions.length }}</strong>
             <span>出勤异常</span>
@@ -252,7 +270,7 @@ const tools = computed(() => [
 }
 .stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   margin-top: 14px;
   text-align: center;
 }
@@ -267,7 +285,7 @@ const tools = computed(() => [
 }
 .stats strong {
   display: block;
-  font-size: 26px;
+  font-size: 22px;
   color: #111827;
   line-height: 1.1;
 }

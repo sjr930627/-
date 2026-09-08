@@ -15,9 +15,36 @@ import type {
 } from '@/types'
 import { calcShiftHours, getMonthDays } from '@/utils'
 import { calcGrabShiftWorkHours, resolveGrabSlotShiftName } from '@/services/grabShift'
+import {
+  calcScheduleSegmentsBreakMinutes,
+  FREE_PUNCH_SHIFT_ID,
+  getAssignmentWorkHours,
+  parseScheduleTimeSegments,
+  resolveOverallPunchWindow,
+} from '@/constants/schedule'
 
 /** 考勤数据/审批按排班或抢班拆分的数据来源 */
 export type AttendanceAssignmentSource = 'schedule' | 'grab'
+
+/** 工时确认来源：排班班次 / 自由打卡（无班次） */
+export type HoursConfirmSource = 'schedule' | 'free_punch'
+
+export function isFreePunchDay(day: { shiftId?: string }): boolean {
+  return day.shiftId === FREE_PUNCH_SHIFT_ID
+}
+
+export function getHoursConfirmSource(day: { shiftId?: string }): HoursConfirmSource {
+  return isFreePunchDay(day) ? 'free_punch' : 'schedule'
+}
+
+export function getHoursConfirmSourceLabel(source: HoursConfirmSource): string {
+  return source === 'free_punch' ? '自由打卡' : '排班'
+}
+
+/** 对照工时文案：排班用「排班工时」，自由打卡用「默认工时」 */
+export function getHoursBaselineLabel(source: HoursConfirmSource): string {
+  return source === 'free_punch' ? '默认工时' : '排班工时'
+}
 
 export function isGrabAssignment(
   assignment?: Pick<ScheduleAssignment, 'fromGrabSlotId'> | null,
@@ -169,10 +196,19 @@ export function formatGrabAttendanceShiftText(input: {
 /** 解析日考勤行的班次/排班展示文案与列名 */
 export function resolveAttendanceShiftColumn(options: {
   source: AttendanceAssignmentSource
-  shift?: Pick<Shift, 'name' | 'startTime' | 'endTime' | 'breakMinutes'> | null
+  shift?: Pick<Shift, 'id' | 'name' | 'code' | 'startTime' | 'endTime' | 'breakMinutes'> | null
   slot?: GrabShiftSlot | null
   scheduledHours?: number
 }): { label: string; text: string } {
+  if (
+    options.shift?.id === FREE_PUNCH_SHIFT_ID ||
+    options.shift?.code === 'FREE'
+  ) {
+    return {
+      label: '类型',
+      text: '自由打卡',
+    }
+  }
   if (options.source === 'grab') {
     const slot = options.slot
     const shift = options.shift
@@ -300,8 +336,25 @@ export function computeDailyAttendance(
   manualOverride?: AttendanceManualAdjustment,
 ): AttendanceDaily {
   const assignment = assignments.find((a) => a.employeeId === employeeId && a.date === date)
-  const shift = assignment ? shifts.find((s) => s.id === assignment.shiftId) : undefined
-  const scheduledHours = shift && shift.code !== 'REST' ? calcShiftHours(shift) : 0
+  const shiftBase = assignment ? shifts.find((s) => s.id === assignment.shiftId) : undefined
+  const segments = assignment ? parseScheduleTimeSegments(assignment.note) : []
+  const punchWindow = segments.length ? resolveOverallPunchWindow(segments) : null
+  /** 打卡判定用班次：自定义多段时取合计起止，空档为休息分钟 */
+  const shift =
+    shiftBase && punchWindow
+      ? {
+          ...shiftBase,
+          startTime: punchWindow.startTime,
+          endTime: punchWindow.endTime,
+          breakMinutes: calcScheduleSegmentsBreakMinutes(segments),
+        }
+      : shiftBase
+  const scheduledHours =
+    assignment && shiftBase && shiftBase.code !== 'REST'
+      ? segments.length
+        ? getAssignmentWorkHours(assignment, shifts)
+        : calcShiftHours(shiftBase)
+      : 0
 
   if (manualOverride?.status) {
     const dayPunches = getPunchesForDay(punches, employeeId, date)
@@ -337,11 +390,11 @@ export function computeDailyAttendance(
     )
   }
 
-  if (!shift || shift.code === 'REST') {
+  if (shift?.code === 'REST') {
     return withActualPunchHours({
       employeeId,
       date,
-      shiftId: shift?.id,
+      shiftId: shift.id,
       status: 'rest',
       workHours: 0,
       scheduledHours: 0,
@@ -351,6 +404,35 @@ export function computeDailyAttendance(
   const dayPunches = getPunchesForDay(punches, employeeId, date)
   const clockIn = dayPunches.find((p) => p.type === 'clock_in')
   const clockOut = dayPunches.find((p) => p.type === 'clock_out')
+
+  // 无排班但有打卡：按自由打卡处理，打卡即出勤
+  if (!shift) {
+    if (!clockIn && !clockOut) {
+      return withActualPunchHours({
+        employeeId,
+        date,
+        status: 'rest',
+        workHours: 0,
+        scheduledHours: 0,
+      })
+    }
+    const punchHours = calcWorkHours(dayPunches)
+    const defaultHours = 8
+    const workHours = punchHours > 0 ? punchHours : clockIn ? defaultHours : 0
+    return applyManualAdjustment(
+      withActualPunchHours({
+        employeeId,
+        date,
+        shiftId: FREE_PUNCH_SHIFT_ID,
+        status: 'normal',
+        clockIn: clockIn?.time,
+        clockOut: clockOut?.time,
+        workHours,
+        scheduledHours: defaultHours,
+      }),
+      manualOverride,
+    )
+  }
 
   if (!clockIn && !clockOut) {
     return applyManualAdjustment(

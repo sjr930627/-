@@ -196,13 +196,23 @@ function syncSelectedToViewMonth() {
   selectDate(fallback, false)
 }
 
-function hasPendingCancel(date: string) {
-  return store.cancelShiftRequests.some(
+function pendingCancelRequest(date: string) {
+  return store.cancelShiftRequests.find(
     (r) =>
       r.employeeId === employeeId.value &&
       r.date === date &&
       r.status === 'pending',
   )
+}
+
+function hasPendingCancel(date: string) {
+  return !!pendingCancelRequest(date)
+}
+
+function openPendingCancel(date: string) {
+  const req = pendingCancelRequest(date)
+  if (!req) return
+  router.push(`/miniapp/schedule/cancel-shift/${req.id}`)
 }
 
 async function applyCancelShift(detail: ReturnType<typeof buildDayDetail>) {
@@ -534,9 +544,9 @@ function shiftIconTone(shiftId?: string) {
             "
             class="sc-punch-secondary pending"
             type="button"
-            disabled
+            @click="openPendingCancel(selectedDayDetail.date)"
           >
-            取消申请审批中
+            取消申请审批中 · 可撤销
           </button>
           <button
             v-else-if="selectedDayDetail.date > today && selectedDayDetail.state === 'upcoming'"

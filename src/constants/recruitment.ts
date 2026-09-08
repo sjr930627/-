@@ -102,7 +102,7 @@ export const LEAD_STATUS_TRANSITIONS: Record<
 
 export const TERMINAL_LEAD_STATUSES: RecruitmentLeadStatus[] = ['qualified', 'closed']
 
-export const SKILL_OPTIONS = ['健康证', '护工证', '驾驶证', '电工证', '其他']
+export { SKILL_OPTIONS } from '@/constants/skillLibrary'
 
 export const BENEFIT_PRESETS = [
   '餐补',

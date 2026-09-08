@@ -1,6 +1,10 @@
 import { computed, ref, shallowRef, watch, type Ref } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { detectComplianceConflicts } from '@/services/scheduleCompliance'
+import {
+  detectComplianceConflicts,
+  filterAssignmentsByEnterprise,
+  normalizeAttendanceGroupCompliance,
+} from '@/services/scheduleCompliance'
 import {
   cellKey,
   parseCellKey,
@@ -15,6 +19,7 @@ import {
 } from '@/constants/schedule'
 import type { AttendanceGroupCompliance, Employee, ScheduleAssignment, Shift } from '@/types'
 import { addDays } from '@/utils'
+import { resolveEnterpriseIdByTeamDepartment } from '@/utils/enterpriseScope'
 
 export type EditMode = 'readonly' | 'editing'
 
@@ -34,6 +39,17 @@ export function useScheduleBoard(options: {
   const selectionAnchor = ref<{ employeeId: string; date: string } | null>(null)
   const copyBuffer = shallowRef<{ employeeId: string; dates: string[]; shiftIds: string[] } | null>(null)
   const dragSource = ref<{ employeeId: string; date: string } | null>(null)
+
+  const enterpriseScopedAssignments = computed(() => {
+    const team = store.teams.find((t) => t.id === options.teamId.value)
+    const enterpriseId = resolveEnterpriseIdByTeamDepartment(team?.departmentId, store.departments)
+    return filterAssignmentsByEnterprise(
+      store.assignments,
+      enterpriseId,
+      store.teams,
+      store.departments,
+    )
+  })
 
   function snapshot(): Snapshot {
     return JSON.parse(JSON.stringify(store.assignments)) as ScheduleAssignment[]
@@ -102,7 +118,10 @@ export function useScheduleBoard(options: {
   const conflictMap = computed(() => {
     const map = new Map<string, string[]>()
     const compliance = options.compliance.value
-    if (!compliance) return map
+      ? normalizeAttendanceGroupCompliance(options.compliance.value)
+      : null
+    if (!compliance?.enabled) return map
+    const scoped = enterpriseScopedAssignments.value
     options.memberIds.value.forEach((employeeId) => {
       options.dates.value.forEach((date) => {
         const asn = getVisibleAssignment(employeeId, date)
@@ -111,7 +130,7 @@ export function useScheduleBoard(options: {
           employeeId,
           date,
           asn.shiftId,
-          store.assignments,
+          scoped,
           store.shifts,
           compliance,
         )
@@ -312,12 +331,24 @@ export function useScheduleBoard(options: {
         return
       }
       const compliance = options.compliance.value
-      if (!compliance) return
+        ? normalizeAttendanceGroupCompliance(options.compliance.value)
+        : null
+      if (!compliance?.enabled) {
+        store.upsertAssignment({
+          employeeId,
+          date,
+          shiftId,
+          teamId: options.teamId.value,
+          published: false,
+          manualEdited: true,
+        })
+        return
+      }
       const conflicts = detectComplianceConflicts(
         employeeId,
         date,
         shiftId,
-        store.assignments,
+        enterpriseScopedAssignments.value,
         store.shifts,
         compliance,
       )

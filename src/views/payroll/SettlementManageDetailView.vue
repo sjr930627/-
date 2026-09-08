@@ -25,14 +25,18 @@ const slip = computed(() =>
 const isImport = computed(() => slip.value?.type === 'import')
 
 const tableData = computed(() =>
-  (slip.value?.lines ?? []).map((line) => ({
-    ...line,
-    orderLabel: `${line.orderName}（${line.orderNo}）`,
-    periodLabel: formatSettlementPeriod(line.periodStart, line.periodEnd),
-    quantityLabel: formatSettlementQuantity(slip.value!.type, line.quantity),
-    unitPriceLabel: formatSettlementUnitPrice(slip.value!.type, line.unitPrice),
-    amountLabel: formatMoney(line.amount),
-  })),
+  (slip.value?.lines ?? []).map((line) => {
+    const emp = store.employees.find((e) => e.id === line.employeeId)
+    return {
+      ...line,
+      phone: line.phone || emp?.phone || '',
+      orderLabel: `${line.orderName}（${line.orderNo}）`,
+      periodLabel: formatSettlementPeriod(line.periodStart, line.periodEnd),
+      quantityLabel: formatSettlementQuantity(slip.value!.type, line.quantity),
+      unitPriceLabel: formatSettlementUnitPrice(slip.value!.type, line.unitPrice),
+      amountLabel: formatMoney(line.amount),
+    }
+  }),
 )
 
 function goBack() {
@@ -79,16 +83,15 @@ function formatTime(iso?: string) {
         <template #default="{ row }">{{ row.phone || '—' }}</template>
       </el-table-column>
       <el-table-column prop="employeeName" label="姓名" width="100" />
-      <el-table-column prop="employeeNo" label="工号" width="120">
-        <template #default="{ row }">{{ row.employeeNo || '—' }}</template>
-      </el-table-column>
       <el-table-column prop="amountLabel" label="发薪金额" width="130" align="right" />
     </el-table>
 
     <el-table v-else :data="tableData" border stripe>
       <el-table-column prop="enterpriseName" label="企业" min-width="160" />
       <el-table-column prop="employeeName" label="灵工" width="100" />
-      <el-table-column prop="employeeNo" label="工号" width="120" />
+      <el-table-column prop="phone" label="手机号" width="130">
+        <template #default="{ row }">{{ row.phone || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="departmentName" label="部门" min-width="120" />
       <el-table-column prop="orderLabel" label="班次/任务单" min-width="220" />
       <el-table-column prop="periodLabel" label="结算周期" min-width="180" />

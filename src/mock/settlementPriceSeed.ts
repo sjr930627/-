@@ -1,10 +1,11 @@
 import type {
   AttendanceGroupSettlementOverride,
+  DepartmentSettlementOverride,
   TaskTypeSettlementOverride,
 } from '@/types'
 import { createDefaultVariablePrice } from '@/constants/attendanceGroupPricing'
 
-/** 按考勤组配置灵工工时结算价 */
+/** 按考勤组配置工时结算价（部门未单独配置时回退） */
 export const seedAttendanceGroupSettlementOverrides: AttendanceGroupSettlementOverride[] = [
   {
     attendanceGroupId: 'ag_factory',
@@ -39,6 +40,33 @@ export const seedAttendanceGroupSettlementOverrides: AttendanceGroupSettlementOv
     weekend: createDefaultVariablePrice('multiplier', 1.5),
     holiday: createDefaultVariablePrice('multiplier', 2),
     updatedAt: '2026-07-20T09:00:00.000Z',
+  },
+]
+
+/** 按部门配置工时结算价（优先于考勤组） */
+export const seedDepartmentSettlementOverrides: DepartmentSettlementOverride[] = [
+  {
+    departmentId: 'dept_prod_a',
+    enterpriseId: 'ent_stars_telecom',
+    dailySettlement: true,
+    autoSettlement: true,
+    dayShiftRate: 40,
+    nightShiftRate: 48,
+    overtime: createDefaultVariablePrice('multiplier', 2),
+    weekend: createDefaultVariablePrice('fixed', 60),
+    holiday: createDefaultVariablePrice('multiplier', 2),
+    updatedAt: '2026-08-01T10:00:00.000Z',
+  },
+  {
+    departmentId: 'dept_hr',
+    enterpriseId: 'ent_stars_telecom',
+    dailySettlement: false,
+    dayShiftRate: 30,
+    nightShiftRate: 36,
+    overtime: createDefaultVariablePrice('multiplier', 1.5),
+    weekend: createDefaultVariablePrice('multiplier', 1.5),
+    holiday: createDefaultVariablePrice('multiplier', 2),
+    updatedAt: '2026-08-02T09:00:00.000Z',
   },
 ]
 

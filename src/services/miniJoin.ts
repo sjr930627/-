@@ -42,8 +42,10 @@ export interface WorkerJoinApplicationDisplay extends WorkerJoinApplication {
   enterpriseName: string
   departmentName: string
   assignedDepartmentName?: string
+  appliedPositionLabel: string
   statusLabel: string
   statusTag: string
+  sourceLabel: string
 }
 
 function departmentChain(departments: Department[], departmentId: string) {
@@ -86,10 +88,25 @@ export function listWorkerJoinApplications(
       assignedDepartmentName: a.assignedDepartmentId
         ? getDepartmentName(departments, a.assignedDepartmentId)
         : undefined,
+      appliedPositionLabel: a.positionName || a.assignedPosition || '—',
       statusLabel: JOIN_STATUS_LABEL[a.status],
       statusTag: JOIN_STATUS_TAG[a.status],
+      sourceLabel: a.source === 'qr' ? '扫码申请' : '企业分配',
     }))
     .sort((a, b) => b.appliedAt.localeCompare(a.appliedAt))
+}
+
+export function getWorkerJoinApplicationDisplay(
+  applications: WorkerJoinApplication[],
+  applicationId: string,
+  departments: Department[],
+  enterprises: Enterprise[],
+): WorkerJoinApplicationDisplay | null {
+  const app = applications.find((a) => a.id === applicationId)
+  if (!app) return null
+  return (
+    listWorkerJoinApplications([app], app.employeeId, departments, enterprises)[0] ?? null
+  )
 }
 
 export function listWorkerCurrentOrgs(

@@ -11,9 +11,13 @@ import {
   buildDailyAttendanceList,
   canConfirmWorkHours,
   canCorrectWorkHours,
+  getHoursBaselineLabel,
+  getHoursConfirmSource,
+  getHoursConfirmSourceLabel,
   getStatusLabel,
   getStatusTagType,
   isDailyAttendanceVisible,
+  type HoursConfirmSource,
 } from '@/services/attendance'
 
 const route = useRoute()
@@ -39,6 +43,9 @@ type HoursRow = {
   manualNote?: string
   canConfirm: boolean
   canCorrect: boolean
+  hoursSource: HoursConfirmSource
+  hoursSourceLabel: string
+  baselineLabel: string
 }
 
 const correctionOpen = ref(false)
@@ -76,12 +83,18 @@ const tableData = computed(() => {
     .filter(isDailyAttendanceVisible)
     .map((d) => {
       const emp = store.employees.find((e) => e.id === d.employeeId)
+      const hoursSource = getHoursConfirmSource(d)
       const shift = d.shiftId ? store.shifts.find((s) => s.id === d.shiftId) : undefined
+      const shiftName =
+        hoursSource === 'free_punch' ? '无班次' : (shift?.name ?? '—')
       return {
         ...d,
         rowKey: `${d.employeeId}_${d.date}`,
         employeeName: emp?.name ?? d.employeeId,
-        shiftName: shift?.name ?? '—',
+        shiftName,
+        hoursSource,
+        hoursSourceLabel: getHoursConfirmSourceLabel(hoursSource),
+        baselineLabel: getHoursBaselineLabel(hoursSource),
         statusLabel: getStatusLabel(d.status),
         tagType: getStatusTagType(d.status),
         canConfirm: canConfirmWorkHours(d),
@@ -350,9 +363,17 @@ async function batchConfirm() {
           <div class="info">
             <div class="row">
               <strong>{{ row.employeeName }}</strong>
+              <span class="source-tag" :class="row.hoursSource">{{ row.hoursSourceLabel }}</span>
               <span class="tag" :class="row.tagType">{{ row.statusLabel }}</span>
             </div>
-            <p class="meta">{{ row.shiftName }} · 排班 {{ row.scheduledHours }}h</p>
+            <p class="meta">
+              <template v-if="row.hoursSource === 'free_punch'">
+                无班次 · {{ row.baselineLabel }} {{ row.scheduledHours }}h
+              </template>
+              <template v-else>
+                {{ row.shiftName }} · {{ row.baselineLabel }} {{ row.scheduledHours }}h
+              </template>
+            </p>
             <p class="hours">
               工时 <em>{{ row.workHours }}h</em>
               <span v-if="row.workHoursCorrected" class="corrected">已矫正</span>
@@ -386,7 +407,8 @@ async function batchConfirm() {
           <button type="button" class="close" @click="closeCorrection">×</button>
         </header>
         <p class="sheet-meta">
-          {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} · 排班
+          {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} ·
+          {{ correctionTarget.hoursSourceLabel }} · {{ correctionTarget.baselineLabel }}
           {{ correctionTarget.scheduledHours }}h · 当前 {{ correctionTarget.workHours }}h
         </p>
         <label>矫正工时（小时）</label>
@@ -411,7 +433,8 @@ async function batchConfirm() {
         </header>
 
         <p class="sheet-meta">
-          {{ confirmFlowRow.employeeName }} · {{ confirmFlowRow.date }} · 排班
+          {{ confirmFlowRow.employeeName }} · {{ confirmFlowRow.date }} ·
+          {{ confirmFlowRow.hoursSourceLabel }} · {{ confirmFlowRow.baselineLabel }}
           {{ confirmFlowRow.scheduledHours }}h
         </p>
 
@@ -535,8 +558,11 @@ async function batchConfirm() {
 .row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.row strong {
+  margin-right: auto;
 }
 .meta {
   margin: 4px 0 0;
@@ -576,6 +602,21 @@ async function batchConfirm() {
   margin-left: 8px;
   font-size: 11px;
   color: #d97706;
+}
+.source-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+.source-tag.schedule {
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+.source-tag.free_punch {
+  color: #0f766e;
+  background: #ecfdf5;
 }
 .tag {
   font-size: 11px;

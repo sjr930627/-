@@ -65,7 +65,9 @@ export function summarizeVersionSnapshot(snapshot: AttendanceGroupVersionSnapsho
       `班次：${snapshot.shiftTemplates.map((s) => `${s.name}(${s.startTime}-${s.endTime})`).join('、')}`,
     )
     lines.push(
-      `合规红线：日${snapshot.compliance.maxDailyHours}h / 周${snapshot.compliance.maxWeeklyHours}h / 月${snapshot.compliance.maxMonthlyHours}h`,
+      snapshot.compliance.enabled
+        ? `合规红线（本企业）：日${snapshot.compliance.maxDailyHours}h / 周${snapshot.compliance.maxWeeklyHours}h / 月${snapshot.compliance.maxMonthlyHours}h`
+        : '合规红线：未启用',
     )
     if (snapshot.minMonthlyOnlineHours) {
       lines.push(`月最低在线：${snapshot.minMonthlyOnlineHours}h`)

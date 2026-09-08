@@ -6,30 +6,6 @@ import { isEnterpriseMiniAuthed } from '@/composables/useEnterpriseMiniAuth'
 
 const sharedOpsRoutes: RouteRecordRaw[] = [
   {
-    path: 'recruitment/requirements',
-    name: 'RecruitmentRequirements',
-    component: () => import('@/views/recruitment/RequirementList.vue'),
-    meta: { title: '需求管理', group: '招聘管理' },
-  },
-  {
-    path: 'recruitment/progress',
-    name: 'RecruitmentProgress',
-    component: () => import('@/views/recruitment/RecruitmentProgress.vue'),
-    meta: { title: '招聘进度看板', group: '招聘管理' },
-  },
-  {
-    path: 'recruitment/calendar',
-    name: 'InterviewCalendar',
-    component: () => import('@/views/recruitment/InterviewCalendar.vue'),
-    meta: { title: '面试日程', group: '招聘管理' },
-  },
-  {
-    path: 'recruitment/talents',
-    name: 'TalentPool',
-    component: () => import('@/views/recruitment/TalentPool.vue'),
-    meta: { title: '人才库', group: '招聘管理' },
-  },
-  {
     path: 'training/materials',
     name: 'TrainingMaterials',
     component: () => import('@/views/training/TrainingMaterialManageView.vue'),
@@ -207,24 +183,6 @@ const sharedOpsRoutes: RouteRecordRaw[] = [
     name: 'PayrollBillingRules',
     component: () => import('@/views/payroll/BillingRuleView.vue'),
     meta: { title: '计薪规则', group: '财税管理' },
-  },
-  {
-    path: 'system/accounts',
-    name: 'SystemAccounts',
-    component: () => import('@/views/system/AccountListView.vue'),
-    meta: { title: '账号管理', group: '系统设置' },
-  },
-  {
-    path: 'system/roles',
-    name: 'SystemRoles',
-    component: () => import('@/views/system/RolePermissionView.vue'),
-    meta: { title: '角色权限', group: '系统设置' },
-  },
-  {
-    path: 'system/oplog',
-    name: 'SystemOpLog',
-    component: () => import('@/views/system/OperationLogView.vue'),
-    meta: { title: '操作日志', group: '系统设置' },
   },
 ]
 
@@ -423,24 +381,6 @@ const platformChildren: RouteRecordRaw[] = [
     meta: { title: '查看详情', group: '人员管理', hidden: true, portal: 'platform' },
   },
   ...platformSharedOpsRoutes.map((r) => ({ ...r, meta: { ...r.meta, portal: 'platform' } })),
-  {
-    path: 'system/reminder-rules',
-    name: 'ReminderRules',
-    component: () => import('@/views/system/ReminderRuleListView.vue'),
-    meta: { title: '提醒规则配置', group: '系统设置', portal: 'platform' },
-  },
-  {
-    path: 'system/reminder-rules/create',
-    name: 'ReminderRuleCreate',
-    component: () => import('@/views/system/ReminderRuleFormView.vue'),
-    meta: { title: '新建提醒规则', group: '系统设置', hidden: true, portal: 'platform' },
-  },
-  {
-    path: 'system/reminder-rules/:id/edit',
-    name: 'ReminderRuleEdit',
-    component: () => import('@/views/system/ReminderRuleFormView.vue'),
-    meta: { title: '编辑提醒规则', group: '系统设置', hidden: true, portal: 'platform' },
-  },
   ...platformCommonTrainingRedirects,
   {
     path: 'payroll/bills',
@@ -518,31 +458,25 @@ const platformChildren: RouteRecordRaw[] = [
     path: 'statistics/overview',
     name: 'StatsOverview',
     component: () => import('@/views/statistics/OverviewStatsView.vue'),
-    meta: { title: '概览看板', group: '数据统计', portal: 'platform' },
-  },
-  {
-    path: 'statistics/recruitment',
-    name: 'StatsRecruitment',
-    component: () => import('@/views/statistics/RecruitmentStatsView.vue'),
-    meta: { title: '招聘统计', group: '数据统计', portal: 'platform' },
+    meta: { title: '概览看板', group: '分析统计', portal: 'platform' },
   },
   {
     path: 'statistics/attendance',
     name: 'StatsAttendance',
     component: () => import('@/views/statistics/AttendanceStatsView.vue'),
-    meta: { title: '考勤统计', group: '数据统计', portal: 'platform' },
+    meta: { title: '考勤分析', group: '分析统计', portal: 'platform' },
   },
   {
     path: 'statistics/task',
     name: 'StatsTask',
     component: () => import('@/views/statistics/TaskStatsView.vue'),
-    meta: { title: '任务统计', group: '数据统计', portal: 'platform' },
+    meta: { title: '任务分析', group: '分析统计', portal: 'platform' },
   },
   {
     path: 'statistics/settlement',
     name: 'StatsSettlement',
     component: () => import('@/views/statistics/SettlementStatsView.vue'),
-    meta: { title: '结算统计', group: '数据统计', portal: 'platform' },
+    meta: { title: '结算分析', group: '分析统计', portal: 'platform' },
   },
 ]
 
@@ -743,8 +677,7 @@ const router = createRouter({
         {
           path: 'recommend/job/:id',
           name: 'MiniJobDetail',
-          component: () => import('@/views/miniapp/MiniJobDetailView.vue'),
-          meta: { title: '岗位详情', miniTab: false },
+          redirect: { path: '/miniapp/recommend', query: { tab: 'jobs' } },
         },
         {
           path: 'recommend/shift/:teamId',
@@ -826,6 +759,18 @@ const router = createRouter({
           name: 'MiniJoinManage',
           component: () => import('@/views/miniapp/MiniJoinManageView.vue'),
           meta: { title: '入驻管理', miniTab: false },
+        },
+        {
+          path: 'join-apply',
+          name: 'MiniJoinApply',
+          component: () => import('@/views/miniapp/MiniJoinApplyView.vue'),
+          meta: { title: '入驻申请', miniTab: false },
+        },
+        {
+          path: 'join-applications/:id',
+          name: 'MiniJoinApplicationDetail',
+          component: () => import('@/views/miniapp/MiniJoinApplicationDetailView.vue'),
+          meta: { title: '申请详情', miniTab: false },
         },
         {
           path: 'applications/job/:id',
@@ -996,38 +941,32 @@ const router = createRouter({
         {
           path: 'recruitment/publish',
           name: 'EntMiniPublish',
-          component: () => import('@/views/enterprise-miniapp/EntMiniPublishView.vue'),
-          meta: { title: '发布招聘', entMiniTab: false },
+          redirect: '/enterprise-miniapp/recruitment',
         },
         {
           path: 'recruitment/jobs',
           name: 'EntMiniJobRequirements',
-          component: () => import('@/views/enterprise-miniapp/EntMiniJobRequirementsView.vue'),
-          meta: { title: '岗位需求', entMiniTab: false },
+          redirect: '/enterprise-miniapp/recruitment',
         },
         {
           path: 'recruitment/leads',
           name: 'EntMiniRecruitLeads',
-          component: () => import('@/views/enterprise-miniapp/EntMiniRecruitLeadsView.vue'),
-          meta: { title: '招聘线索', entMiniTab: false },
+          redirect: '/enterprise-miniapp/recruitment',
         },
         {
           path: 'recruitment/progress',
           name: 'EntMiniProgress',
-          component: () => import('@/views/enterprise-miniapp/EntMiniProgressView.vue'),
-          meta: { title: '招聘进度', entMiniTab: false },
+          redirect: '/enterprise-miniapp/recruitment',
         },
         {
           path: 'recruitment/interview',
           name: 'EntMiniInterview',
-          component: () => import('@/views/enterprise-miniapp/EntMiniInterviewView.vue'),
-          meta: { title: '面试进度', entMiniTab: false },
+          redirect: '/enterprise-miniapp/recruitment',
         },
         {
           path: 'recruitment/qual',
           name: 'EntMiniQual',
-          component: () => import('@/views/enterprise-miniapp/EntMiniQualView.vue'),
-          meta: { title: '资质审核', entMiniTab: false },
+          redirect: '/enterprise-miniapp/recruitment',
         },
         {
           path: 'attendance',
@@ -1039,7 +978,7 @@ const router = createRouter({
           path: 'today-schedule',
           name: 'EntMiniTodaySchedule',
           component: () => import('@/views/enterprise-miniapp/EntMiniTodayScheduleView.vue'),
-          meta: { title: '今日排班', entMiniTab: false },
+          meta: { title: '当日出勤管理', entMiniTab: false },
         },
         {
           path: 'tasks',
@@ -1182,10 +1121,28 @@ const router = createRouter({
     { path: '/enterprise/task-progress', redirect: '/enterprise/task/progress' },
     { path: '/statistics', redirect: '/statistics/overview' },
     { path: '/payroll', redirect: '/payroll/bills' },
+    // 招聘 / 系统设置模块已下线，旧入口统一回工作台
+    { path: '/recruitment/:pathMatch(.*)*', redirect: '/dashboard' },
+    { path: '/system/:pathMatch(.*)*', redirect: '/dashboard' },
+    { path: '/statistics/recruitment', redirect: '/statistics/overview' },
+    { path: '/enterprise/recruitment/:pathMatch(.*)*', redirect: '/enterprise/dashboard' },
+    { path: '/enterprise/system/:pathMatch(.*)*', redirect: '/enterprise/dashboard' },
   ],
 })
 
 router.beforeEach((to) => {
+  // 招聘 / 系统设置已下线：旧书签与刷新避免白屏
+  if (
+    to.path.startsWith('/recruitment') ||
+    to.path === '/statistics/recruitment' ||
+    to.path.startsWith('/system')
+  ) {
+    return '/dashboard'
+  }
+  if (to.path.startsWith('/enterprise/recruitment') || to.path.startsWith('/enterprise/system')) {
+    return '/enterprise/dashboard'
+  }
+
   if (to.path.startsWith('/enterprise-miniapp')) {
     const isPublic = to.meta.entMiniPublic === true
     if (isPublic) {

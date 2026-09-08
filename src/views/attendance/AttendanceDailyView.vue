@@ -10,6 +10,9 @@ import {
   filterAssignmentsBySource,
   formatActualPunchHoursText,
   formatDailyWorkHoursText,
+  getHoursBaselineLabel,
+  getHoursConfirmSource,
+  getHoursConfirmSourceLabel,
   resolveAttendanceShiftColumn,
   resolveConfirmWorkHours,
   getStatusLabel,
@@ -56,6 +59,8 @@ const correctionTarget = ref<{
   date: string
   workHours: number
   scheduledHours: number
+  hoursSourceLabel: string
+  baselineLabel: string
 } | null>(null)
 const correctionForm = ref({ workHours: 0, note: '' })
 
@@ -111,6 +116,7 @@ const tableData = computed(() => {
         slot,
         scheduledHours: d.scheduledHours,
       })
+      const hoursSource = getHoursConfirmSource(d)
       const override = store.manualOverrides[`${d.employeeId}_${d.date}`]
       const rowKey = `${d.employeeId}_${d.date}`
       const enterpriseId = resolveEnterpriseIdByEmployee(emp)
@@ -124,6 +130,9 @@ const tableData = computed(() => {
         employeeName: emp?.name ?? '-',
         phone: emp?.phone || '—',
         shiftName: shiftColumn.text,
+        hoursSource,
+        hoursSourceLabel: getHoursConfirmSourceLabel(hoursSource),
+        baselineLabel: getHoursBaselineLabel(hoursSource),
         statusLabel: getStatusLabel(d.status),
         tagType: getStatusTagType(d.status),
         canCorrect: canCorrectWorkHours(d),
@@ -135,7 +144,7 @@ const tableData = computed(() => {
 })
 
 const shiftColumnLabel = computed(() =>
-  props.assignmentSource === 'grab' ? '班次' : '排班',
+  props.assignmentSource === 'grab' ? '班次' : '类型/排班',
 )
 
 const summary = computed(() => {
@@ -173,6 +182,8 @@ function openCorrection(row: (typeof tableData.value)[0]) {
     date: row.date,
     workHours: row.actualPunchHours ?? row.workHours,
     scheduledHours: row.scheduledHours,
+    hoursSourceLabel: row.hoursSourceLabel,
+    baselineLabel: row.baselineLabel,
   }
   correctionForm.value = {
     workHours: row.workHoursCorrected ? row.workHours : (row.actualPunchHours ?? row.workHours),
@@ -412,9 +423,10 @@ function openAudit(row: (typeof tableData.value)[0]) {
   <el-dialog v-model="correctionVisible" title="工时矫正" width="460px" destroy-on-close>
     <template v-if="correctionTarget">
       <p class="correction-meta">
-        {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} · 班次工时
+        {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} ·
+        {{ correctionTarget.hoursSourceLabel }} · {{ correctionTarget.baselineLabel }}
         {{ correctionTarget.scheduledHours }}h · 实际
-        {{ correctionTarget.workHours }}h（矫正工时可大于班次工时）
+        {{ correctionTarget.workHours }}h（矫正工时可大于{{ correctionTarget.baselineLabel }}）
       </p>
       <el-form label-width="100px">
         <el-form-item label="矫正工时" required>

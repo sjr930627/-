@@ -1,7 +1,7 @@
 import type { Enterprise } from '@/types'
 
 /** 演示用 Logo（SVG data URL） */
-function logo(shortName: string, color = '#5b4fdb') {
+function logo(shortName: string, color = '#2563eb') {
   const label = shortName.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '').slice(0, 2) || '企'
   return `data:image/svg+xml,${encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" rx="28" fill="${color}"/><text x="80" y="96" text-anchor="middle" fill="#fff" font-size="48" font-family="PingFang SC,Microsoft YaHei,sans-serif" font-weight="700">${label}</text></svg>`,
@@ -18,7 +18,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_stars_telecom',
     code: 'CT-2024-00158',
-    name: '星辰通信集团',
+    name: '星辰通信企业公司',
     shortName: '星辰通信',
     contact: '小贾',
     contactPerson: '小贾',
@@ -38,7 +38,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_china_mobile_agent',
     code: 'CT-2024-00142',
-    name: '中国移动北京朝阳分公司',
+    name: '中国移动朝阳企业公司',
     shortName: '中国移动朝阳',
     contact: '张经理',
     contactPerson: '张经理',
@@ -66,8 +66,8 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_pingan_partner',
     code: 'CT-2024-00136',
-    name: '中国移动浙江分公司',
-    shortName: '工经联',
+    name: '中国移动浙江企业公司',
+    shortName: '中国移动浙江',
     contact: '王总监',
     contactPerson: '王总监',
     contactPhone: '13800138003',
@@ -88,7 +88,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_china_telecom_agent',
     code: 'CT-2024-00121',
-    name: '中国移动上海分公司',
+    name: '中国移动上海企业公司',
     shortName: '中国移动上海',
     contact: '刘经理',
     contactPerson: '刘经理',
@@ -106,7 +106,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_unilever_partner',
     code: 'CT-2024-00098',
-    name: '优速快消营销公司',
+    name: '优速快消企业公司',
     shortName: '优速快消',
     contact: '陈主管',
     contactPerson: '陈主管',
@@ -120,7 +120,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_huaxia_logistics',
     code: 'CT-2024-00087',
-    name: '华夏物流配送中心',
+    name: '华夏物流企业公司',
     shortName: '华夏物流',
     contact: '赵主任',
     contactPerson: '赵主任',
@@ -134,7 +134,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_green_energy',
     code: 'CT-2024-00076',
-    name: '绿能科技服务有限公司',
+    name: '绿能科技企业公司',
     shortName: '绿能科技',
     contact: '孙经理',
     contactPerson: '孙经理',
@@ -152,7 +152,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_jingdong_retail',
     code: 'CT-2024-00065',
-    name: '京东零售推广联盟',
+    name: '京东推广企业公司',
     shortName: '京东推广',
     contact: '周运营',
     contactPerson: '周运营',
@@ -166,7 +166,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_anhui_insurance',
     code: 'CT-2024-00054',
-    name: '安联保险代理有限公司',
+    name: '安联代理企业公司',
     shortName: '安联代理',
     contact: '吴总监',
     contactPerson: '吴总监',
@@ -180,7 +180,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_sichuan_fmcg',
     code: 'CT-2024-00043',
-    name: '川渝快消渠道商',
+    name: '川渝快消企业公司',
     shortName: '川渝快消',
     contact: '郑经理',
     contactPerson: '郑经理',
@@ -195,7 +195,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_shanghai_retail',
     code: 'CT-2024-00032',
-    name: '上海零售服务集团',
+    name: '上海零售企业公司',
     shortName: '上海零售',
     contact: '钱主管',
     contactPerson: '钱主管',
@@ -213,7 +213,7 @@ const rawEnterprises: Omit<Enterprise, 'logoUrl' | 'sceneImageUrls'>[] = [
   {
     id: 'ent_hubei_telecom',
     code: 'CT-2024-00021',
-    name: '湖北电信渠道运营公司',
+    name: '湖北电信企业公司',
     shortName: '湖北电信',
     contact: '冯经理',
     contactPerson: '冯经理',

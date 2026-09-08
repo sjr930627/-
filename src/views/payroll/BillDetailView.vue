@@ -7,6 +7,7 @@ import { useAppStore } from '@/stores/app'
 import { usePortal } from '@/composables/usePortal'
 import {
   resolveBillStatusMeta,
+  formatBillPayerEnterpriseName,
   formatMoney,
   formatPeriod,
   billRemainingInvoiceAmount,
@@ -15,6 +16,7 @@ import {
   formatBillTaxInclusiveTip,
   getBillServiceFeeWaiver,
   isBillTaxExclusiveMode,
+  resolveBillPayerSubjectType,
   toBillTaxInclusiveAmount,
 } from '@/constants/payrollBill'
 import type { SettlementBillSummary } from '@/types'
@@ -31,6 +33,7 @@ const voucherFile = ref('')
 const confirmVisible = ref(false)
 const confirming = ref(false)
 const confirmForm = ref({
+  payerSubjectType: 'self' as 'self' | 'other',
   payerEnterpriseName: '',
   payerCreditCode: '',
 })
@@ -248,11 +251,30 @@ function goBack() {
   router.push(`${pathPrefix.value}/payroll/bills`)
 }
 
+function onConfirmPayerSubjectChange(val: string | number | boolean | undefined) {
+  if (!bill.value || val !== 'self') return
+  const company = store.enterprises.find((e) => e.id === bill.value!.enterpriseId)
+  if (!company) return
+  confirmForm.value.payerEnterpriseName = company.name
+  confirmForm.value.payerCreditCode = company.creditCode ?? ''
+}
+
 function openConfirmBill() {
   if (!bill.value) return
+  const company =
+    store.enterprises.find((e) => e.id === bill.value!.enterpriseId)?.name ??
+    bill.value.enterpriseName
+  const subjectType = resolveBillPayerSubjectType(bill.value)
   confirmForm.value = {
-    payerEnterpriseName: bill.value.payerEnterpriseName ?? bill.value.enterpriseName,
-    payerCreditCode: bill.value.payerCreditCode ?? '',
+    payerSubjectType: subjectType,
+    payerEnterpriseName:
+      subjectType === 'self' ? company : bill.value.payerEnterpriseName ?? company,
+    payerCreditCode:
+      subjectType === 'self'
+        ? store.enterprises.find((e) => e.id === bill.value!.enterpriseId)?.creditCode ??
+          bill.value.payerCreditCode ??
+          ''
+        : bill.value.payerCreditCode ?? '',
   }
   confirmVisible.value = true
 }
@@ -261,9 +283,18 @@ function confirmBill() {
   if (!bill.value) return
   confirming.value = true
   try {
+    const company = store.enterprises.find((e) => e.id === bill.value!.enterpriseId)
+    const subjectType = confirmForm.value.payerSubjectType
     store.confirmSettlementBill(bill.value.id, {
-      payerEnterpriseName: confirmForm.value.payerEnterpriseName,
-      payerCreditCode: confirmForm.value.payerCreditCode,
+      payerSubjectType: subjectType,
+      payerEnterpriseName:
+        subjectType === 'self'
+          ? company?.name ?? bill.value.enterpriseName
+          : confirmForm.value.payerEnterpriseName.trim(),
+      payerCreditCode:
+        subjectType === 'self'
+          ? company?.creditCode ?? confirmForm.value.payerCreditCode
+          : confirmForm.value.payerCreditCode,
     })
     confirmVisible.value = false
     ElMessage.success('账单已确认，状态已更新为待付款')
@@ -510,7 +541,12 @@ function viewBillingRule() {
         <el-descriptions-item label="企业">{{ bill.enterpriseName }}</el-descriptions-item>
         <el-descriptions-item label="部门">{{ bill.departmentName || '全公司' }}</el-descriptions-item>
         <el-descriptions-item label="付款企业">
-          {{ bill.payerEnterpriseName || '—' }}
+          {{
+            formatBillPayerEnterpriseName(
+              bill,
+              store.enterprises.find((e) => e.id === bill?.enterpriseId)?.name,
+            )
+          }}
         </el-descriptions-item>
         <el-descriptions-item label="统一信用代码">
           {{ bill.payerCreditCode || '—' }}
@@ -719,10 +755,24 @@ function viewBillingRule() {
   </div>
 
   <el-dialog v-model="confirmVisible" title="确认账单" width="480px" destroy-on-close>
-    <p class="confirm-tip">确认前可修改付款企业与统一信用代码（非必填）</p>
+    <p class="confirm-tip">确认前可选择付款主体：本公司显示公司名称，其他主体显示其他公司名称</p>
     <el-form label-width="120px">
-      <el-form-item label="付款企业">
-        <el-input v-model="confirmForm.payerEnterpriseName" clearable placeholder="付款企业名称" />
+      <el-form-item label="付款主体">
+        <el-radio-group
+          v-model="confirmForm.payerSubjectType"
+          @change="onConfirmPayerSubjectChange"
+        >
+          <el-radio value="self">本公司</el-radio>
+          <el-radio value="other">其他主体</el-radio>
+        </el-radio-group>
+      </el-form-item>
+      <el-form-item :label="confirmForm.payerSubjectType === 'self' ? '公司名称' : '其他公司名称'">
+        <el-input
+          v-model="confirmForm.payerEnterpriseName"
+          :placeholder="confirmForm.payerSubjectType === 'self' ? '本公司名称' : '请输入其他付款公司名称'"
+          :disabled="confirmForm.payerSubjectType === 'self'"
+          clearable
+        />
       </el-form-item>
       <el-form-item label="统一信用代码">
         <el-input
@@ -730,6 +780,7 @@ function viewBillingRule() {
           clearable
           maxlength="18"
           placeholder="统一社会信用代码"
+          :disabled="confirmForm.payerSubjectType === 'self'"
         />
       </el-form-item>
     </el-form>

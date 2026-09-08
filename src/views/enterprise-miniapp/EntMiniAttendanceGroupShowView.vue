@@ -151,7 +151,7 @@ async function removeGroup() {
             <strong>{{ idx + 1 }}. {{ shift.name || '未命名班次' }}</strong>
             <span>时段：{{ shift.startTime }} - {{ shift.endTime }}</span>
             <span>工时：{{ shift.workHours }}h</span>
-            <span>休息规则：{{ shift.breakRule || '—' }}</span>
+            <span>休息：{{ shift.breakRule || (shift.hasBreakTime ? '有休息' : '无') }}</span>
           </div>
         </div>
         <p v-else class="empty-text">暂无班次模版</p>
@@ -214,29 +214,35 @@ async function removeGroup() {
       <section v-if="group.attendanceType === 'shift'" class="info-card">
         <h3 class="card-title">合规工时红线</h3>
         <div class="info-row">
-          <span class="label">日最高工时</span>
-          <span class="value">{{ group.compliance.maxDailyHours }} h</span>
+          <span class="label">启用状态</span>
+          <span class="value">{{ group.compliance.enabled ? '已开启（仅本企业）' : '未开启' }}</span>
         </div>
-        <div class="info-row">
-          <span class="label">周最高工时</span>
-          <span class="value">{{ group.compliance.maxWeeklyHours }} h</span>
-        </div>
-        <div class="info-row">
-          <span class="label">班次最小间隔</span>
-          <span class="value">{{ group.compliance.minShiftIntervalHours }} h</span>
-        </div>
-        <div class="info-row">
-          <span class="label">月最高工时</span>
-          <span class="value">{{ group.compliance.maxMonthlyHours }} h</span>
-        </div>
-        <div class="info-row">
-          <span class="label">最大连续工作</span>
-          <span class="value">{{ group.compliance.maxConsecutiveWorkdays }} 天</span>
-        </div>
-        <div class="info-row">
-          <span class="label">月最低在线</span>
-          <span class="value">{{ formatMinMonthlyHours(group.minMonthlyOnlineHours) }}</span>
-        </div>
+        <template v-if="group.compliance.enabled">
+          <div class="info-row">
+            <span class="label">日最高工时</span>
+            <span class="value">{{ group.compliance.maxDailyHours }} h</span>
+          </div>
+          <div class="info-row">
+            <span class="label">周最高工时</span>
+            <span class="value">{{ group.compliance.maxWeeklyHours }} h</span>
+          </div>
+          <div class="info-row">
+            <span class="label">班次最小间隔</span>
+            <span class="value">{{ group.compliance.minShiftIntervalHours }} h</span>
+          </div>
+          <div class="info-row">
+            <span class="label">月最高工时</span>
+            <span class="value">{{ group.compliance.maxMonthlyHours }} h</span>
+          </div>
+          <div class="info-row">
+            <span class="label">最大连续工作</span>
+            <span class="value">{{ group.compliance.maxConsecutiveWorkdays }} 天</span>
+          </div>
+          <div class="info-row">
+            <span class="label">月最低在线</span>
+            <span class="value">{{ formatMinMonthlyHours(group.minMonthlyOnlineHours) }}</span>
+          </div>
+        </template>
       </section>
 
       <!-- 6 关联组织架构 -->

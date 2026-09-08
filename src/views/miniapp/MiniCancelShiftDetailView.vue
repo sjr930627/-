@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Cloudy, Moon, Sunny } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
@@ -13,6 +14,7 @@ import {
 } from '@/services/miniScheduleException'
 
 const route = useRoute()
+const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const { now } = useMiniAppNow()
@@ -39,10 +41,18 @@ const teamName = computed(() => {
   return store.teams.find((t) => t.id === request.value!.teamId)?.name ?? dayDetail.value?.teamName ?? '—'
 })
 
+const canWithdraw = computed(
+  () =>
+    !!request.value &&
+    request.value.status === 'pending' &&
+    request.value.initiatedBy === 'employee',
+)
+
 const statusTitle = computed(() => {
   if (!request.value) return ''
   if (request.value.status === 'approved') return '审批通过，排班已取消'
   if (request.value.status === 'rejected') return '审批已驳回'
+  if (request.value.status === 'cancelled') return '已撤销申请'
   return approvalStatusLabel(request.value.status)
 })
 
@@ -64,6 +74,28 @@ function formatTime(iso: string) {
 function initiatedByLabel(value: 'employee' | 'admin') {
   return value === 'admin' ? '企业发起' : '本人申请'
 }
+
+async function withdrawRequest() {
+  if (!request.value || !canWithdraw.value) return
+  try {
+    await ElMessageBox.confirm(
+      '撤销后该日排班仍然有效，如需取消可重新提交申请。',
+      '撤销取消班次申请',
+      {
+        confirmButtonText: '确认撤销',
+        cancelButtonText: '再想想',
+        type: 'warning',
+      },
+    )
+    store.withdrawCancelShiftRequest(request.value.id, employeeId.value)
+    ElMessage.success('已撤销申请')
+    router.replace('/miniapp/schedule/exceptions')
+  } catch (e) {
+    if (e instanceof Error && e.message) {
+      ElMessage.warning(e.message)
+    }
+  }
+}
 </script>
 
 <template>
@@ -77,9 +109,14 @@ function initiatedByLabel(value: 'employee' | 'admin') {
       <div class="status-banner" :class="approvalStatusTone(request.status)">
         <div class="status-title">{{ statusTitle }}</div>
         <div v-if="request.status === 'pending'" class="status-desc">
-          企业审批通过后，该日排班将被取消
+          企业审批通过后，该日排班将被取消；审批前可撤销申请
         </div>
-        <div v-if="request.reviewNote" class="status-desc">审批备注：{{ request.reviewNote }}</div>
+        <div v-if="request.status === 'cancelled'" class="status-desc">
+          您已撤销该申请，排班仍然有效
+        </div>
+        <div v-if="request.reviewNote && request.status !== 'pending'" class="status-desc">
+          {{ request.status === 'cancelled' ? '备注' : '审批备注' }}：{{ request.reviewNote }}
+        </div>
       </div>
 
       <div class="detail-card">
@@ -116,11 +153,11 @@ function initiatedByLabel(value: 'employee' | 'admin') {
           <span>{{ formatTime(request.createdAt) }}</span>
         </div>
         <div v-if="request.reviewedBy" class="info-row">
-          <span class="info-label">审批人</span>
+          <span class="info-label">{{ request.status === 'cancelled' ? '处理人' : '审批人' }}</span>
           <span>{{ request.reviewedBy }}</span>
         </div>
         <div v-if="request.reviewedAt" class="info-row">
-          <span class="info-label">审批时间</span>
+          <span class="info-label">{{ request.status === 'cancelled' ? '撤销时间' : '审批时间' }}</span>
           <span>{{ formatTime(request.reviewedAt) }}</span>
         </div>
         <div class="reason-block">
@@ -128,6 +165,15 @@ function initiatedByLabel(value: 'employee' | 'admin') {
           <p class="reason-text">{{ request.reason }}</p>
         </div>
       </div>
+
+      <button
+        v-if="canWithdraw"
+        class="withdraw-btn"
+        type="button"
+        @click="withdrawRequest"
+      >
+        撤销申请
+      </button>
     </div>
 
     <div v-else class="mini-empty">取消班次申请不存在</div>
@@ -153,6 +199,7 @@ function initiatedByLabel(value: 'employee' | 'admin') {
 .status-banner.orange { background: #fff7ed; color: #ea580c; }
 .status-banner.green { background: #f0fdf4; color: #16a34a; }
 .status-banner.red { background: #fef2f2; color: #ef4444; }
+.status-banner.gray { background: #f3f4f6; color: #6b7280; }
 
 .status-title {
   font-size: 15px;
@@ -234,5 +281,24 @@ function initiatedByLabel(value: 'employee' | 'admin') {
   font-size: 14px;
   line-height: 1.6;
   color: var(--mini-text-secondary);
+}
+
+.withdraw-btn {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 14px;
+  border: none;
+  border-radius: 12px;
+  background: #fff;
+  color: #ef4444;
+  font-size: 15px;
+  font-weight: 600;
+  box-shadow: var(--mini-shadow);
+  cursor: pointer;
+}
+
+.withdraw-btn:active {
+  opacity: 0.85;
 }
 </style>

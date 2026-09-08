@@ -26,7 +26,7 @@ import {
   resolvePositionSchedule,
   weekdayFromDate,
 } from '@/constants/grabInterview'
-import { JOB_TYPE_OPTIONS, SKILL_OPTIONS } from '@/constants/recruitment'
+import { JOB_TYPE_OPTIONS } from '@/constants/recruitment'
 import { grabShiftPositionOptions } from '@/services/grabShift'
 import { generateId, getDepartmentName } from '@/utils'
 import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
@@ -46,6 +46,7 @@ import type {
 
 const store = useAppStore()
 const route = useRoute()
+const skillOptions = computed(() => store.skillLibraryNames)
 const { enterpriseFilter, activeEnterpriseId, showEnterpriseControl } =
   useEnterpriseScope('switch')
 
@@ -126,6 +127,7 @@ function emptyPosition(): GrabInterviewDeptPosition {
 function emptyDeptRule(departmentId: string): GrabInterviewDeptRule {
   return {
     departmentId,
+    publishScope: 'global',
     positions: [],
     departmentSchedule: emptyScheduleRule(),
   }
@@ -163,6 +165,7 @@ watch(
     )
     Object.assign(ruleForm, {
       departmentId: next.departmentId,
+      publishScope: next.publishScope ?? 'global',
       positions: next.positions,
       departmentSchedule: next.departmentSchedule ?? emptyScheduleRule(),
     })
@@ -364,6 +367,7 @@ function saveDeptRule() {
   }
   store.upsertGrabInterviewDeptRule(resolvedEnterpriseId.value, {
     departmentId: selectedDeptId.value,
+    publishScope: ruleForm.publishScope === 'department' ? 'department' : 'global',
     positions: JSON.parse(JSON.stringify(ruleForm.positions)),
     departmentSchedule: JSON.parse(
       JSON.stringify(ruleForm.departmentSchedule ?? emptyScheduleRule()),
@@ -786,6 +790,19 @@ function configuredPositionCount(departmentId: string) {
               </div>
             </div>
 
+            <section class="section-block">
+              <div class="section-head">
+                <h4>发布范围</h4>
+              </div>
+              <el-radio-group v-model="ruleForm.publishScope">
+                <el-radio-button value="global">全局</el-radio-button>
+                <el-radio-button value="department">部门</el-radio-button>
+              </el-radio-group>
+              <p class="text-muted section-desc">
+                全局：企业下抢班池人员可见；部门：仅该部门抢班池可见
+              </p>
+            </section>
+
             <!-- 部门统一规则 -->
             <section class="section-block">
               <div class="section-head">
@@ -1013,7 +1030,7 @@ function configuredPositionCount(departmentId: string) {
                     <el-form-item label="技能要求">
                       <el-checkbox-group v-model="activePosition.profile.skills">
                         <el-checkbox
-                          v-for="s in SKILL_OPTIONS"
+                          v-for="s in skillOptions"
                           :key="s"
                           :label="s"
                           :value="s"
@@ -1375,7 +1392,7 @@ function configuredPositionCount(departmentId: string) {
         </el-form-item>
         <el-form-item label="技能要求">
           <el-checkbox-group v-model="templateForm.profile.skills">
-            <el-checkbox v-for="s in SKILL_OPTIONS" :key="s" :label="s" :value="s">
+            <el-checkbox v-for="s in skillOptions" :key="s" :label="s" :value="s">
               {{ s }}
             </el-checkbox>
           </el-checkbox-group>

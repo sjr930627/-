@@ -5,8 +5,10 @@ import { ElMessage, ElMessageBox, type UploadFile, type UploadInstance } from 'e
 import { useAppStore } from '@/stores/app'
 import { usePortal } from '@/composables/usePortal'
 import {
+  formatBillPayerEnterpriseName,
   formatMoney,
   formatPeriod,
+  resolveBillPayerSubjectType,
   resolveBillStatusMeta,
 } from '@/constants/payrollBill'
 import { isUnassignedDepartment } from '@/constants/department'
@@ -44,6 +46,7 @@ const confirmVisible = ref(false)
 const confirming = ref(false)
 const confirmingBill = ref<SettlementBill | null>(null)
 const confirmForm = ref({
+  payerSubjectType: 'self' as 'self' | 'other',
   payerEnterpriseName: '',
   payerCreditCode: '',
 })
@@ -54,6 +57,7 @@ const BILL_DEPT_ALL = 'all'
 const form = ref({
   enterpriseId: '',
   departmentKey: BILL_DEPT_ALL,
+  payerSubjectType: 'self' as 'self' | 'other',
   payerEnterpriseName: '',
   payerCreditCode: '',
   periodRange: defaultPeriodRange() as [string, string],
@@ -114,10 +118,9 @@ watch(
     form.value.importTemplateId = templates[0]?.id ?? ''
     const enterprise = store.enterprises.find((e) => e.id === enterpriseId)
     if (enterprise) {
-      if (!form.value.payerEnterpriseName.trim()) {
+      if (form.value.payerSubjectType === 'self' || !form.value.payerEnterpriseName.trim()) {
+        form.value.payerSubjectType = 'self'
         form.value.payerEnterpriseName = enterprise.name
-      }
-      if (!form.value.payerCreditCode.trim()) {
         form.value.payerCreditCode = enterprise.creditCode ?? ''
       }
     }
@@ -151,6 +154,8 @@ const tableData = computed(() =>
     })
     .map((b) => {
       const meta = resolveBillStatusMeta(b.status)
+      const companyName =
+        store.enterprises.find((e) => e.id === b.enterpriseId)?.name ?? b.enterpriseName
       return {
         ...b,
         periodLabel: formatPeriod(b.periodStart, b.periodEnd),
@@ -158,6 +163,7 @@ const tableData = computed(() =>
         serviceFeeLabel: formatMoney(b.serviceFee),
         totalLabel: formatMoney(b.totalPayable),
         providerLabel: b.serviceProviderName ?? '—',
+        payerDisplayName: formatBillPayerEnterpriseName(b, companyName),
         statusLabel: meta.label,
         statusType: meta.type,
       }
@@ -169,11 +175,37 @@ function openDetail(row: SettlementBill) {
   router.push(`${pathPrefix.value}/payroll/bills/${row.id}`)
 }
 
+function onConfirmPayerSubjectChange(val: string | number | boolean | undefined) {
+  if (!confirmingBill.value || val !== 'self') return
+  const company = store.enterprises.find((e) => e.id === confirmingBill.value!.enterpriseId)
+  if (!company) return
+  confirmForm.value.payerEnterpriseName = company.name
+  confirmForm.value.payerCreditCode = company.creditCode ?? ''
+}
+
+function onCreatePayerSubjectChange(val: string | number | boolean | undefined) {
+  if (val !== 'self') return
+  const enterprise = store.enterprises.find((e) => e.id === form.value.enterpriseId)
+  if (!enterprise) return
+  form.value.payerEnterpriseName = enterprise.name
+  form.value.payerCreditCode = enterprise.creditCode ?? ''
+}
+
 function confirmBill(row: SettlementBill) {
   confirmingBill.value = row
+  const company =
+    store.enterprises.find((e) => e.id === row.enterpriseId)?.name ?? row.enterpriseName
+  const subjectType = resolveBillPayerSubjectType(row)
   confirmForm.value = {
-    payerEnterpriseName: row.payerEnterpriseName ?? row.enterpriseName,
-    payerCreditCode: row.payerCreditCode ?? '',
+    payerSubjectType: subjectType,
+    payerEnterpriseName:
+      subjectType === 'self' ? company : row.payerEnterpriseName ?? company,
+    payerCreditCode:
+      subjectType === 'self'
+        ? store.enterprises.find((e) => e.id === row.enterpriseId)?.creditCode ??
+          row.payerCreditCode ??
+          ''
+        : row.payerCreditCode ?? '',
   }
   confirmVisible.value = true
 }
@@ -182,9 +214,21 @@ async function submitConfirmBill() {
   if (!confirmingBill.value) return
   confirming.value = true
   try {
+    const company =
+      store.enterprises.find((e) => e.id === confirmingBill.value!.enterpriseId) ?? null
+    const subjectType = confirmForm.value.payerSubjectType
+    const payerEnterpriseName =
+      subjectType === 'self'
+        ? company?.name ?? confirmingBill.value.enterpriseName
+        : confirmForm.value.payerEnterpriseName.trim()
+    const payerCreditCode =
+      subjectType === 'self'
+        ? company?.creditCode ?? confirmForm.value.payerCreditCode
+        : confirmForm.value.payerCreditCode
     store.confirmSettlementBill(confirmingBill.value.id, {
-      payerEnterpriseName: confirmForm.value.payerEnterpriseName,
-      payerCreditCode: confirmForm.value.payerCreditCode,
+      payerSubjectType: subjectType,
+      payerEnterpriseName,
+      payerCreditCode,
     })
     confirmVisible.value = false
     ElMessage.success('账单已确认，状态已更新为待付款')
@@ -215,6 +259,7 @@ function resetForm() {
   form.value = {
     enterpriseId,
     departmentKey: BILL_DEPT_ALL,
+    payerSubjectType: 'self',
     payerEnterpriseName: enterprise?.name ?? '',
     payerCreditCode: enterprise?.creditCode ?? '',
     periodRange: defaultPeriodRange(),
@@ -259,8 +304,17 @@ async function buildBillPayload() {
     return {
       enterpriseId: form.value.enterpriseId,
       ...department,
-      payerEnterpriseName: form.value.payerEnterpriseName,
-      payerCreditCode: form.value.payerCreditCode,
+      payerSubjectType: form.value.payerSubjectType,
+      payerEnterpriseName:
+        form.value.payerSubjectType === 'self'
+          ? store.enterprises.find((e) => e.id === form.value.enterpriseId)?.name ??
+            form.value.payerEnterpriseName
+          : form.value.payerEnterpriseName,
+      payerCreditCode:
+        form.value.payerSubjectType === 'self'
+          ? store.enterprises.find((e) => e.id === form.value.enterpriseId)?.creditCode ??
+            form.value.payerCreditCode
+          : form.value.payerCreditCode,
       periodStart,
       periodEnd,
       sourceType: 'rule' as const,
@@ -292,8 +346,17 @@ async function buildBillPayload() {
   return {
     enterpriseId: form.value.enterpriseId,
     ...department,
-    payerEnterpriseName: form.value.payerEnterpriseName,
-    payerCreditCode: form.value.payerCreditCode,
+    payerSubjectType: form.value.payerSubjectType,
+    payerEnterpriseName:
+      form.value.payerSubjectType === 'self'
+        ? store.enterprises.find((e) => e.id === form.value.enterpriseId)?.name ??
+          form.value.payerEnterpriseName
+        : form.value.payerEnterpriseName,
+    payerCreditCode:
+      form.value.payerSubjectType === 'self'
+        ? store.enterprises.find((e) => e.id === form.value.enterpriseId)?.creditCode ??
+          form.value.payerCreditCode
+        : form.value.payerCreditCode,
     periodStart,
     periodEnd,
     sourceType: 'excel' as const,
@@ -378,8 +441,8 @@ function applyInvoice(row: SettlementBill) {
       <el-table-column prop="departmentName" label="部门" width="120">
         <template #default="{ row }">{{ row.departmentName || '全公司' }}</template>
       </el-table-column>
-      <el-table-column prop="payerEnterpriseName" label="付款企业" min-width="160">
-        <template #default="{ row }">{{ row.payerEnterpriseName || '—' }}</template>
+      <el-table-column label="付款企业" min-width="180">
+        <template #default="{ row }">{{ row.payerDisplayName }}</template>
       </el-table-column>
       <el-table-column prop="providerLabel" label="服务商" min-width="180" />
       <el-table-column prop="periodLabel" label="结算周期" min-width="200" />
@@ -483,10 +546,20 @@ function applyInvoice(row: SettlementBill) {
           </el-select>
           <p class="field-hint">必选：可选择全公司，或指定其中一个部门</p>
         </el-form-item>
-        <el-form-item label="付款企业">
+        <el-form-item label="付款主体">
+          <el-radio-group
+            v-model="form.payerSubjectType"
+            @change="onCreatePayerSubjectChange"
+          >
+            <el-radio value="self">本公司</el-radio>
+            <el-radio value="other">其他主体</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item :label="form.payerSubjectType === 'self' ? '公司名称' : '其他公司名称'">
           <el-input
             v-model="form.payerEnterpriseName"
-            placeholder="非必填，默认可用企业名称"
+            :placeholder="form.payerSubjectType === 'self' ? '默认本公司名称' : '请输入其他付款公司名称'"
+            :disabled="form.payerSubjectType === 'self'"
             clearable
           />
         </el-form-item>
@@ -496,6 +569,7 @@ function applyInvoice(row: SettlementBill) {
             placeholder="非必填，付款企业统一社会信用代码"
             clearable
             maxlength="18"
+            :disabled="form.payerSubjectType === 'self'"
           />
         </el-form-item>
         <el-form-item label="结算周期" required>
@@ -606,10 +680,24 @@ function applyInvoice(row: SettlementBill) {
       width="480px"
       destroy-on-close
     >
-      <p class="confirm-tip">确认前可修改付款企业与统一信用代码（非必填）</p>
+      <p class="confirm-tip">确认前可选择付款主体：本公司显示公司名称，其他主体显示其他公司名称</p>
       <el-form label-width="120px">
-        <el-form-item label="付款企业">
-          <el-input v-model="confirmForm.payerEnterpriseName" clearable placeholder="付款企业名称" />
+        <el-form-item label="付款主体">
+          <el-radio-group
+            v-model="confirmForm.payerSubjectType"
+            @change="onConfirmPayerSubjectChange"
+          >
+            <el-radio value="self">本公司</el-radio>
+            <el-radio value="other">其他主体</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item :label="confirmForm.payerSubjectType === 'self' ? '公司名称' : '其他公司名称'">
+          <el-input
+            v-model="confirmForm.payerEnterpriseName"
+            :placeholder="confirmForm.payerSubjectType === 'self' ? '本公司名称' : '请输入其他付款公司名称'"
+            :disabled="confirmForm.payerSubjectType === 'self'"
+            clearable
+          />
         </el-form-item>
         <el-form-item label="统一信用代码">
           <el-input
@@ -617,6 +705,7 @@ function applyInvoice(row: SettlementBill) {
             clearable
             maxlength="18"
             placeholder="统一社会信用代码"
+            :disabled="confirmForm.payerSubjectType === 'self'"
           />
         </el-form-item>
       </el-form>

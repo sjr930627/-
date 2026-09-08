@@ -28,15 +28,6 @@ interface MenuGroup {
 
 const menuGroups: MenuGroup[] = [
   {
-    index: 'recruitment',
-    title: '招聘管理',
-    icon: 'User',
-    children: [
-      { path: '/enterprise/recruitment/requirements', title: '需求管理', icon: 'Document' },
-      { path: '/enterprise/recruitment/calendar', title: '面试日程', icon: 'Calendar' },
-    ],
-  },
-  {
     index: 'training',
     title: '培训与考核',
     icon: 'Reading',
@@ -119,17 +110,6 @@ const menuGroups: MenuGroup[] = [
   },
 ]
 
-const settingsGroup: MenuGroup = {
-  index: 'settings',
-  title: '系统设置',
-  icon: 'Setting',
-  children: [
-    { path: '/enterprise/system/accounts', title: '账号管理', icon: 'User' },
-    { path: '/enterprise/system/roles', title: '角色权限', icon: 'Key' },
-    { path: '/enterprise/system/oplog', title: '操作日志', icon: 'Document' },
-  ],
-}
-
 const activeMenu = computed(() => route.path)
 const asideWidth = computed(() => (navCollapsed.value ? '72px' : '248px'))
 
@@ -141,7 +121,7 @@ const breadcrumbs = computed(() => {
 })
 
 const openMenus = computed(() => {
-  for (const group of [...menuGroups, settingsGroup]) {
+  for (const group of menuGroups) {
     if (group.children.some((c) => activeMenu.value === c.path || activeMenu.value.startsWith(`${c.path}/`))) {
       return [group.index]
     }
@@ -161,7 +141,7 @@ function navigate(path: string) {
 
 function handleSearch() {
   if (!searchKeyword.value.trim()) return
-  router.push({ path: '/recruitment/talents', query: { q: searchKeyword.value.trim() } })
+  router.push({ path: '/enterprise/employees', query: { q: searchKeyword.value.trim() } })
 }
 
 function toggleNav() {
@@ -234,8 +214,6 @@ function formatTime(iso: string) {
           </div>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item @click="router.push('/enterprise/system/accounts')">账号管理</el-dropdown-item>
-              <el-dropdown-item @click="router.push('/enterprise/system/roles')">角色权限</el-dropdown-item>
               <el-dropdown-item @click="router.push('/portals')">三端入口</el-dropdown-item>
               <el-dropdown-item @click="router.push('/dashboard')">运营后台</el-dropdown-item>
               <el-dropdown-item @click="router.push('/miniapp/workbench')">灵工小程序</el-dropdown-item>
@@ -282,21 +260,6 @@ function formatTime(iso: string) {
                     />
                   </span>
                 </template>
-              </el-menu-item>
-            </el-sub-menu>
-
-            <el-sub-menu :index="settingsGroup.index">
-              <template #title>
-                <el-icon class="menu-icon"><Setting /></el-icon>
-                <span>{{ settingsGroup.title }}</span>
-              </template>
-              <el-menu-item
-                v-for="child in settingsGroup.children"
-                :key="child.path"
-                :index="child.path"
-              >
-                <el-icon class="menu-icon menu-icon--sub"><component :is="child.icon" /></el-icon>
-                <template #title>{{ child.title }}</template>
               </el-menu-item>
             </el-sub-menu>
           </el-menu>
@@ -351,20 +314,20 @@ function formatTime(iso: string) {
 
 <style scoped>
 .enterprise-layout {
-  --app-primary: #5b4fdb;
-  --app-primary-light: #ede9fe;
-  --app-primary-dark: #4f46e5;
+  --app-primary: #2563eb;
+  --app-primary-light: #eff6ff;
+  --app-primary-dark: #1d4ed8;
   --app-bg: #f5f6fa;
   --app-border: #e8ebf0;
   --app-text: #1f2329;
   --app-text-secondary: #646a73;
-  --el-color-primary: #5b4fdb;
-  --el-color-primary-light-3: #8b83e8;
-  --el-color-primary-light-5: #a9a3ef;
-  --el-color-primary-light-7: #c7c3f5;
-  --el-color-primary-light-8: #d9d6f8;
-  --el-color-primary-light-9: #ede9fe;
-  --el-color-primary-dark-2: #4f46e5;
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #6b9aef;
+  --el-color-primary-light-5: #93b4f5;
+  --el-color-primary-light-7: #b9cefa;
+  --el-color-primary-light-8: #d1e0fc;
+  --el-color-primary-light-9: #eff6ff;
+  --el-color-primary-dark-2: #1d4ed8;
 
   height: 100vh;
   flex-direction: column;
@@ -414,7 +377,7 @@ function formatTime(iso: string) {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: linear-gradient(135deg, #5b4fdb 0%, #7c6df0 100%);
+  background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
   color: #fff;
   display: flex;
   align-items: center;
@@ -436,8 +399,8 @@ function formatTime(iso: string) {
 .brand-badge {
   font-size: 11px;
   font-weight: 600;
-  color: #5b4fdb;
-  background: #ede9fe;
+  color: #2563eb;
+  background: #eff6ff;
   border-radius: 999px;
   padding: 2px 8px;
 }
@@ -523,7 +486,7 @@ function formatTime(iso: string) {
 }
 
 .user-avatar {
-  background: linear-gradient(135deg, #5b4fdb, #7c6df0);
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
   color: #fff;
   font-size: 13px;
   font-weight: 700;
@@ -562,7 +525,7 @@ function formatTime(iso: string) {
 
 .side-menu {
   border-right: none;
-  --el-menu-active-color: #5b4fdb;
+  --el-menu-active-color: #2563eb;
   --el-menu-hover-bg-color: #f8fafc;
   --el-menu-bg-color: transparent;
   --el-menu-text-color: #475569;
@@ -587,14 +550,14 @@ function formatTime(iso: string) {
 }
 
 .side-menu :deep(.el-menu-item.is-active) {
-  color: #5b4fdb;
-  background: linear-gradient(90deg, #ede9fe 0%, #f5f3ff 100%);
+  color: #2563eb;
+  background: linear-gradient(90deg, #eff6ff 0%, #f8fafc 100%);
   font-weight: 600;
-  box-shadow: inset 3px 0 0 #5b4fdb;
+  box-shadow: inset 3px 0 0 #2563eb;
 }
 
 .side-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title) {
-  color: #5b4fdb;
+  color: #2563eb;
 }
 
 .side-menu :deep(.el-menu-item .menu-icon),
@@ -613,8 +576,8 @@ function formatTime(iso: string) {
 }
 
 .side-menu :deep(.el-menu-item.is-active .menu-icon) {
-  color: #5b4fdb;
-  background: linear-gradient(135deg, #ede9fe 0%, #e0e7ff 100%);
+  color: #2563eb;
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
   box-shadow: inset 0 0 0 1px rgba(91, 79, 219, 0.12);
 }
 
@@ -727,15 +690,15 @@ function formatTime(iso: string) {
 
 <style>
 .enterprise-layout .el-menu--popup {
-  --el-menu-active-color: #5b4fdb;
-  --el-menu-hover-bg-color: #ede9fe;
+  --el-menu-active-color: #2563eb;
+  --el-menu-hover-bg-color: #eff6ff;
 }
 
 .enterprise-layout .el-button--primary {
-  --el-button-bg-color: #5b4fdb;
-  --el-button-border-color: #5b4fdb;
-  --el-button-hover-bg-color: #4f46e5;
-  --el-button-hover-border-color: #4f46e5;
+  --el-button-bg-color: #2563eb;
+  --el-button-border-color: #2563eb;
+  --el-button-hover-bg-color: #1d4ed8;
+  --el-button-hover-border-color: #1d4ed8;
 }
 
 .enterprise-layout .page-card {

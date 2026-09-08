@@ -17,12 +17,15 @@ const props = withDefaults(
     tree: OrgTreeNode[]
     departments: Department[]
     selectedId?: string
+    /** 面板标题 */
+    title?: string
     /** 编辑态：允许拖拽排序与节点旁快捷添加 */
     editable?: boolean
     lockedIds?: string[]
   }>(),
   {
     selectedId: '',
+    title: '灵工组织架构',
     editable: false,
     lockedIds: () => [],
   },
@@ -107,7 +110,7 @@ const nodeCount = computed(() => props.departments.length)
 <template>
   <div class="org-tree-panel">
     <div class="org-panel-header">
-      <span class="org-title">组织架构树</span>
+      <span class="org-title">{{ title }}</span>
       <el-tag size="small" type="info" round>{{ nodeCount }}</el-tag>
       <el-tag v-if="editable" size="small" type="warning" round>编辑中</el-tag>
     </div>

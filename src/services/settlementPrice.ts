@@ -2,6 +2,7 @@ import type {
   AttendanceGroup,
   AttendanceGroupSettlementOverride,
   Department,
+  DepartmentSettlementOverride,
   SettlementHourlyConfig,
   TaskType,
   TaskTypeSettlementOverride,
@@ -12,10 +13,15 @@ import {
   formatVariablePrice,
   getGroupPricingConfig,
 } from '@/constants/attendanceGroupPricing'
+import {
+  DEFAULT_WORKFORCE_ENTERPRISE_ID,
+  isEnterpriseRootDepartment,
+  isUnassignedDepartment,
+} from '@/constants/department'
 import { formatTaskTypePrice } from '@/constants/task'
 import { resolveEnterpriseIdByAttendanceGroup } from '@/utils/enterpriseScope'
 
-export type SettlementPriceSource = 'worker' | 'unset'
+export type SettlementPriceSource = 'department' | 'group' | 'worker' | 'unset'
 
 export interface ResolvedHourlySettlement extends SettlementHourlyConfig {
   source: SettlementPriceSource
@@ -23,8 +29,10 @@ export interface ResolvedHourlySettlement extends SettlementHourlyConfig {
   dailySettlement: boolean
   /** 日结且开启自动结算时，无需人工确认工时 */
   autoSettlement: boolean
-  /** 是否已在结算价管理中单独配置灵工结算价 */
+  /** 是否已在结算价管理中单独配置（部门或考勤组灵工价） */
   configured: boolean
+  /** 是否已配置部门级结算价 */
+  departmentConfigured: boolean
 }
 
 export interface ResolvedTaskSettlement {
@@ -97,6 +105,32 @@ export function getAttendanceGroupsForEnterprise(
   )
 }
 
+/** 解析部门所属考勤组：优先部门字段，其次考勤组部门绑定 */
+export function resolveDepartmentAttendanceGroupId(
+  department: Department,
+  groups: AttendanceGroup[],
+): string | undefined {
+  if (department.attendanceGroupId) return department.attendanceGroupId
+  return groups.find((g) =>
+    (g.departmentBindings ?? []).some((b) => b.departmentId === department.id),
+  )?.id
+}
+
+/** 企业下可配置工时结算价的业务部门（已关联考勤组） */
+export function listSettlementDepartmentsForEnterprise(
+  enterpriseId: string,
+  departments: Department[],
+  groups: AttendanceGroup[],
+): Department[] {
+  const enterpriseGroups = getAttendanceGroupsForEnterprise(enterpriseId, groups, departments)
+  return departments
+    .filter((d) => (d.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId)
+    .filter((d) => !isUnassignedDepartment(d.id) && !isEnterpriseRootDepartment(d))
+    .filter((d) => Boolean(resolveDepartmentAttendanceGroupId(d, enterpriseGroups)))
+    .slice()
+    .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-CN'))
+}
+
 function findGroupConfig(
   enterpriseId: string,
   attendanceGroupId: string,
@@ -107,6 +141,14 @@ function findGroupConfig(
   )
 }
 
+function findDepartmentConfig(
+  enterpriseId: string,
+  departmentId: string,
+  configs: DepartmentSettlementOverride[],
+): DepartmentSettlementOverride | undefined {
+  return configs.find((o) => o.departmentId === departmentId && o.enterpriseId === enterpriseId)
+}
+
 function findTaskTypeConfig(
   enterpriseId: string,
   taskTypeId: string,
@@ -115,8 +157,14 @@ function findTaskTypeConfig(
   return configs.find((o) => o.taskTypeId === taskTypeId && o.enterpriseId === enterpriseId)
 }
 
-/** 是否已单独配置灵工工时结算价 */
+/** 是否已单独配置考勤组灵工工时结算价 */
 export function isGroupHourlyConfigured(config?: AttendanceGroupSettlementOverride): boolean {
+  if (!config || config.useEnterpriseDefault) return false
+  return config.dayShiftRate != null && config.dayShiftRate >= 0
+}
+
+/** 是否已单独配置部门工时结算价 */
+export function isDepartmentHourlyConfigured(config?: DepartmentSettlementOverride): boolean {
   if (!config || config.useEnterpriseDefault) return false
   return config.dayShiftRate != null && config.dayShiftRate >= 0
 }
@@ -128,8 +176,7 @@ export function isTaskTypeWorkerConfigured(config?: TaskTypeSettlementOverride):
 }
 
 /**
- * 解析灵工工时结算价：仅后台单独配置后才有真实灵工结算价；
- * 未配置时 configured=false，数值仅作占位（展示应以考勤组定价为准）。
+ * 解析考勤组配置价：优先考勤组灵工结算价，否则考勤组自身定价。
  */
 export function resolveHourlySettlementPrice(
   enterpriseId: string,
@@ -151,11 +198,12 @@ export function resolveHourlySettlementPrice(
     )
     return {
       ...hourly,
-      source: 'worker',
-      sourceLabel: '灵工结算价',
+      source: 'group',
+      sourceLabel: '考勤组配置价',
       dailySettlement: config!.dailySettlement ?? false,
       autoSettlement: !!(config!.dailySettlement && config!.autoSettlement),
       configured: true,
+      departmentConfigured: false,
     }
   }
 
@@ -165,10 +213,73 @@ export function resolveHourlySettlementPrice(
   return {
     ...fallback,
     source: 'unset',
-    sourceLabel: '未配置灵工价',
+    sourceLabel: '考勤组定价',
     dailySettlement: config?.dailySettlement ?? false,
     autoSettlement: !!(config?.dailySettlement && config?.autoSettlement),
     configured: false,
+    departmentConfigured: false,
+  }
+}
+
+/**
+ * 解析部门工时结算价：部门已配置则用部门价，否则回退考勤组配置价。
+ */
+export function resolveDepartmentHourlySettlementPrice(
+  enterpriseId: string,
+  departmentId: string,
+  attendanceGroupId: string | undefined,
+  departmentConfigs: DepartmentSettlementOverride[],
+  groupConfigs: AttendanceGroupSettlementOverride[],
+  group?: AttendanceGroup,
+): ResolvedHourlySettlement {
+  const deptConfig = findDepartmentConfig(enterpriseId, departmentId, departmentConfigs)
+  if (isDepartmentHourlyConfigured(deptConfig)) {
+    const hourly = normalizeSettlementHourlyConfig(
+      {
+        dayShiftRate: deptConfig!.dayShiftRate,
+        nightShiftRate: deptConfig!.nightShiftRate,
+        overtime: deptConfig!.overtime,
+        weekend: deptConfig!.weekend,
+        holiday: deptConfig!.holiday,
+      },
+      deptConfig!.dayShiftRate,
+    )
+    return {
+      ...hourly,
+      source: 'department',
+      sourceLabel: '部门结算价',
+      dailySettlement: deptConfig!.dailySettlement ?? false,
+      autoSettlement: !!(deptConfig!.dailySettlement && deptConfig!.autoSettlement),
+      configured: true,
+      departmentConfigured: true,
+    }
+  }
+
+  if (attendanceGroupId) {
+    const groupResolved = resolveHourlySettlementPrice(
+      enterpriseId,
+      attendanceGroupId,
+      groupConfigs,
+      group,
+    )
+    return {
+      ...groupResolved,
+      source: groupResolved.configured ? 'group' : 'unset',
+      sourceLabel: '考勤组配置价',
+      configured: false,
+      departmentConfigured: false,
+    }
+  }
+
+  const fallback = createDefaultSettlementHourlyConfig()
+  return {
+    ...fallback,
+    source: 'unset',
+    sourceLabel: '未关联考勤组',
+    dailySettlement: false,
+    autoSettlement: false,
+    configured: false,
+    departmentConfigured: false,
   }
 }
 
@@ -224,6 +335,14 @@ export function countConfiguredGroupSettlements(
   configs: AttendanceGroupSettlementOverride[],
 ): number {
   return configs.filter((o) => o.enterpriseId === enterpriseId && isGroupHourlyConfigured(o)).length
+}
+
+export function countConfiguredDepartmentSettlements(
+  enterpriseId: string,
+  configs: DepartmentSettlementOverride[],
+): number {
+  return configs.filter((o) => o.enterpriseId === enterpriseId && isDepartmentHourlyConfigured(o))
+    .length
 }
 
 export function countConfiguredTaskTypeSettlements(

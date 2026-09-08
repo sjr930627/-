@@ -22,7 +22,14 @@ const store = useAppStore()
 const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
   useEnterpriseScope('filter')
 
-const filterStatus = ref<'all' | 'pending' | 'approved' | 'rejected'>('all')
+const filterStatus = ref<'all' | 'pending' | 'approved' | 'rejected' | 'cancelled'>('all')
+
+const cancelStatusLabelMap: Record<'pending' | 'approved' | 'rejected' | 'cancelled', string> = {
+  pending: '待审批',
+  approved: '已通过',
+  rejected: '已驳回',
+  cancelled: '已撤销',
+}
 const keyword = ref('')
 
 const assignmentSource = computed<AttendanceAssignmentSource>(() =>
@@ -97,7 +104,7 @@ const tableData = computed(() => {
         scopeLabel:
           r.cancelScope === 'slot' ? '整班取消' : r.cancelScope === 'person' ? '单人取消' : '—',
         sourceLabel: r.initiatedBy === 'admin' ? '管理端' : '灵工申请',
-        statusLabel: { pending: '待审批', approved: '已通过', rejected: '已驳回' }[r.status],
+        statusLabel: cancelStatusLabelMap[r.status],
         createdAtLabel: new Date(r.createdAt).toLocaleString('zh-CN'),
       }
     })
@@ -144,6 +151,7 @@ const tableData = computed(() => {
         <el-radio-button value="pending">待审批</el-radio-button>
         <el-radio-button value="approved">已通过</el-radio-button>
         <el-radio-button value="rejected">已驳回</el-radio-button>
+        <el-radio-button value="cancelled">已撤销</el-radio-button>
       </el-radio-group>
     </div>
 

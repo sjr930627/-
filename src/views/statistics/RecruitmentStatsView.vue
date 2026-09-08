@@ -113,7 +113,7 @@ const statusRows = computed(() => {
     <div class="stats-header">
       <div>
         <h2 class="page-title">人员数据报表</h2>
-        <p class="text-muted">招聘统计 · 人员增减与质量分析</p>
+        <p class="text-muted">招聘分析 · 人员增减与质量洞察</p>
       </div>
       <el-button type="primary">刷新数据</el-button>
     </div>

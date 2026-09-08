@@ -4,16 +4,17 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import SettlementHourlyRatesEditor from '@/components/settlement/SettlementHourlyRatesEditor.vue'
 import { useAppStore } from '@/stores/app'
-import { attendanceGroupTypeMap } from '@/constants/attendanceGroup'
+import { getDepartmentName } from '@/utils'
 import {
   createDefaultSettlementHourlyConfig,
   formatHourlySettlementDetail,
-  getAttendanceGroupBaseHourly,
   getTaskTypeBasePriceLabel,
   getTaskTypeBaseUnitPrice,
+  listSettlementDepartmentsForEnterprise,
+  resolveDepartmentAttendanceGroupId,
   settlementHourlyConfigFromResolved,
 } from '@/services/settlementPrice'
-import type { AttendanceGroup, TaskType } from '@/types'
+import type { Department, TaskType } from '@/types'
 
 const store = useAppStore()
 const route = useRoute()
@@ -23,21 +24,21 @@ const enterpriseId = computed(() => route.params.enterpriseId as string)
 const enterprise = computed(() => store.enterprises.find((e) => e.id === enterpriseId.value))
 const activeTab = ref<'hourly' | 'task'>('hourly')
 
-const groupDialogVisible = ref(false)
+const deptDialogVisible = ref(false)
 const batchDialogVisible = ref(false)
 const taskDialogVisible = ref(false)
-const editingGroup = ref<AttendanceGroup | null>(null)
+const editingDept = ref<Department | null>(null)
 const editingTaskType = ref<TaskType | null>(null)
-const selectedGroupIds = ref<string[]>([])
+const selectedDeptIds = ref<string[]>([])
 
-const groupForm = ref({
+const deptForm = ref({
   dailySettlement: false,
   autoSettlement: false,
   hourly: createDefaultSettlementHourlyConfig(),
 })
 
 const batchForm = ref({
-  groupIds: [] as string[],
+  departmentIds: [] as string[],
   dailySettlement: false,
   autoSettlement: false,
   hourly: createDefaultSettlementHourlyConfig(),
@@ -47,28 +48,46 @@ const taskForm = ref({
   unitPrice: 50,
 })
 
-const groupOptions = computed(() =>
-  store.getAttendanceGroupsByEnterprise(enterpriseId.value).map((g) => ({
-    id: g.id,
-    name: g.name,
-    typeLabel: attendanceGroupTypeMap[g.attendanceType],
-  })),
+const settlementDepartments = computed(() =>
+  listSettlementDepartmentsForEnterprise(
+    enterpriseId.value,
+    store.departments,
+    store.attendanceGroups,
+  ),
 )
 
-const groupRows = computed(() =>
-  store.getAttendanceGroupsByEnterprise(enterpriseId.value).map((group) => {
-    const baseHourly = getAttendanceGroupBaseHourly(group)
-    const workerHourly = store.resolveGroupSettlementPrice(enterpriseId.value, group.id)
+const deptOptions = computed(() =>
+  settlementDepartments.value.map((d) => {
+    const groupId = resolveDepartmentAttendanceGroupId(d, store.attendanceGroups)
+    const group = groupId ? store.attendanceGroups.find((g) => g.id === groupId) : undefined
     return {
-      id: group.id,
-      group,
-      typeLabel: attendanceGroupTypeMap[group.attendanceType],
-      dailySettlement: workerHourly.dailySettlement,
-      autoSettlement: workerHourly.autoSettlement,
-      baseHourlyDetails: formatHourlySettlementDetail(baseHourly),
-      workerHourlyConfigured: workerHourly.configured,
-      workerHourlyDetails: workerHourly.configured
-        ? formatHourlySettlementDetail(workerHourly)
+      id: d.id,
+      name: getDepartmentName(store.departments, d.id),
+      groupName: group?.name || '—',
+    }
+  }),
+)
+
+const deptRows = computed(() =>
+  settlementDepartments.value.map((department) => {
+    const groupId = resolveDepartmentAttendanceGroupId(department, store.attendanceGroups)
+    const group = groupId ? store.attendanceGroups.find((g) => g.id === groupId) : undefined
+    const groupPrice = groupId
+      ? store.resolveGroupSettlementPrice(enterpriseId.value, groupId)
+      : null
+    const deptPrice = store.resolveDepartmentSettlementPrice(enterpriseId.value, department.id)
+    return {
+      id: department.id,
+      department,
+      departmentName: getDepartmentName(store.departments, department.id),
+      groupId: groupId || '',
+      groupName: group?.name || '未关联考勤组',
+      dailySettlement: deptPrice.dailySettlement,
+      autoSettlement: deptPrice.autoSettlement,
+      groupHourlyDetails: groupPrice ? formatHourlySettlementDetail(groupPrice) : [],
+      deptConfigured: deptPrice.departmentConfigured,
+      deptHourlyDetails: deptPrice.departmentConfigured
+        ? formatHourlySettlementDetail(deptPrice)
         : [],
     }
   }),
@@ -96,14 +115,14 @@ function cloneHourly(hourly: ReturnType<typeof createDefaultSettlementHourlyConf
   }
 }
 
-function applyHourlyToGroup(
-  groupId: string,
+function applyHourlyToDepartment(
+  departmentId: string,
   hourly: ReturnType<typeof createDefaultSettlementHourlyConfig>,
   dailySettlement: boolean,
   autoSettlement: boolean,
 ) {
-  store.upsertAttendanceGroupSettlementOverride({
-    attendanceGroupId: groupId,
+  store.upsertDepartmentSettlementOverride({
+    departmentId,
     enterpriseId: enterpriseId.value,
     useEnterpriseDefault: false,
     dailySettlement,
@@ -112,18 +131,25 @@ function applyHourlyToGroup(
   })
 }
 
-function openGroupDialog(group: AttendanceGroup) {
-  editingGroup.value = group
-  const baseHourly = getAttendanceGroupBaseHourly(group)
-  const workerHourly = store.resolveGroupSettlementPrice(enterpriseId.value, group.id)
-  groupForm.value = {
-    dailySettlement: workerHourly.dailySettlement,
-    autoSettlement: workerHourly.autoSettlement,
-    hourly: workerHourly.configured
-      ? settlementHourlyConfigFromResolved(workerHourly)
-      : cloneHourly(baseHourly),
+function openDeptDialog(department: Department) {
+  editingDept.value = department
+  const groupId = resolveDepartmentAttendanceGroupId(department, store.attendanceGroups)
+  const groupFallback = groupId
+    ? store.resolveGroupSettlementPrice(enterpriseId.value, groupId)
+    : null
+  const deptPrice = store.resolveDepartmentSettlementPrice(enterpriseId.value, department.id)
+  deptForm.value = {
+    dailySettlement: deptPrice.departmentConfigured
+      ? deptPrice.dailySettlement
+      : (groupFallback?.dailySettlement ?? false),
+    autoSettlement: deptPrice.departmentConfigured
+      ? deptPrice.autoSettlement
+      : (groupFallback?.autoSettlement ?? false),
+    hourly: deptPrice.departmentConfigured
+      ? settlementHourlyConfigFromResolved(deptPrice)
+      : cloneHourly(groupFallback ?? createDefaultSettlementHourlyConfig()),
   }
-  groupDialogVisible.value = true
+  deptDialogVisible.value = true
 }
 
 function onDailySettlementToggle(
@@ -134,43 +160,43 @@ function onDailySettlementToggle(
   if (!enabled) form.autoSettlement = false
 }
 
-function onGroupDailyToggle(value: string | number | boolean) {
-  onDailySettlementToggle(groupForm.value, !!value)
+function onDeptDailyToggle(value: string | number | boolean) {
+  onDailySettlementToggle(deptForm.value, !!value)
 }
 
 function onBatchDailyToggle(value: string | number | boolean) {
   onDailySettlementToggle(batchForm.value, !!value)
 }
 
-function saveGroupConfig() {
-  if (!editingGroup.value) return
-  const hourly = groupForm.value.hourly
+function saveDeptConfig() {
+  if (!editingDept.value) return
+  const hourly = deptForm.value.hourly
   if (hourly.dayShiftRate < 0 || hourly.nightShiftRate < 0) {
     ElMessage.warning('结算价不能为负数')
     return
   }
-  applyHourlyToGroup(
-    editingGroup.value.id,
+  applyHourlyToDepartment(
+    editingDept.value.id,
     hourly,
-    groupForm.value.dailySettlement,
-    groupForm.value.autoSettlement,
+    deptForm.value.dailySettlement,
+    deptForm.value.autoSettlement,
   )
-  ElMessage.success('灵工工时结算价已保存')
-  groupDialogVisible.value = false
+  ElMessage.success('部门工时结算价已保存')
+  deptDialogVisible.value = false
 }
 
-function clearGroupWorkerPrice() {
-  if (!editingGroup.value) return
-  const existing = store.attendanceGroupSettlementOverrides.find(
+function clearDeptWorkerPrice() {
+  if (!editingDept.value) return
+  const existing = store.departmentSettlementOverrides.find(
     (o) =>
-      o.attendanceGroupId === editingGroup.value!.id && o.enterpriseId === enterpriseId.value,
+      o.departmentId === editingDept.value!.id && o.enterpriseId === enterpriseId.value,
   )
   if (!existing) {
-    groupDialogVisible.value = false
+    deptDialogVisible.value = false
     return
   }
-  store.upsertAttendanceGroupSettlementOverride({
-    attendanceGroupId: editingGroup.value.id,
+  store.upsertDepartmentSettlementOverride({
+    departmentId: editingDept.value.id,
     enterpriseId: enterpriseId.value,
     useEnterpriseDefault: true,
     dailySettlement: false,
@@ -181,40 +207,47 @@ function clearGroupWorkerPrice() {
     weekend: undefined,
     holiday: undefined,
   })
-  ElMessage.success('已清除灵工工时结算价，将仅使用考勤组配置价')
-  groupDialogVisible.value = false
+  ElMessage.success('已清除部门结算价，将沿用考勤组配置价')
+  deptDialogVisible.value = false
 }
 
-function onGroupSelectionChange(rows: { id: string; group: AttendanceGroup }[]) {
-  selectedGroupIds.value = rows.map((r) => r.id)
+function onDeptSelectionChange(rows: { id: string }[]) {
+  selectedDeptIds.value = rows.map((r) => r.id)
 }
 
 function openBatchDialog() {
-  const groups = store.getAttendanceGroupsByEnterprise(enterpriseId.value)
-  if (!groups.length) {
-    ElMessage.warning('暂无可配置的考勤组')
+  const depts = settlementDepartments.value
+  if (!depts.length) {
+    ElMessage.warning('暂无可配置的部门')
     return
   }
-  const seedGroup =
-    groups.find((g) => selectedGroupIds.value.includes(g.id)) ?? groups[0]
-  const baseHourly = getAttendanceGroupBaseHourly(seedGroup)
-  const workerHourly = store.resolveGroupSettlementPrice(enterpriseId.value, seedGroup.id)
+  const seedDept =
+    depts.find((d) => selectedDeptIds.value.includes(d.id)) ?? depts[0]
+  const groupId = resolveDepartmentAttendanceGroupId(seedDept, store.attendanceGroups)
+  const groupFallback = groupId
+    ? store.resolveGroupSettlementPrice(enterpriseId.value, groupId)
+    : null
+  const deptPrice = store.resolveDepartmentSettlementPrice(enterpriseId.value, seedDept.id)
   batchForm.value = {
-    groupIds: selectedGroupIds.value.length
-      ? [...selectedGroupIds.value]
-      : groups.map((g) => g.id),
-    dailySettlement: workerHourly.dailySettlement,
-    autoSettlement: workerHourly.autoSettlement,
-    hourly: workerHourly.configured
-      ? settlementHourlyConfigFromResolved(workerHourly)
-      : cloneHourly(baseHourly),
+    departmentIds: selectedDeptIds.value.length
+      ? [...selectedDeptIds.value]
+      : depts.map((d) => d.id),
+    dailySettlement: deptPrice.departmentConfigured
+      ? deptPrice.dailySettlement
+      : (groupFallback?.dailySettlement ?? false),
+    autoSettlement: deptPrice.departmentConfigured
+      ? deptPrice.autoSettlement
+      : (groupFallback?.autoSettlement ?? false),
+    hourly: deptPrice.departmentConfigured
+      ? settlementHourlyConfigFromResolved(deptPrice)
+      : cloneHourly(groupFallback ?? createDefaultSettlementHourlyConfig()),
   }
   batchDialogVisible.value = true
 }
 
 function saveBatchConfig() {
-  if (!batchForm.value.groupIds.length) {
-    ElMessage.warning('请选择至少一个考勤组')
+  if (!batchForm.value.departmentIds.length) {
+    ElMessage.warning('请选择至少一个部门')
     return
   }
   const hourly = batchForm.value.hourly
@@ -222,17 +255,17 @@ function saveBatchConfig() {
     ElMessage.warning('结算价不能为负数')
     return
   }
-  for (const groupId of batchForm.value.groupIds) {
-    applyHourlyToGroup(
-      groupId,
+  for (const departmentId of batchForm.value.departmentIds) {
+    applyHourlyToDepartment(
+      departmentId,
       hourly,
       batchForm.value.dailySettlement,
       batchForm.value.autoSettlement,
     )
   }
-  ElMessage.success(`已为 ${batchForm.value.groupIds.length} 个考勤组配置灵工工时结算价`)
+  ElMessage.success(`已为 ${batchForm.value.departmentIds.length} 个部门配置工时结算价`)
   batchDialogVisible.value = false
-  selectedGroupIds.value = []
+  selectedDeptIds.value = []
 }
 
 function openTaskDialog(taskType: TaskType) {
@@ -283,6 +316,15 @@ function clearTaskWorkerPrice() {
 function goBack() {
   router.push('/settlement-prices')
 }
+
+function editingDeptGroupHint() {
+  if (!editingDept.value) return ''
+  const groupId = resolveDepartmentAttendanceGroupId(editingDept.value, store.attendanceGroups)
+  if (!groupId) return '该部门未关联考勤组'
+  const group = store.attendanceGroups.find((g) => g.id === groupId)
+  const price = store.resolveGroupSettlementPrice(enterpriseId.value, groupId)
+  return `参考考勤组「${group?.name ?? groupId}」配置价：白班 ¥${price.dayShiftRate}/h · 夜班 ¥${price.nightShiftRate}/h`
+}
 </script>
 
 <template>
@@ -292,34 +334,34 @@ function goBack() {
         <el-button link @click="goBack">← 返回结算价管理</el-button>
         <h2 class="page-title">{{ enterprise.name }} · 结算价配置</h2>
         <p class="text-muted">
-          工时按考勤组、任务按任务类型分别对照展示；默认使用自身定价，单独配置后才产生灵工结算价。
+          工时按部门配置结算价；未配置时沿用考勤组配置价。任务按任务类型单独配置灵工结算价。
         </p>
       </div>
     </div>
 
     <section class="section-card page-card">
       <el-tabs v-model="activeTab">
-        <el-tab-pane :label="`工时定价 (${groupRows.length})`" name="hourly">
+        <el-tab-pane :label="`工时定价 (${deptRows.length})`" name="hourly">
           <div class="tab-toolbar">
             <p class="tab-tip text-muted">
-              「考勤组结算价」来自考勤组定价；「灵工结算价」为在此单独配置的结果，未配置则无独立灵工工时价。
+              「考勤组配置价」来自考勤组灵工价或考勤组定价；「部门结算价」为在此单独配置的结果，未配置则沿用考勤组配置价。
             </p>
-            <el-button type="primary" :disabled="!groupRows.length" @click="openBatchDialog">
+            <el-button type="primary" :disabled="!deptRows.length" @click="openBatchDialog">
               批量配置
-              <template v-if="selectedGroupIds.length">（已选 {{ selectedGroupIds.length }}）</template>
+              <template v-if="selectedDeptIds.length">（已选 {{ selectedDeptIds.length }}）</template>
             </el-button>
           </div>
           <el-table
-            :data="groupRows"
+            :data="deptRows"
             border
             stripe
-            empty-text="该企业暂无关联考勤组"
+            empty-text="该企业暂无关联考勤组的部门"
             row-key="id"
-            @selection-change="onGroupSelectionChange"
+            @selection-change="onDeptSelectionChange"
           >
             <el-table-column type="selection" width="48" />
-            <el-table-column prop="group.name" label="考勤组" min-width="130" fixed />
-            <el-table-column prop="typeLabel" label="考勤类型" width="90" />
+            <el-table-column prop="departmentName" label="部门" min-width="150" fixed />
+            <el-table-column prop="groupName" label="所属考勤组" min-width="140" />
             <el-table-column label="日结" width="72" align="center">
               <template #default="{ row }">
                 <el-tag :type="row.dailySettlement ? 'success' : 'info'" size="small">
@@ -339,38 +381,39 @@ function goBack() {
                 <span v-else class="text-muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="考勤组结算价" min-width="220">
+            <el-table-column label="考勤组配置价" min-width="220">
               <template #default="{ row }">
-                <div class="settlement-detail-list">
-                  <div v-for="item in row.baseHourlyDetails" :key="item.label" class="detail-row">
+                <div v-if="row.groupHourlyDetails.length" class="settlement-detail-list">
+                  <div v-for="item in row.groupHourlyDetails" :key="item.label" class="detail-row">
                     <span class="detail-label">{{ item.label }}</span>
                     <span>{{ item.value }}</span>
                   </div>
                 </div>
+                <span v-else class="text-muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="灵工结算价" min-width="220">
+            <el-table-column label="部门结算价" min-width="220">
               <template #default="{ row }">
-                <div v-if="row.workerHourlyConfigured" class="settlement-detail-list worker-price">
-                  <div v-for="item in row.workerHourlyDetails" :key="item.label" class="detail-row">
+                <div v-if="row.deptConfigured" class="settlement-detail-list worker-price">
+                  <div v-for="item in row.deptHourlyDetails" :key="item.label" class="detail-row">
                     <span class="detail-label">{{ item.label }}</span>
                     <span>{{ item.value }}</span>
                   </div>
                 </div>
-                <el-tag v-else type="info" size="small">未配置</el-tag>
+                <el-tag v-else type="info" size="small">未配置（沿用考勤组）</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="状态" width="150">
+            <el-table-column label="状态" width="140">
               <template #default="{ row }">
-                <el-tag :type="row.workerHourlyConfigured ? 'success' : 'warning'" size="small">
-                  {{ row.workerHourlyConfigured ? '已配置灵工价' : '仅考勤组或任务单价' }}
+                <el-tag :type="row.deptConfigured ? 'success' : 'warning'" size="small">
+                  {{ row.deptConfigured ? '已配置部门价' : '沿用考勤组价' }}
                 </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="110" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openGroupDialog(row.group)">
-                  配置灵工价
+                <el-button link type="primary" @click="openDeptDialog(row.department)">
+                  配置结算价
                 </el-button>
               </template>
             </el-table-column>
@@ -395,7 +438,7 @@ function goBack() {
             <el-table-column label="状态" width="150">
               <template #default="{ row }">
                 <el-tag :type="row.workerConfigured ? 'success' : 'warning'" size="small">
-                  {{ row.workerConfigured ? '已配置灵工价' : '仅考勤组或任务单价' }}
+                  {{ row.workerConfigured ? '已配置灵工价' : '仅任务类型定价' }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -413,78 +456,77 @@ function goBack() {
   </div>
 
   <el-dialog
-    v-model="groupDialogVisible"
-    :title="`灵工工时结算价 · ${editingGroup?.name ?? ''}`"
+    v-model="deptDialogVisible"
+    :title="`部门工时结算价 · ${editingDept ? getDepartmentName(store.departments, editingDept.id) : ''}`"
     width="640px"
   >
     <el-alert
-      v-if="editingGroup"
       type="info"
       :closable="false"
       show-icon
       class="dialog-tip"
-      :title="`参考考勤组结算价：白班 ¥${getAttendanceGroupBaseHourly(editingGroup).dayShiftRate}/h · 夜班 ¥${getAttendanceGroupBaseHourly(editingGroup).nightShiftRate}/h`"
+      :title="editingDeptGroupHint()"
     />
     <el-form label-width="120px">
       <el-form-item label="是否日结">
         <el-switch
-          :model-value="groupForm.dailySettlement"
+          :model-value="deptForm.dailySettlement"
           active-text="日结"
           inactive-text="非日结"
-          @update:model-value="onGroupDailyToggle"
+          @update:model-value="onDeptDailyToggle"
         />
-        <span class="field-hint">开启后，该考勤组灵工工时收入按日结算</span>
+        <span class="field-hint">开启后，该部门灵工工时收入按日结算</span>
       </el-form-item>
-      <el-form-item v-if="groupForm.dailySettlement" label="是否自动结算">
+      <el-form-item v-if="deptForm.dailySettlement" label="是否自动结算">
         <el-switch
-          v-model="groupForm.autoSettlement"
+          v-model="deptForm.autoSettlement"
           active-text="自动结算"
           inactive-text="人工确认"
         />
         <span class="field-hint">开启后无需人工确认工时，系统按日自动结算</span>
       </el-form-item>
-      <SettlementHourlyRatesEditor v-model="groupForm.hourly" />
+      <SettlementHourlyRatesEditor v-model="deptForm.hourly" />
     </el-form>
     <template #footer>
       <el-button
         v-if="
-          editingGroup &&
-          store.resolveGroupSettlementPrice(enterpriseId, editingGroup.id).configured
+          editingDept &&
+          store.resolveDepartmentSettlementPrice(enterpriseId, editingDept.id).departmentConfigured
         "
         type="danger"
         plain
-        @click="clearGroupWorkerPrice"
+        @click="clearDeptWorkerPrice"
       >
-        清除灵工价
+        清除部门价
       </el-button>
-      <el-button @click="groupDialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="saveGroupConfig">保存</el-button>
+      <el-button @click="deptDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="saveDeptConfig">保存</el-button>
     </template>
   </el-dialog>
 
-  <el-dialog v-model="batchDialogVisible" title="批量配置灵工工时结算价" width="680px">
+  <el-dialog v-model="batchDialogVisible" title="批量配置部门工时结算价" width="680px">
     <el-alert
       type="info"
       :closable="false"
       show-icon
       class="dialog-tip"
-      title="将同一套灵工工时结算价应用到所选考勤组，已有配置会被覆盖"
+      title="将同一套工时结算价应用到所选部门，已有配置会被覆盖"
     />
     <el-form label-width="120px">
-      <el-form-item label="考勤组" required>
+      <el-form-item label="部门" required>
         <el-select
-          v-model="batchForm.groupIds"
+          v-model="batchForm.departmentIds"
           multiple
           filterable
           collapse-tags
           collapse-tags-tooltip
-          placeholder="请选择考勤组"
+          placeholder="请选择部门"
           style="width: 100%"
         >
           <el-option
-            v-for="opt in groupOptions"
+            v-for="opt in deptOptions"
             :key="opt.id"
-            :label="`${opt.name}（${opt.typeLabel}）`"
+            :label="`${opt.name}（${opt.groupName}）`"
             :value="opt.id"
           />
         </el-select>
@@ -496,7 +538,7 @@ function goBack() {
           inactive-text="非日结"
           @update:model-value="onBatchDailyToggle"
         />
-        <span class="field-hint">对所选考勤组统一设置</span>
+        <span class="field-hint">对所选部门统一设置</span>
       </el-form-item>
       <el-form-item v-if="batchForm.dailySettlement" label="是否自动结算">
         <el-switch
@@ -511,7 +553,7 @@ function goBack() {
     <template #footer>
       <el-button @click="batchDialogVisible = false">取消</el-button>
       <el-button type="primary" @click="saveBatchConfig">
-        应用到 {{ batchForm.groupIds.length }} 个考勤组
+        应用到 {{ batchForm.departmentIds.length }} 个部门
       </el-button>
     </template>
   </el-dialog>

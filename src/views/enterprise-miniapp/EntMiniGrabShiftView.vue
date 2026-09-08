@@ -10,11 +10,12 @@ import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import { normalizeDeptInterviewRule } from '@/constants/grabInterview'
 import {
+  buildGrabPublishScopeOption,
   buildGrabShiftSlotPayload,
   calcGrabShiftEffectiveRate,
+  findShiftAttendanceGroupForDepartment,
   formatGrabPositionAgeRange,
   formatGrabPositionGender,
-  getGrabShiftScopeOptions,
   getGrabShiftTemplateOptions,
   grabShiftPublishStatusMap,
   resolveGrabShiftBaseHourlyRate,
@@ -22,7 +23,8 @@ import {
   resolveGrabSlotPositionProfile,
   resolveGrabSlotShiftName,
 } from '@/services/grabShift'
-import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
+import type { GrabPublishScope } from '@/types'
+import { resolveEnterpriseIdByAttendanceGroupId, resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
 
 const store = useAppStore()
 const router = useRouter()
@@ -75,8 +77,8 @@ const publishDepartmentOptions = computed(() => {
 })
 
 const publishForm = ref({
-  groupId: '',
   departmentId: '',
+  publishScope: 'global' as GrabPublishScope,
   positionId: '',
   date: '2026-07-28',
   shiftTemplateId: '',
@@ -98,9 +100,18 @@ const groupList = computed(() =>
   store.getAttendanceGroupsByEnterprise(enterpriseId.value).filter((g) => g.attendanceType === 'shift'),
 )
 
-const publishGroup = computed(() =>
-  store.attendanceGroups.find((g) => g.id === publishForm.value.groupId),
-)
+const publishGroup = computed(() => {
+  if (!publishForm.value.departmentId) return undefined
+  const ent =
+    enterpriseId.value ||
+    resolveEnterpriseIdByDepartment(publishForm.value.departmentId, store.departments)
+  return findShiftAttendanceGroupForDepartment(
+    publishForm.value.departmentId,
+    store.attendanceGroups,
+    store.departments,
+    ent,
+  )
+})
 
 const templateShiftOptions = computed(() =>
   getGrabShiftTemplateOptions(publishGroup.value, store.shifts),
@@ -303,25 +314,14 @@ function applyEnterprisePosition(positionId: string) {
 }
 
 function syncPublishDefaults() {
-  const dept =
-    publishDepartmentOptions.value.find((d) =>
-      groupList.value.some((g) =>
-        g.departmentBindings.some((b) => b.departmentId === d.departmentId),
-      ),
-    ) || publishDepartmentOptions.value[0]
+  const dept = publishDepartmentOptions.value[0]
   const position = enterprisePositions.value[0]
   publishForm.value.departmentId = dept?.departmentId || ''
-  preferGroupForDepartment(publishForm.value.departmentId)
-  if (!publishForm.value.groupId) {
-    publishForm.value.groupId = groupList.value[0]?.id || ''
-  }
+  publishForm.value.publishScope = 'global'
   publishForm.value.date = selectedDay.value || '2026-07-28'
   publishForm.value.requiredCount = 2
   publishForm.value.hourlySubsidy = 5
-  const templates = getGrabShiftTemplateOptions(
-    store.attendanceGroups.find((g) => g.id === publishForm.value.groupId),
-    store.shifts,
-  )
+  const templates = getGrabShiftTemplateOptions(publishGroup.value, store.shifts)
   publishForm.value.shiftTemplateId = templates[0]?.templateId || ''
   if (position) {
     applyEnterprisePosition(position.id)
@@ -340,29 +340,11 @@ function syncPublishDefaults() {
   }
 }
 
-function preferGroupForDepartment(departmentId: string) {
-  const matched = groupList.value.find((g) =>
-    g.departmentBindings.some((b) => b.departmentId === departmentId),
-  )
-  if (matched) publishForm.value.groupId = matched.id
-}
-
 watch(
   () => publishForm.value.departmentId,
-  (deptId) => {
+  () => {
     if (!publishOpen.value) return
-    preferGroupForDepartment(deptId)
-  },
-)
-
-watch(
-  () => publishForm.value.groupId,
-  (gid) => {
-    if (!publishOpen.value) return
-    const templates = getGrabShiftTemplateOptions(
-      store.attendanceGroups.find((g) => g.id === gid),
-      store.shifts,
-    )
+    const templates = getGrabShiftTemplateOptions(publishGroup.value, store.shifts)
     if (!templates.some((t) => t.templateId === publishForm.value.shiftTemplateId)) {
       publishForm.value.shiftTemplateId = templates[0]?.templateId || ''
     }
@@ -407,7 +389,7 @@ function openPublish() {
     return
   }
   if (!groupList.value.length) {
-    ElMessage.warning('当前企业暂无可用考勤组')
+    ElMessage.warning('当前企业暂无可用班次考勤组')
     return
   }
   if (!interviewDeptOptions.value.length) {
@@ -429,13 +411,13 @@ function closePublish() {
 }
 
 function publish() {
-  const group = publishGroup.value
-  if (!group) {
-    ElMessage.warning('请选择考勤组')
+  if (!publishForm.value.departmentId) {
+    ElMessage.warning('请选择部门')
     return
   }
-  if (!publishForm.value.departmentId) {
-    ElMessage.warning('请选择面试配置中的部门')
+  const group = publishGroup.value
+  if (!group) {
+    ElMessage.warning('所选部门未绑定班次考勤组，请先在考勤组中关联部门')
     return
   }
   if (!publishForm.value.positionId || !selectedEnterprisePosition.value) {
@@ -459,15 +441,8 @@ function publish() {
     return
   }
 
-  const scopeOptions = getGrabShiftScopeOptions(group, store.departments)
-  const scopeOption =
-    scopeOptions.find((o) => o.departmentId === publishForm.value.departmentId) ||
-    scopeOptions.find((o) => o.scope === 'department' && o.value === publishForm.value.departmentId)
-
-  if (!scopeOption) {
-    ElMessage.warning('所选部门未绑定到当前考勤组，请调整考勤组或面试配置')
-    return
-  }
+  const dept = store.departments.find((d) => d.id === publishForm.value.departmentId)
+  const scopeOption = buildGrabPublishScopeOption(publishForm.value.publishScope, dept)
 
   const template = templateShiftOptions.value.find(
     (t) => t.templateId === publishForm.value.shiftTemplateId,
@@ -491,8 +466,11 @@ function publish() {
         template,
         startTime: template.startTime.slice(0, 5),
         endTime: template.endTime.slice(0, 5),
-        hasBreakTime: Boolean(template.breakRule),
+        hasBreakTime: Boolean(
+          template.hasBreakTime ?? (template.breakRule || template.breakPeriods?.length),
+        ),
         breakRule: template.breakRule,
+        breakPeriods: template.breakPeriods,
         date: publishForm.value.date,
         requiredCount: publishForm.value.requiredCount,
         enrollFloatMode: 'absolute',
@@ -821,14 +799,9 @@ const publishPreviewRate = computed(() => {
           <strong>发布抢班需求</strong>
           <button type="button" class="close" @click="closePublish">×</button>
         </header>
-        <p class="sheet-hint">岗位选自企业岗位库，部门用于发布范围；提交后进入发布审批</p>
+        <p class="sheet-hint">岗位选自企业岗位库；全局全域可见，部门仅部门抢班池可见；提交后进入发布审批</p>
 
-        <label>考勤组</label>
-        <select v-model="publishForm.groupId">
-          <option v-for="g in groupList" :key="g.id" :value="g.id">{{ g.name }}</option>
-        </select>
-
-        <label>部门（发布范围）</label>
+        <label>部门</label>
         <select v-model="publishForm.departmentId">
           <option
             v-for="d in publishDepartmentOptions"
@@ -837,6 +810,12 @@ const publishPreviewRate = computed(() => {
           >
             {{ d.departmentName }}
           </option>
+        </select>
+
+        <label>发布范围</label>
+        <select v-model="publishForm.publishScope">
+          <option value="global">全局</option>
+          <option value="department">部门</option>
         </select>
 
         <label>岗位（企业岗位库）</label>

@@ -50,12 +50,24 @@ export type EmployeeGender = 'male' | 'female'
 
 export interface EmployeeSkillCertificate {
   id: string
+  /** 技能库技能 ID */
+  skillId?: string
   name: string
   certificateNo?: string
   issueDate?: string
   expiryDate?: string
   photoName?: string
   photoUrl?: string
+}
+
+/** 平台技能库条目（招聘 / 人员证书 / 灵工档案同源） */
+export interface SkillLibraryItem {
+  id: string
+  name: string
+  icon?: string
+  category: string
+  enabled?: boolean
+  sortOrder?: number
 }
 
 export interface Employee {
@@ -109,6 +121,9 @@ export interface WorkerJoinApplication {
   enterpriseId: string
   /** 扫码申请的目标部门 */
   departmentId: string
+  /** 申请岗位（岗位库） */
+  positionId?: string
+  positionName?: string
   status: WorkerJoinApplicationStatus
   appliedAt: string
   reviewedAt?: string
@@ -287,12 +302,22 @@ export interface GrabInterviewDeptPosition {
   schedule?: GrabInterviewScheduleRule
 }
 
+/** 抢班/直面发布范围 */
+export type GrabPublishScope = 'global' | 'department'
+
 /**
  * 部门维度面试配置（多岗位）。
  * 兼容旧版单岗位扁平字段（迁移时写入 positions[0]）。
  */
 export interface GrabInterviewDeptRule {
   departmentId: string
+  /**
+   * 发布范围：
+   * - global：企业下抢班池人员可见
+   * - department：仅该部门抢班池可见
+   * 缺省按 global
+   */
+  publishScope?: GrabPublishScope
   /** 部门下多岗位 */
   positions: GrabInterviewDeptPosition[]
   /** 部门统一面试规则（岗位选择「应用全部门」时使用） */
@@ -359,14 +384,24 @@ export interface GrabInterviewRegistration {
 }
 
 /** 灵工可抢的独立班次 */
-export type GrabShiftScope = 'global' | 'department'
+export type GrabShiftScope = GrabPublishScope
 export type GrabShiftShiftSource = 'template' | 'custom'
+
+/** 自定义班次休息时段 */
+export interface GrabShiftBreakPeriod {
+  start: string
+  end: string
+}
 
 /** 灵工可抢的独立班次 */
 export interface GrabShiftSlot {
   id: string
   attendanceGroupId: string
-  /** 发布范围：全局或指定部门 */
+  /**
+   * 发布范围：
+   * - global：全域可见
+   * - department：仅部门抢班池可见
+   */
   scope?: GrabShiftScope
   departmentId?: string
   departmentName?: string
@@ -383,6 +418,8 @@ export interface GrabShiftSlot {
   endTime: string
   hasBreakTime?: boolean
   breakRule?: string
+  /** 自定义休息时间段（优先于文案解析） */
+  breakPeriods?: GrabShiftBreakPeriod[]
   /** 休息分钟数（用于工时计算） */
   breakMinutes?: number
   /** 本次班次工时（时段 − 休息） */
@@ -684,7 +721,14 @@ export interface AttendanceGroupShiftTemplate {
   name: string
   startTime: string
   endTime: string
-  breakRule: string
+  /**
+   * 休息文案（兼容旧数据；有 breakPeriods 时由时间段自动生成）
+   */
+  breakRule?: string
+  /** 是否配置休息 */
+  hasBreakTime?: boolean
+  /** 休息时间段（与发布抢班一致，须落在班次时段内） */
+  breakPeriods?: GrabShiftBreakPeriod[]
   workHours: number
   /** 平日（工作日）所需人数 */
   requiredHeadcount?: number
@@ -701,6 +745,8 @@ export interface PunchLocation {
 }
 
 export interface AttendanceGroupCompliance {
+  /** 是否启用工时红线；默认关闭。开启后仅按本企业内排班统计，不跨企业汇总 */
+  enabled: boolean
   maxDailyHours: number
   maxWeeklyHours: number
   minShiftIntervalHours: number
@@ -846,7 +892,8 @@ export interface CancelShiftRequest {
   shiftId: string
   teamId: string
   reason: string
-  status: ApprovalStatus
+  /** pending 待审 / approved 通过 / rejected 驳回 / cancelled 灵工审批前撤销 */
+  status: ApprovalStatus | 'cancelled'
   /** 员工端申请 / 管理端发起 */
   initiatedBy: 'employee' | 'admin'
   createdAt: string
@@ -994,6 +1041,11 @@ export interface SettlementBill {
   payerEnterpriseName?: string
   /** 付款企业统一社会信用代码（可选，企业确认时可改） */
   payerCreditCode?: string
+  /**
+   * 付款主体类型：
+   * self=本公司（列表显示公司名称）；other=其他主体（显示其他公司名称）
+   */
+  payerSubjectType?: 'self' | 'other'
   serviceProviderId?: string
   serviceProviderName?: string
   periodStart: string
@@ -1462,7 +1514,7 @@ export interface EnterpriseSettlementConfig extends SettlementHourlyConfig {
   updatedAt: string
 }
 
-/** 考勤组工时结算价（灵工价单独配置） */
+/** 考勤组工时结算价（灵工价单独配置；部门未配置时作为回退） */
 export interface AttendanceGroupSettlementOverride {
   attendanceGroupId: string
   enterpriseId: string
@@ -1482,6 +1534,22 @@ export interface AttendanceGroupSettlementOverride {
   holiday?: VariablePriceConfig
   /** @deprecated 任务价已改为按任务类型配置 */
   taskUnitPrice?: number
+  updatedAt?: string
+}
+
+/** 部门工时结算价（优先于考勤组配置价） */
+export interface DepartmentSettlementOverride {
+  departmentId: string
+  enterpriseId: string
+  /** true / 未配置单价 = 未设置部门结算价，回退考勤组配置价 */
+  useEnterpriseDefault?: boolean
+  dailySettlement?: boolean
+  autoSettlement?: boolean
+  dayShiftRate?: number
+  nightShiftRate?: number
+  overtime?: VariablePriceConfig
+  weekend?: VariablePriceConfig
+  holiday?: VariablePriceConfig
   updatedAt?: string
 }
 

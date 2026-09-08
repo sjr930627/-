@@ -300,8 +300,8 @@ defineExpose({ loadDraft })
             <el-col :span="12">
               <el-form-item label="组织类型">
                 <el-select v-model="form.orgType" style="width: 100%">
-                  <el-option label="部门/企业" value="department" />
-                  <el-option label="企业主体" value="enterprise" />
+                  <el-option label="部门" value="department" />
+                  <el-option label="企业公司" value="enterprise" />
                 </el-select>
               </el-form-item>
             </el-col>
@@ -485,7 +485,7 @@ defineExpose({ loadDraft })
       :closable="false"
       show-icon
       title="温馨提示"
-      description="带 * 号为必填项。部门创建后，可在组织架构树中拖拽调整层级顺序。"
+      description="带 * 号为必填项。部门创建后，可在灵工组织架构中拖拽调整层级顺序。"
       class="form-tip"
     />
 

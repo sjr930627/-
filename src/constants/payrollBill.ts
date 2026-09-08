@@ -38,6 +38,39 @@ export function formatPeriod(start: string, end: string): string {
   return `${start.replace(/-/g, '.')} - ${end.replace(/-/g, '.')}`
 }
 
+export type BillPayerSubjectType = 'self' | 'other'
+
+/** 解析付款主体：显式标记优先；否则名称与公司名一致（或为空）视为本公司 */
+export function resolveBillPayerSubjectType(bill: {
+  payerSubjectType?: BillPayerSubjectType
+  payerEnterpriseName?: string
+  enterpriseName: string
+}): BillPayerSubjectType {
+  if (bill.payerSubjectType === 'self' || bill.payerSubjectType === 'other') {
+    return bill.payerSubjectType
+  }
+  const payer = bill.payerEnterpriseName?.trim()
+  if (!payer || payer === bill.enterpriseName.trim()) return 'self'
+  return 'other'
+}
+
+/**
+ * 账单列表「付款企业」展示：
+ * 本公司 → 公司名称；其他主体 → 其他公司名称
+ */
+export function formatBillPayerEnterpriseName(
+  bill: {
+    payerSubjectType?: BillPayerSubjectType
+    payerEnterpriseName?: string
+    enterpriseName: string
+  },
+  companyName?: string,
+): string {
+  const company = (companyName ?? bill.enterpriseName).trim() || '—'
+  if (resolveBillPayerSubjectType(bill) === 'self') return company
+  return bill.payerEnterpriseName?.trim() || company
+}
+
 export function billRemainingInvoiceAmount(bill: {
   totalPayable: number
   invoicedAmount: number

@@ -351,10 +351,10 @@ function openTodo(path: string) {
 async function openScanJoin() {
   try {
     const { value } = await ElMessageBox.prompt(
-      '演示：粘贴部门入驻二维码内容（JOIN|企业ID|部门ID），或选择下方常用部门后确认',
+      '演示：粘贴部门入驻二维码内容（JOIN|企业ID|部门ID）',
       '扫码入驻',
       {
-        confirmButtonText: '申请入驻',
+        confirmButtonText: '下一步',
         cancelButtonText: '取消',
         inputPlaceholder: 'JOIN|ent_xxx|dept_xxx',
         inputValue: 'JOIN|ent_stars_telecom|dept_prod_a',
@@ -365,12 +365,7 @@ async function openScanJoin() {
       ElMessage.warning('请填写二维码内容')
       return
     }
-    store.applyJoinDepartmentByQr(payload, {
-      name: employee.value?.name || '灵工申请人',
-      phone: employee.value?.phone,
-      employeeId: employeeId.value,
-    })
-    ElMessage.success('已提交入驻申请，可在入驻管理查看审批结果')
+    router.push({ path: '/miniapp/join-apply', query: { qr: payload } })
   } catch {
     /* cancel */
   }

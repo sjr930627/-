@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { isUnassignedDepartment, DEFAULT_WORKFORCE_ENTERPRISE_ID } from '@/constants/department'
+import { resolveSkillLibraryItem } from '@/constants/skillLibrary'
+import SkillLibraryManageDialog from '@/components/skill/SkillLibraryManageDialog.vue'
 import type {
   EmployeeGender,
   EmployeePersonnelCategory,
@@ -42,14 +44,26 @@ const emit = defineEmits<{
 }>()
 
 const store = useAppStore()
+const skillLibVisible = ref(false)
+const skillOptions = computed(() => store.skillLibraryOptions)
 
 const createCertificate = (): EmployeeSkillCertificate => ({
   id: `cert_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+  skillId: '',
   name: '',
   certificateNo: '',
   issueDate: '',
   expiryDate: '',
 })
+
+function hydrateCertificate(c: EmployeeSkillCertificate): EmployeeSkillCertificate {
+  const matched = resolveSkillLibraryItem(store.skillLibrary, c.skillId || c.name)
+  return {
+    ...c,
+    skillId: matched?.id || c.skillId || '',
+    name: matched?.name || c.name,
+  }
+}
 
 const emptyForm = (): EmployeeFormModel => ({
   name: '',
@@ -121,9 +135,9 @@ watch(
         idCardNo: emp.idCardNo ?? '',
         skillCertificates:
           emp.skillCertificates?.length
-            ? emp.skillCertificates.map((c) => ({ ...c }))
+            ? emp.skillCertificates.map((c) => hydrateCertificate({ ...c }))
             : emp.skills.length
-              ? emp.skills.map((name) => ({ ...createCertificate(), name }))
+              ? emp.skills.map((name) => hydrateCertificate({ ...createCertificate(), name }))
               : [],
       }
       return
@@ -132,6 +146,12 @@ watch(
   },
   { immediate: true },
 )
+
+function onSkillSelect(cert: EmployeeSkillCertificate, skillId: string) {
+  cert.skillId = skillId
+  const skill = store.resolveSkillLibraryItem(skillId)
+  if (skill) cert.name = skill.name
+}
 
 function close() {
   emit('update:visible', false)
@@ -185,8 +205,14 @@ function submit() {
     return
   }
 
-  const certificates = form.value.skillCertificates.filter((c) => c.name.trim())
+  const certificates = form.value.skillCertificates.filter((c) => c.skillId || c.name.trim())
   for (const cert of certificates) {
+    if (!cert.skillId) {
+      ElMessage.warning('请为每条技能证书选择技能')
+      return
+    }
+    const skill = store.resolveSkillLibraryItem(cert.skillId)
+    if (skill) cert.name = skill.name
     if (!cert.photoUrl && !cert.photoName) {
       ElMessage.warning(`请上传「${cert.name}」的技能证照片`)
       return
@@ -418,8 +444,27 @@ function submit() {
             <button type="button" class="cert-delete" @click="removeCertificate(cert.id)">
               <el-icon><Delete /></el-icon>
             </button>
+            <el-form-item label="技能" required>
+              <div class="skill-field">
+                <el-select
+                  :model-value="cert.skillId || undefined"
+                  filterable
+                  placeholder="请选择技能"
+                  style="flex: 1"
+                  @update:model-value="(v: string) => onSkillSelect(cert, v)"
+                >
+                  <el-option
+                    v-for="s in skillOptions"
+                    :key="s.id"
+                    :label="s.name"
+                    :value="s.id"
+                  />
+                </el-select>
+                <el-button link type="primary" @click="skillLibVisible = true">维护技能库</el-button>
+              </div>
+            </el-form-item>
             <el-form-item label="技能证书名称" required>
-              <el-input v-model="cert.name" placeholder="请输入证书名称" />
+              <el-input v-model="cert.name" placeholder="默认取技能名称，可改" />
             </el-form-item>
             <el-form-item label="技能证书编号">
               <el-input v-model="cert.certificateNo" placeholder="请输入证书编号" />
@@ -495,6 +540,8 @@ function submit() {
       </div>
     </template>
   </el-drawer>
+
+  <SkillLibraryManageDialog v-model:visible="skillLibVisible" />
 </template>
 
 <style scoped>
@@ -588,6 +635,13 @@ function submit() {
   font-size: 13px;
   color: #94a3b8;
   margin-bottom: 12px;
+}
+
+.skill-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
 }
 
 .cert-delete {

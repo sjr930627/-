@@ -21,7 +21,7 @@ import {
   isEnterpriseRootDepartment,
   isUnassignedDepartment,
 } from '@/constants/department'
-import { JOB_TYPE_OPTIONS, SKILL_OPTIONS } from '@/constants/recruitment'
+import { JOB_TYPE_OPTIONS } from '@/constants/recruitment'
 import { grabShiftPositionOptions } from '@/services/grabShift'
 import { generateId, getDepartmentName } from '@/utils'
 import type {
@@ -104,6 +104,7 @@ function emptyPosition(): GrabInterviewDeptPosition {
 function emptyDeptRule(departmentId: string): GrabInterviewDeptRule {
   return {
     departmentId,
+    publishScope: 'global',
     positions: [],
     departmentSchedule: emptyScheduleRule(),
   }
@@ -128,6 +129,7 @@ watch(
     )
     Object.assign(ruleForm, {
       departmentId: next.departmentId,
+      publishScope: next.publishScope ?? 'global',
       positions: next.positions,
       departmentSchedule: next.departmentSchedule ?? emptyScheduleRule(),
     })
@@ -136,10 +138,7 @@ watch(
   { immediate: true },
 )
 
-const skillOptions = computed(() => {
-  const set = new Set([...SKILL_OPTIONS, '中国移动业务合规证', '叉车证'])
-  return [...set]
-})
+const skillOptions = computed(() => store.skillLibraryNames)
 
 function configuredPositionCount(departmentId: string) {
   const rule = config.value.deptRules.find((r) => r.departmentId === departmentId)
@@ -321,6 +320,7 @@ function saveDeptRule() {
   }
   store.upsertGrabInterviewDeptRule(enterpriseId.value, {
     departmentId: selectedDeptId.value,
+    publishScope: ruleForm.publishScope === 'department' ? 'department' : 'global',
     positions: JSON.parse(JSON.stringify(ruleForm.positions)),
     departmentSchedule: JSON.parse(
       JSON.stringify(ruleForm.departmentSchedule ?? emptyScheduleRule()),
@@ -463,6 +463,23 @@ function markNoShow(row: GrabInterviewRegistration) {
       </div>
 
       <template v-if="selectedDeptId">
+        <div class="section-card">
+          <div class="section-head">
+            <strong>发布范围</strong>
+          </div>
+          <div class="scope-row">
+            <label class="radio">
+              <input v-model="ruleForm.publishScope" type="radio" value="global" />
+              全局
+            </label>
+            <label class="radio">
+              <input v-model="ruleForm.publishScope" type="radio" value="department" />
+              部门
+            </label>
+          </div>
+          <p class="preview">全局限企业抢班池；部门限该部门抢班池</p>
+        </div>
+
         <div class="section-card">
           <div class="section-head">
             <strong>部门统一面试规则</strong>
@@ -855,6 +872,18 @@ function markNoShow(row: GrabInterviewRegistration) {
   font-size: 12px;
   color: #6b7280;
   line-height: 1.4;
+}
+.scope-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+.scope-row .radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #111827;
 }
 .card {
   background: #fff;

@@ -195,6 +195,7 @@ export function normalizeDeptInterviewRule(rule: GrabInterviewDeptRule): GrabInt
 
   return {
     departmentId: rule.departmentId,
+    publishScope: rule.publishScope === 'department' ? 'department' : 'global',
     positions,
     departmentSchedule: normalizeGrabInterviewScheduleRule(
       rule.departmentSchedule ?? legacySchedule ?? emptyScheduleRule(),

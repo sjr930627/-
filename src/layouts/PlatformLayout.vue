@@ -38,17 +38,6 @@ const menuGroups: MenuGroup[] = [
     ],
   },
   {
-    index: 'recruitment',
-    title: '招聘管理',
-    icon: 'User',
-    children: [
-      { path: '/recruitment/requirements', title: '需求管理', icon: 'Document' },
-      { path: '/recruitment/progress', title: '招聘进度', icon: 'DataLine' },
-      { path: '/recruitment/calendar', title: '面试日程', icon: 'Calendar' },
-      { path: '/recruitment/talents', title: '人才库', icon: 'Postcard' },
-    ],
-  },
-  {
     index: 'training',
     title: '培训与考核',
     icon: 'Reading',
@@ -136,30 +125,17 @@ const menuGroups: MenuGroup[] = [
   },
   {
     index: 'statistics',
-    title: '数据统计',
+    title: '分析统计',
     icon: 'DataAnalysis',
     children: [
       { path: '/statistics/overview', title: '概览看板', icon: 'Odometer' },
       { path: '/bi/monitor', title: '数据监控中心', icon: 'Monitor' },
-      { path: '/statistics/recruitment', title: '招聘统计', icon: 'TrendCharts' },
-      { path: '/statistics/attendance', title: '考勤统计', icon: 'Timer' },
-      { path: '/statistics/task', title: '任务统计', icon: 'Finished' },
-      { path: '/statistics/settlement', title: '结算统计', icon: 'Wallet' },
+      { path: '/statistics/attendance', title: '考勤分析', icon: 'Timer' },
+      { path: '/statistics/task', title: '任务分析', icon: 'Finished' },
+      { path: '/statistics/settlement', title: '结算分析', icon: 'Wallet' },
     ],
   },
 ]
-
-const settingsGroup: MenuGroup = {
-  index: 'settings',
-  title: '系统设置',
-  icon: 'Setting',
-  children: [
-    { path: '/system/accounts', title: '账号管理', icon: 'User' },
-    { path: '/system/roles', title: '角色权限', icon: 'Key' },
-    { path: '/system/reminder-rules', title: '提醒规则配置', icon: 'Bell' },
-    { path: '/system/oplog', title: '操作日志', icon: 'Document' },
-  ],
-}
 
 const activeMenu = computed(() => route.path)
 const asideWidth = computed(() => (navCollapsed.value ? '72px' : '248px'))
@@ -173,7 +149,7 @@ const breadcrumbs = computed(() => {
 
 const openMenus = computed(() => {
   const opened = ['home']
-  for (const group of [...menuGroups, settingsGroup]) {
+  for (const group of menuGroups) {
     if (group.children.some((c) => activeMenu.value === c.path || activeMenu.value.startsWith(`${c.path}/`))) {
       opened.push(group.index)
     }
@@ -193,7 +169,7 @@ function navigate(path: string) {
 
 function handleSearch() {
   if (!searchKeyword.value.trim()) return
-  router.push({ path: '/recruitment/talents', query: { q: searchKeyword.value.trim() } })
+  router.push({ path: '/employees', query: { q: searchKeyword.value.trim() } })
 }
 
 function toggleNav() {
@@ -268,21 +244,6 @@ function formatTime(iso: string) {
                 </template>
               </el-menu-item>
             </el-sub-menu>
-
-            <el-sub-menu :index="settingsGroup.index">
-              <template #title>
-                <el-icon class="menu-icon"><Setting /></el-icon>
-                <span>{{ settingsGroup.title }}</span>
-              </template>
-              <el-menu-item
-                v-for="child in settingsGroup.children"
-                :key="child.path"
-                :index="child.path"
-              >
-                <el-icon class="menu-icon menu-icon--sub"><component :is="child.icon" /></el-icon>
-                <template #title>{{ child.title }}</template>
-              </el-menu-item>
-            </el-sub-menu>
           </el-menu>
         </el-scrollbar>
 
@@ -316,9 +277,6 @@ function formatTime(iso: string) {
                 <el-icon size="18"><Bell /></el-icon>
               </button>
             </el-badge>
-            <button class="icon-btn" type="button" @click="router.push('/system/roles')">
-              <el-icon size="18"><Setting /></el-icon>
-            </button>
             <el-dropdown trigger="click">
               <div class="user-info">
                 <el-avatar :size="32" class="user-avatar">张</el-avatar>
@@ -328,8 +286,6 @@ function formatTime(iso: string) {
               </div>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item @click="router.push('/system/accounts')">账号管理</el-dropdown-item>
-                  <el-dropdown-item @click="router.push('/system/roles')">角色权限</el-dropdown-item>
                   <el-dropdown-item @click="router.push('/portals')">三端入口</el-dropdown-item>
                   <el-dropdown-item @click="router.push('/enterprise/dashboard')">企业端</el-dropdown-item>
                   <el-dropdown-item @click="router.push('/miniapp/workbench')">灵工小程序</el-dropdown-item>

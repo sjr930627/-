@@ -11,9 +11,9 @@ import {
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
-import { getGrabShiftPostExtra, getGrabShiftSlotExtra, getJobDetailExtra } from '@/mock/miniappDetailSeed'
+import { getGrabShiftPostExtra, getGrabShiftSlotExtra } from '@/mock/miniappDetailSeed'
 import { TASK_PREVIEW_LIMIT } from '@/services/miniTask'
-import { isGrabShiftOpenForWorkers } from '@/services/grabShift'
+import { isGrabSlotVisibleToWorker } from '@/services/grabShift'
 import { listOpenGrabInterviewPosts } from '@/services/miniGrabInterview'
 import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
@@ -92,41 +92,10 @@ function switchTab(tab: 'jobs' | 'shifts') {
   router.replace({ path: '/miniapp/recommend', query: { tab } })
 }
 
-const jobs = computed(() =>
-  store.jobRequirements
-    .filter((j) => j.status === 'recruiting')
-    .map((j) => {
-      const extra = getJobDetailExtra(
-        j.id,
-        {
-          storeName: j.enterpriseName,
-          location: j.location,
-        },
-        j,
-      )
-      return {
-        id: j.id,
-        title: j.title,
-        tags: extra.tags,
-        payMin: extra.hourlyMin,
-        payMax: extra.hourlyMax,
-        payUnit: '/小时',
-        payHint: '· 上岗后收入',
-        storeName: extra.storeName,
-        locationHint: `${extra.subwayHint ?? '地铁口附近'} · ${extra.distance}`,
-        locationMain: '',
-        locationSide: '',
-        brandLetter: extra.storeName.slice(0, 1),
-        previewSlots: [],
-        hasMoreSlots: false,
-        slotCount: 0,
-      }
-    }),
-)
-
 const shiftCompanies = computed(() => {
-  const open = store.grabShiftSlots.filter(
-    (s) => isGrabShiftOpenForWorkers(s),
+  const worker = store.employees.find((e) => e.id === employeeId.value)
+  const open = store.grabShiftSlots.filter((s) =>
+    isGrabSlotVisibleToWorker(s, worker, store.teams, store.departments),
   )
   const teamIds = [...new Set(open.map((s) => s.teamId))]
   return teamIds.map((teamId) => {
@@ -197,14 +166,7 @@ const interviewPosts = computed(() =>
 )
 
 const feedCards = computed(() => {
-  if (activeTab.value === 'jobs') {
-    return jobs.value.map((card) => ({
-      ...card,
-      tab: 'jobs' as const,
-      kind: 'job' as const,
-      panelTitle: '',
-    }))
-  }
+  if (activeTab.value === 'jobs') return []
   const interviews = interviewPosts.value.map((card) => ({
     ...card,
     tab: 'shifts' as const,
@@ -221,13 +183,12 @@ const feedCards = computed(() => {
 })
 
 const feedEmptyText = computed(() => {
-  if (activeTab.value === 'jobs') return '暂无在招岗位'
+  if (activeTab.value === 'jobs') return '岗位招聘开发中，敬请期待'
   return '暂无抢班班次或抢班直面'
 })
 
 function openCard(card: (typeof feedCards.value)[number]) {
-  if (card.kind === 'job') openJob(card.id)
-  else if (card.kind === 'interview') openInterview(card.id)
+  if (card.kind === 'interview') openInterview(card.id)
   else openShiftEnterprise(card.id)
 }
 
@@ -251,10 +212,6 @@ function tagClass(tag: string, kind?: string) {
     return ''
   }
   return tagToneMap[tag] ?? 'blue'
-}
-
-function openJob(id: string) {
-  router.push(`/miniapp/recommend/job/${id}`)
 }
 
 function openShiftEnterprise(teamId: string) {
@@ -368,7 +325,6 @@ function onLoadMore() {
       </div>
 
       <div
-        v-if="card.kind !== 'job'"
         class="job-slot-panel"
         :class="{ interview: card.kind === 'interview' }"
       >
@@ -426,7 +382,12 @@ function onLoadMore() {
       加载更多
     </button>
 
-    <div v-if="feedCards.length === 0" class="mini-empty">{{ feedEmptyText }}</div>
+    <div v-if="activeTab === 'jobs'" class="jobs-placeholder">
+      <div class="jobs-placeholder-icon">岗</div>
+      <h3>岗位招聘</h3>
+      <p>功能开发中，敬请期待</p>
+    </div>
+    <div v-else-if="feedCards.length === 0" class="mini-empty">{{ feedEmptyText }}</div>
   </div>
 </template>
 
@@ -726,5 +687,40 @@ function onLoadMore() {
   background: #f3f4f6;
   color: var(--mini-text-muted);
   cursor: not-allowed;
+}
+
+.jobs-placeholder {
+  margin: 28px 16px;
+  padding: 40px 20px;
+  border-radius: 16px;
+  background: #fff;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.jobs-placeholder-icon {
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 14px;
+  border-radius: 14px;
+  background: #eefbf8;
+  color: var(--mini-primary, #4fd1c5);
+  font-size: 20px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.jobs-placeholder h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  color: #111827;
+}
+
+.jobs-placeholder p {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
 }
 </style>

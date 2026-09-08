@@ -63,7 +63,12 @@ const cancelShiftList = computed(() =>
       ...employeeRowMeta(r.employeeId),
       shiftName: store.shifts.find((s) => s.id === r.shiftId)?.name ?? '-',
       initiatedByLabel: r.initiatedBy === 'employee' ? '灵工申请' : '管理端发起',
-      statusLabel: { pending: '待审批', approved: '已通过', rejected: '已驳回' }[r.status],
+      statusLabel: {
+        pending: '待审批',
+        approved: '已通过',
+        rejected: '已驳回',
+        cancelled: '已撤销',
+      }[r.status],
     }))
     .sort((a, b) => b.date.localeCompare(a.date)),
 )

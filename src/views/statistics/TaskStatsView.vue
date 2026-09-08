@@ -102,7 +102,7 @@ const taskRows = computed(() =>
     <div class="stats-header">
       <div>
         <h2 class="page-title">任务数据报表</h2>
-        <p class="text-muted">任务统计 · 发布、完成与验收分析</p>
+        <p class="text-muted">任务分析 · 发布、完成与验收洞察</p>
       </div>
       <el-radio-group v-model="statusFilter">
         <el-radio-button value="all">全部</el-radio-button>

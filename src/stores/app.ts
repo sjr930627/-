@@ -5,6 +5,7 @@ import type {
   AttendanceGroupPricingConfig,
   AttendanceGroupPricingTemplate,
   AttendanceGroupSettlementOverride,
+  DepartmentSettlementOverride,
   AttendanceManualAdjustment,
   AttendancePunch,
   AttendanceRule,
@@ -42,6 +43,7 @@ import type {
   SettlementManageType,
   SettlementSlip,
   SettlementSlipLine,
+  SkillLibraryItem,
   TaxDeclaration,
   TaxDeclarationWorker,
   TaxWithdrawalLine,
@@ -135,6 +137,7 @@ import {
   seedTalents,
 } from '@/mock/recruitmentSeed'
 import { seedAttendanceGroups } from '@/mock/attendanceGroupSeed'
+import { seedSkillLibrary, enabledSkillLibrary, groupSkillLibraryByCategory, resolveSkillLibraryItem, skillLibraryNames } from '@/constants/skillLibrary'
 import { seedPricingTemplates } from '@/mock/pricingTemplateSeed'
 import { normalizePricingConfig } from '@/constants/attendanceGroupPricing'
 import {
@@ -193,6 +196,7 @@ import {
   isEmployeeUnavailableInRange,
   isEmployeeUnavailableOnDate,
 } from '@/services/employeeAvailability'
+import { isGrabSlotVisibleToWorker } from '@/services/grabShift'
 import { seedInsurancePolicies, seedInsuranceProducts } from '@/mock/insuranceSeed'
 import {
   seedExamAttempts,
@@ -226,11 +230,13 @@ import {
 } from '@/mock/taskSeed'
 import {
   seedAttendanceGroupSettlementOverrides,
+  seedDepartmentSettlementOverrides,
   seedEnterpriseSettlementConfigs,
   seedTaskTypeSettlementOverrides,
 } from '@/mock/settlementPriceSeed'
 import {
   getAttendanceGroupsForEnterprise,
+  resolveDepartmentHourlySettlementPrice,
   resolveHourlySettlementPrice,
   resolveTaskTypeSettlementPrice as resolveTaskTypePrice,
 } from '@/services/settlementPrice'
@@ -405,6 +411,7 @@ export const useAppStore = defineStore('app', {
     departments: workforceSeed.departments,
     teams: workforceSeed.teams,
     employees: workforceSeed.employees,
+    skillLibrary: loadFromStorage<SkillLibraryItem[]>('skillLibrary', seedSkillLibrary),
     shifts: loadFromStorage<Shift[]>('shifts', seedShifts),
     holidays: loadFromStorage<Holiday[]>('holidays', seedHolidays),
     scheduleRule: loadFromStorage<ScheduleRule>('scheduleRule', defaultScheduleRule),
@@ -466,6 +473,10 @@ export const useAppStore = defineStore('app', {
     attendanceGroupSettlementOverrides: loadFromStorage<AttendanceGroupSettlementOverride[]>(
       'attendanceGroupSettlementOverrides',
       seedAttendanceGroupSettlementOverrides,
+    ),
+    departmentSettlementOverrides: loadFromStorage<DepartmentSettlementOverride[]>(
+      'departmentSettlementOverrides',
+      seedDepartmentSettlementOverrides,
     ),
     taskTypeSettlementOverrides: loadFromStorage<TaskTypeSettlementOverride[]>(
       'taskTypeSettlementOverrides',
@@ -674,6 +685,9 @@ export const useAppStore = defineStore('app', {
       state.employees.filter(
         (e) => (e.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID) === enterpriseId,
       ),
+    skillLibraryOptions: (state) => enabledSkillLibrary(state.skillLibrary),
+    skillLibraryNames: (state) => skillLibraryNames(state.skillLibrary),
+    skillLibraryCatalog: (state) => groupSkillLibraryByCategory(state.skillLibrary),
     getAttendanceGroupsByEnterprise: (state) => (enterpriseId: string) =>
       getAttendanceGroupsForEnterprise(enterpriseId, state.attendanceGroups, state.departments),
     getTaskTypesByEnterprise: (state) => (enterpriseId: string) =>
@@ -683,6 +697,25 @@ export const useAppStore = defineStore('app', {
       return resolveHourlySettlementPrice(
         enterpriseId,
         attendanceGroupId,
+        state.attendanceGroupSettlementOverrides,
+        group,
+      )
+    },
+    resolveDepartmentSettlementPrice: (state) => (enterpriseId: string, departmentId: string) => {
+      const department = state.departments.find((d) => d.id === departmentId)
+      const groupId =
+        department?.attendanceGroupId ||
+        state.attendanceGroups.find((g) =>
+          (g.departmentBindings ?? []).some((b) => b.departmentId === departmentId),
+        )?.id
+      const group = groupId
+        ? state.attendanceGroups.find((g) => g.id === groupId)
+        : undefined
+      return resolveDepartmentHourlySettlementPrice(
+        enterpriseId,
+        departmentId,
+        groupId,
+        state.departmentSettlementOverrides,
         state.attendanceGroupSettlementOverrides,
         group,
       )
@@ -1030,6 +1063,52 @@ export const useAppStore = defineStore('app', {
       this.persist('teams')
       this.persist('assignments')
     },
+
+    addSkillLibraryItem(data: { name: string; category?: string; icon?: string }) {
+      const name = data.name.trim()
+      if (!name) throw new Error('请填写技能名称')
+      if (this.skillLibrary.some((s) => s.name === name)) {
+        throw new Error(`技能「${name}」已存在`)
+      }
+      const maxSort = this.skillLibrary.reduce((m, s) => Math.max(m, s.sortOrder ?? 0), 0)
+      const item: SkillLibraryItem = {
+        id: generateId('skill'),
+        name,
+        category: data.category?.trim() || '其他',
+        icon: data.icon?.trim() || '📌',
+        enabled: true,
+        sortOrder: maxSort + 1,
+      }
+      this.skillLibrary.push(item)
+      this.persist('skillLibrary')
+      return item
+    },
+
+    updateSkillLibraryItem(id: string, data: Partial<Omit<SkillLibraryItem, 'id'>>) {
+      const idx = this.skillLibrary.findIndex((s) => s.id === id)
+      if (idx < 0) throw new Error('技能不存在')
+      if (data.name != null) {
+        const name = data.name.trim()
+        if (!name) throw new Error('请填写技能名称')
+        if (this.skillLibrary.some((s) => s.id !== id && s.name === name)) {
+          throw new Error(`技能「${name}」已存在`)
+        }
+        data = { ...data, name }
+      }
+      this.skillLibrary[idx] = { ...this.skillLibrary[idx], ...data }
+      this.persist('skillLibrary')
+      return this.skillLibrary[idx]
+    },
+
+    removeSkillLibraryItem(id: string) {
+      this.skillLibrary = this.skillLibrary.filter((s) => s.id !== id)
+      this.persist('skillLibrary')
+    },
+
+    resolveSkillLibraryItem(skillIdOrName?: string) {
+      return resolveSkillLibraryItem(this.skillLibrary, skillIdOrName)
+    },
+
     batchAssignEmployees(
       ids: string[],
       departmentId: string,
@@ -1092,6 +1171,8 @@ export const useAppStore = defineStore('app', {
       employeeId: string
       enterpriseId: string
       departmentId: string
+      positionId?: string
+      positionName?: string
     }) {
       const approved = this.workerJoinApplications.find(
         (a) =>
@@ -1110,6 +1191,8 @@ export const useAppStore = defineStore('app', {
       const now = new Date().toISOString()
       if (pending) {
         pending.appliedAt = now
+        if (params.positionId) pending.positionId = params.positionId
+        if (params.positionName) pending.positionName = params.positionName
         this.persist('workerJoinApplications')
         return pending
       }
@@ -1118,6 +1201,8 @@ export const useAppStore = defineStore('app', {
         employeeId: params.employeeId,
         enterpriseId: params.enterpriseId,
         departmentId: params.departmentId,
+        positionId: params.positionId,
+        positionName: params.positionName,
         status: 'pending',
         appliedAt: now,
         source: 'qr',
@@ -1170,33 +1255,71 @@ export const useAppStore = defineStore('app', {
       this.persist('workerJoinApplications')
     },
 
-    /** 灵工扫码申请入驻企业-部门 */
+    /** 灵工扫码申请入驻企业-部门（可带申请岗位） */
     applyJoinDepartmentByQr(
       qrPayload: string,
       applicant: { name: string; phone?: string; employeeId?: string },
+      options?: { positionId?: string; positionName?: string },
     ) {
       const parsed = parseDepartmentJoinQrPayload(qrPayload)
       if (!parsed) throw new Error('无效的入驻二维码')
-      const dept = this.departments.find((d) => d.id === parsed.departmentId)
+      return this.submitJoinApplication({
+        enterpriseId: parsed.enterpriseId,
+        departmentId: parsed.departmentId,
+        positionId: options?.positionId,
+        positionName: options?.positionName,
+        applicant,
+      })
+    },
+
+    /** 提交入驻申请（企业/部门来自扫码，岗位可选） */
+    submitJoinApplication(params: {
+      enterpriseId: string
+      departmentId: string
+      positionId?: string
+      positionName?: string
+      applicant: { name: string; phone?: string; employeeId?: string }
+    }) {
+      const dept = this.departments.find((d) => d.id === params.departmentId)
       if (!dept) throw new Error('目标部门不存在')
       if (isUnassignedDepartment(dept.id) || isEnterpriseRootDepartment(dept)) {
         throw new Error('请扫描具体业务部门二维码')
       }
       const enterpriseId =
-        parsed.enterpriseId ||
+        params.enterpriseId ||
         resolveEnterpriseIdByDepartment(dept.id, this.departments) ||
         dept.enterpriseId
       if (!enterpriseId) throw new Error('无法识别企业')
       this.ensureEnterpriseOrgStructure(enterpriseId)
       const unassignedId = enterpriseUnassignedDepartmentId(enterpriseId)
 
-      if (applicant.employeeId) {
-        const existing = this.employees.find((e) => e.id === applicant.employeeId)
+      let positionId = params.positionId
+      let positionName = params.positionName?.trim()
+      if (positionId) {
+        const pos = this.getEnterprisePosition(positionId)
+        if (!pos || pos.enterpriseId !== enterpriseId) throw new Error('申请岗位无效')
+        positionName = pos.profile.positionName || pos.name
+      } else if (!positionName) {
+        const first = this.getEnterprisePositions(enterpriseId)[0]
+        if (first) {
+          positionId = first.id
+          positionName = first.profile.positionName || first.name
+        }
+      }
+
+      const joinPayload = {
+        enterpriseId,
+        departmentId: dept.id,
+        positionId,
+        positionName,
+      }
+
+      if (params.applicant.employeeId) {
+        const existing = this.employees.find((e) => e.id === params.applicant.employeeId)
         if (existing) {
           this.upsertPendingJoinApplication({
             employeeId: existing.id,
-            enterpriseId,
-            departmentId: dept.id,
+            ...joinPayload,
           })
           if (existing.status !== 'active') {
             this.updateEmployee(existing.id, {
@@ -1205,7 +1328,8 @@ export const useAppStore = defineStore('app', {
               applyDepartmentId: dept.id,
               departmentId: unassignedId,
               enterpriseId,
-              position: UNASSIGNED_POSITION,
+              position: positionName || UNASSIGNED_POSITION,
+              positionId: positionId || existing.positionId,
               hireDate: existing.hireDate || new Date().toISOString().slice(0, 10),
               dataSource: existing.dataSource ?? 'qr',
             })
@@ -1217,30 +1341,32 @@ export const useAppStore = defineStore('app', {
       const dup = this.employees.find(
         (e) =>
           e.status === 'pending' &&
-          e.phone === applicant.phone &&
+          e.phone === params.applicant.phone &&
           e.enterpriseId === enterpriseId,
       )
       if (dup) {
         this.upsertPendingJoinApplication({
           employeeId: dup.id,
-          enterpriseId,
-          departmentId: dept.id,
+          ...joinPayload,
         })
         this.updateEmployee(dup.id, {
           onboardingStage: 'applied',
           applyDepartmentId: dept.id,
           departmentId: unassignedId,
+          position: positionName || dup.position,
+          positionId: positionId || dup.positionId,
           dataSource: dup.dataSource ?? 'qr',
         })
         return dup
       }
 
       const created = this.addEmployee({
-        name: applicant.name.trim() || '新申请人员',
+        name: params.applicant.name.trim() || '新申请人员',
         employeeNo: `T${Date.now().toString().slice(-6)}`,
         departmentId: unassignedId,
         enterpriseId,
-        position: UNASSIGNED_POSITION,
+        position: positionName || UNASSIGNED_POSITION,
+        positionId,
         hireDate: new Date().toISOString().slice(0, 10),
         skills: [],
         preferredShiftIds: [],
@@ -1249,13 +1375,12 @@ export const useAppStore = defineStore('app', {
         onboardingStage: 'applied',
         applyDepartmentId: dept.id,
         dataSource: 'qr',
-        phone: applicant.phone,
+        phone: params.applicant.phone,
         realNameVerified: false,
       })
       this.upsertPendingJoinApplication({
         employeeId: created.id,
-        enterpriseId,
-        departmentId: dept.id,
+        ...joinPayload,
       })
       return created
     },
@@ -2153,6 +2278,35 @@ export const useAppStore = defineStore('app', {
       })
     },
 
+    /** 灵工在审批前撤销本人发起的取消班次申请 */
+    withdrawCancelShiftRequest(id: string, employeeId: string) {
+      const req = this.cancelShiftRequests.find((r) => r.id === id)
+      if (!req) throw new Error('申请不存在')
+      if (req.employeeId !== employeeId) throw new Error('无权撤销该申请')
+      if (req.initiatedBy !== 'employee') throw new Error('仅本人发起的申请可撤销')
+      if (req.status !== 'pending') throw new Error('仅待审批申请可撤销')
+
+      req.status = 'cancelled'
+      req.reviewedBy = '本人撤销'
+      req.reviewedAt = new Date().toISOString()
+      req.reviewNote = '申请人在审批前撤销'
+      this.persist('cancelShiftRequests')
+
+      const empName = this.employees.find((e) => e.id === employeeId)?.name ?? ''
+      this.pushNotification({
+        title: '取消班次申请已撤销',
+        content: `${empName} 已撤销 ${req.date} 的取消班次申请`,
+        type: 'approval',
+      })
+      this.addMiniAppMessage(
+        employeeId,
+        'schedule',
+        '已撤销取消班次申请',
+        `您已撤销 ${req.date} 的取消班次申请，该日排班仍然有效。`,
+      )
+      return req
+    },
+
     submitMakeupRequest(data: Omit<MakeupPunchRequest, 'id' | 'status' | 'createdAt'>) {
       const pending = this.makeupRequests.find(
         (r) =>
@@ -2638,6 +2792,9 @@ export const useAppStore = defineStore('app', {
       const emp = this.employees.find((e) => e.id === data.employeeId)
       if (isEmployeeUnavailableOnDate(emp, slot.date)) {
         throw new Error('您已配置请假/不上岗，该日期无法报名抢班')
+      }
+      if (!isGrabSlotVisibleToWorker(slot, emp, this.teams, this.departments)) {
+        throw new Error('您不在该抢班发布范围内，无法报名')
       }
       const dup = this.grabShiftApplications.find(
         (a) =>
@@ -3249,6 +3406,26 @@ export const useAppStore = defineStore('app', {
         this.attendanceGroupSettlementOverrides.push(item)
       }
       this.persist('attendanceGroupSettlementOverrides')
+    },
+
+    upsertDepartmentSettlementOverride(
+      data: Omit<DepartmentSettlementOverride, 'updatedAt'> & { updatedAt?: string },
+    ) {
+      const now = new Date().toISOString()
+      const idx = this.departmentSettlementOverrides.findIndex(
+        (o) => o.departmentId === data.departmentId && o.enterpriseId === data.enterpriseId,
+      )
+      const item: DepartmentSettlementOverride = {
+        ...data,
+        useEnterpriseDefault: data.useEnterpriseDefault ?? false,
+        updatedAt: now,
+      }
+      if (idx >= 0) {
+        this.departmentSettlementOverrides[idx] = item
+      } else {
+        this.departmentSettlementOverrides.push(item)
+      }
+      this.persist('departmentSettlementOverrides')
     },
 
     upsertTaskTypeSettlementOverride(
@@ -4620,6 +4797,14 @@ export const useAppStore = defineStore('app', {
       const seq = this.attendanceGroups.length + 1
       const item: AttendanceGroup = {
         ...data,
+        compliance: {
+          enabled: data.compliance?.enabled === true,
+          maxDailyHours: data.compliance?.maxDailyHours ?? 12,
+          maxWeeklyHours: data.compliance?.maxWeeklyHours ?? 60,
+          minShiftIntervalHours: data.compliance?.minShiftIntervalHours ?? 12,
+          maxMonthlyHours: data.compliance?.maxMonthlyHours ?? 260,
+          maxConsecutiveWorkdays: data.compliance?.maxConsecutiveWorkdays ?? 3,
+        },
         id: generateId('ag'),
         code: `HQ-ATT-${String(seq).padStart(3, '0')}`,
         currentVersion: 0,
@@ -4644,6 +4829,18 @@ export const useAppStore = defineStore('app', {
       }
       if (payload.attendanceType === 'none') {
         group.pricingConfig = undefined
+      }
+      if (payload.compliance) {
+        payload.compliance = {
+          enabled: payload.compliance.enabled === true,
+          maxDailyHours: payload.compliance.maxDailyHours ?? group.compliance.maxDailyHours,
+          maxWeeklyHours: payload.compliance.maxWeeklyHours ?? group.compliance.maxWeeklyHours,
+          minShiftIntervalHours:
+            payload.compliance.minShiftIntervalHours ?? group.compliance.minShiftIntervalHours,
+          maxMonthlyHours: payload.compliance.maxMonthlyHours ?? group.compliance.maxMonthlyHours,
+          maxConsecutiveWorkdays:
+            payload.compliance.maxConsecutiveWorkdays ?? group.compliance.maxConsecutiveWorkdays,
+        }
       }
       Object.assign(group, payload, { updatedAt: new Date().toISOString() })
       this.persist('attendanceGroups')
@@ -5134,14 +5331,36 @@ export const useAppStore = defineStore('app', {
 
     confirmSettlementBill(
       id: string,
-      opts?: { payerEnterpriseName?: string; payerCreditCode?: string },
+      opts?: {
+        payerSubjectType?: 'self' | 'other'
+        payerEnterpriseName?: string
+        payerCreditCode?: string
+      },
     ) {
       const bill = this.settlementBills.find((b) => b.id === id)
       if (!bill) throw new Error('账单不存在')
       if (bill.status !== 'pending_confirm') throw new Error('当前状态不可确认')
       if (opts) {
-        bill.payerEnterpriseName = opts.payerEnterpriseName?.trim() || undefined
-        bill.payerCreditCode = opts.payerCreditCode?.trim() || undefined
+        const subjectType =
+          opts.payerSubjectType === 'other'
+            ? 'other'
+            : opts.payerSubjectType === 'self'
+              ? 'self'
+              : undefined
+        if (subjectType) bill.payerSubjectType = subjectType
+        const payerName = opts.payerEnterpriseName?.trim()
+        if (subjectType === 'self') {
+          const company =
+            this.enterprises.find((e) => e.id === bill.enterpriseId)?.name ?? bill.enterpriseName
+          bill.payerEnterpriseName = payerName || company
+          bill.payerCreditCode =
+            opts.payerCreditCode?.trim() ||
+            this.enterprises.find((e) => e.id === bill.enterpriseId)?.creditCode ||
+            bill.payerCreditCode
+        } else {
+          bill.payerEnterpriseName = payerName || undefined
+          bill.payerCreditCode = opts.payerCreditCode?.trim() || undefined
+        }
       }
       bill.status = 'pending_payment'
       bill.confirmedAt = new Date().toISOString()
@@ -5154,6 +5373,7 @@ export const useAppStore = defineStore('app', {
       departmentScope: 'all' | 'department'
       departmentId?: string
       departmentName: string
+      payerSubjectType?: 'self' | 'other'
       payerEnterpriseName?: string
       payerCreditCode?: string
       periodStart: string
@@ -5198,8 +5418,13 @@ export const useAppStore = defineStore('app', {
         departmentScope: input.departmentScope,
         departmentId: input.departmentScope === 'department' ? input.departmentId : undefined,
         departmentName: input.departmentName.trim(),
-        payerEnterpriseName: input.payerEnterpriseName?.trim() || undefined,
-        payerCreditCode: input.payerCreditCode?.trim() || undefined,
+        payerSubjectType: input.payerSubjectType === 'other' ? 'other' : 'self',
+        payerEnterpriseName:
+          input.payerEnterpriseName?.trim() ||
+          (input.payerSubjectType === 'other' ? undefined : enterprise.name),
+        payerCreditCode:
+          input.payerCreditCode?.trim() ||
+          (input.payerSubjectType === 'other' ? undefined : enterprise.creditCode),
         serviceProviderId: provider?.id,
         serviceProviderName: provider?.name ?? '未关联服务商',
         periodStart: input.periodStart,
@@ -5739,6 +5964,7 @@ export const useAppStore = defineStore('app', {
         line.settledAt = now
         order.updatedAt = now
 
+        const employee = this.employees.find((e) => e.id === line.employeeId)
         slipLines.push({
           orderId: order.id,
           orderNo: order.orderNo,
@@ -5749,6 +5975,7 @@ export const useAppStore = defineStore('app', {
           employeeId: line.employeeId,
           employeeName: line.employeeName,
           employeeNo: line.employeeNo,
+          phone: employee?.phone,
           departmentName: line.departmentName,
           quantity: line.quantity,
           unitPrice: line.unitPrice,
@@ -6844,6 +7071,12 @@ export const useAppStore = defineStore('app', {
     },
 
     updateWorkerSkillCertificates(employeeId: string, certs: WorkerSkillCertificate[]) {
+      const names = certs.map((c) => c.name).filter(Boolean)
+      const emp = this.employees.find((e) => e.id === employeeId)
+      if (emp) {
+        emp.skills = names
+        this.persist('employees')
+      }
       return this.updateWorkerProfileExt(employeeId, { skillCertificates: certs })
     },
 

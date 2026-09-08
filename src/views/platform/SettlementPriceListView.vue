@@ -5,8 +5,9 @@ import { useAppStore } from '@/stores/app'
 import { enterpriseStatusMap } from '@/constants/enterprise'
 import { resolveServiceProviderForEnterprise } from '@/services/billSettlement'
 import {
-  countConfiguredGroupSettlements,
+  countConfiguredDepartmentSettlements,
   countConfiguredTaskTypeSettlements,
+  listSettlementDepartmentsForEnterprise,
 } from '@/services/settlementPrice'
 
 const store = useAppStore()
@@ -18,11 +19,15 @@ const statusFilter = ref<'all' | 'active' | 'expiring' | 'terminated'>('all')
 const tableData = computed(() =>
   store.enterprises
     .map((ent) => {
-      const groups = store.getAttendanceGroupsByEnterprise(ent.id)
-      const taskTypes = store.getTaskTypesByEnterprise(ent.id)
-      const hourlyConfigured = countConfiguredGroupSettlements(
+      const departments = listSettlementDepartmentsForEnterprise(
         ent.id,
-        store.attendanceGroupSettlementOverrides,
+        store.departments,
+        store.attendanceGroups,
+      )
+      const taskTypes = store.getTaskTypesByEnterprise(ent.id)
+      const hourlyConfigured = countConfiguredDepartmentSettlements(
+        ent.id,
+        store.departmentSettlementOverrides,
       )
       const taskConfigured = countConfiguredTaskTypeSettlements(
         ent.id,
@@ -38,7 +43,7 @@ const tableData = computed(() =>
         providerName: provider?.name ?? '—',
         statusLabel: enterpriseStatusMap[ent.status].label,
         statusType: enterpriseStatusMap[ent.status].type,
-        groupCount: groups.length,
+        deptCount: departments.length,
         taskTypeCount: taskTypes.length,
         hourlyConfigured,
         taskConfigured,
@@ -67,7 +72,7 @@ function openDetail(row: { id: string }) {
       <div>
         <h2 class="page-title">结算价管理</h2>
         <p class="text-muted">
-          工时按考勤组、任务按任务类型分别配置灵工结算价；默认展示自身定价，可对照查看
+          工时按部门配置结算价（未配置沿用考勤组），任务按任务类型配置灵工结算价
         </p>
       </div>
     </div>
@@ -91,9 +96,9 @@ function openDetail(row: { id: string }) {
       <el-table-column prop="name" label="企业名称" min-width="180" />
       <el-table-column prop="code" label="企业编号" width="140" />
       <el-table-column prop="providerName" label="服务商" min-width="180" show-overflow-tooltip />
-      <el-table-column label="工时（已配灵工价）" width="150" align="center">
+      <el-table-column label="工时（已配部门价）" width="150" align="center">
         <template #default="{ row }">
-          {{ row.hourlyConfigured }} / {{ row.groupCount }}
+          {{ row.hourlyConfigured }} / {{ row.deptCount }}
         </template>
       </el-table-column>
       <el-table-column label="任务（已配灵工价）" width="150" align="center">

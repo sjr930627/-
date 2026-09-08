@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
-  Calendar,
   CreditCard,
   Document,
   EditPen,
@@ -13,7 +12,6 @@ import {
   SwitchButton,
   Tickets,
   User,
-  Wallet,
 } from '@element-plus/icons-vue'
 import type { Component } from 'vue'
 import { useAppStore } from '@/stores/app'
@@ -55,14 +53,12 @@ const iconItems: {
 }[] = [
   { path: '/miniapp/training/materials', icon: Reading, label: '我的培训', bg: '#f0fdf4', color: '#22c55e' },
   { path: '/miniapp/training/exams', icon: EditPen, label: '我的考核', bg: '#fff7ed', color: '#f97316' },
-  { path: '/miniapp/income', icon: Wallet, label: '我的收入', bg: '#fff7ed', color: '#f97316' },
   { path: '/miniapp/tasks', icon: List, label: '任务进度', bg: '#E6FFFA', color: '#4FD1C5' },
   { path: '/miniapp/applications', icon: Tickets, label: '我的报名', bg: '#E6FFFA', color: '#4FD1C5' },
   { path: '/miniapp/join-manage', icon: OfficeBuilding, label: '入驻管理', bg: '#eff6ff', color: '#3b82f6' },
   { path: '/miniapp/payment', icon: CreditCard, label: '收款绑定', bg: '#fff7ed', color: '#f97316' },
   { path: '/miniapp/agreements', icon: Document, label: '协议管理', bg: '#faf5ff', color: '#a855f7' },
   { path: '/miniapp/worker-archive', icon: User, label: '我的资料', bg: '#E6FFFA', color: '#4FD1C5' },
-  { path: '/miniapp/part-time-pref', icon: Calendar, label: '兼职偏好', bg: '#f5f3ff', color: '#8b5cf6' },
 ]
 
 async function handleLogout() {

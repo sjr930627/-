@@ -12,27 +12,33 @@ import {
   resolveEnterpriseIdByDepartment,
 } from '@/utils/enterpriseScope'
 import {
+  buildGrabPublishScopeOption,
   buildGrabShiftSlotPayload,
   calcGrabEnrollCap,
   calcGrabShiftEffectiveRate,
   calcGrabShiftSessionFee,
   calcGrabShiftWorkHours,
-  getGrabShiftScopeOptions,
+  defaultGrabBreakPeriodsForShift,
+  findShiftAttendanceGroupForDepartment,
+  formatShiftTimeRangeLabel,
   getGrabShiftTemplateOptions,
   GRAB_SHIFT_GLOBAL_TEAM_ID,
   grabShiftPublishStatusMap,
   isGrabShiftPublished,
   isGrabShiftUrgent,
+  isOvernightTimeRange,
+  listInvalidBreakPeriodIndexes,
   parseBreakMinutes,
   formatGrabPositionAgeRange,
   formatGrabPositionGender,
   resolveGrabShiftBaseHourlyRateDetail,
+  resolveGrabShiftWorkHoursFromTimes,
   resolveGrabSlotDepartmentId,
   resolveGrabSlotDepartmentName,
   resolveGrabSlotPositionProfile,
   resolveGrabSlotShiftName,
 } from '@/services/grabShift'
-import type { GrabShiftSlot } from '@/types'
+import type { GrabPublishScope, GrabShiftBreakPeriod, GrabShiftSlot } from '@/types'
 import GrabShiftCalendar from '@/components/schedule/GrabShiftCalendar.vue'
 import {
   CANCEL_SHIFT_REASON_OPTIONS,
@@ -48,6 +54,7 @@ const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseContr
   useEnterpriseScope('filter')
 
 const selectedGroupId = ref('ag_factory')
+const publishDepartmentId = ref('')
 const listDeptFilter = ref<'all' | string>('all')
 const listPositionFilter = ref<'all' | string>('all')
 const activeTab = ref<'calendar' | 'slots' | 'publish' | 'approval'>('calendar')
@@ -116,13 +123,35 @@ const groupList = computed(() =>
   }),
 )
 
-const selectedGroup = computed(() =>
-  store.attendanceGroups.find((g) => g.id === selectedGroupId.value),
+const publishDepartmentOptions = computed(() =>
+  store.departments.filter((d) => {
+    if (d.orgType === 'enterprise') return false
+    if (d.id.includes('unassigned')) return false
+    return matchesEnterprise(resolveEnterpriseIdByDepartment(d.id, store.departments))
+  }),
 )
 
-const scopeOptions = computed(() =>
-  getGrabShiftScopeOptions(selectedGroup.value, store.departments),
+const selectedPublishDepartment = computed(() =>
+  store.departments.find((d) => d.id === publishDepartmentId.value),
 )
+
+const selectedGroup = computed(() => {
+  if (publishVisible.value && publishDepartmentId.value) {
+    const enterpriseId = resolveEnterpriseIdByDepartment(
+      publishDepartmentId.value,
+      store.departments,
+    )
+    return (
+      findShiftAttendanceGroupForDepartment(
+        publishDepartmentId.value,
+        store.attendanceGroups,
+        store.departments,
+        enterpriseId,
+      ) ?? store.attendanceGroups.find((g) => g.id === selectedGroupId.value)
+    )
+  }
+  return store.attendanceGroups.find((g) => g.id === selectedGroupId.value)
+})
 
 const templateShiftOptions = computed(() =>
   getGrabShiftTemplateOptions(selectedGroup.value, store.shifts),
@@ -134,6 +163,56 @@ const publishShiftStartTime = computed(() => {
   }
   return publishForm.value.startTime
 })
+
+const publishShiftEndTime = computed(() => {
+  if (publishForm.value.shiftMode === 'template') {
+    return selectedTemplateOption.value?.endTime.slice(0, 5) ?? publishForm.value.endTime
+  }
+  return publishForm.value.endTime
+})
+
+const publishWorkHours = computed(() => {
+  if (publishForm.value.shiftMode === 'template') {
+    const tpl = selectedTemplateOption.value
+    if (!tpl) return 0
+    return resolveGrabShiftWorkHoursFromTimes({
+      startTime: tpl.startTime.slice(0, 5),
+      endTime: tpl.endTime.slice(0, 5),
+      hasBreakTime: tpl.hasBreakTime ?? Boolean(tpl.breakRule || tpl.breakPeriods?.length),
+      breakRule: tpl.breakRule,
+      breakPeriods: tpl.breakPeriods,
+    })
+  }
+  return resolveGrabShiftWorkHoursFromTimes({
+    startTime: publishForm.value.startTime,
+    endTime: publishForm.value.endTime,
+    hasBreakTime: publishForm.value.hasBreakTime,
+    breakPeriods: publishForm.value.hasBreakTime ? publishForm.value.breakPeriods : undefined,
+  })
+})
+
+const publishOvernight = computed(() =>
+  isOvernightTimeRange(publishShiftStartTime.value, publishShiftEndTime.value),
+)
+
+const publishTimeRangeLabel = computed(() =>
+  formatShiftTimeRangeLabel(publishShiftStartTime.value, publishShiftEndTime.value),
+)
+
+const invalidBreakPeriodIndexes = computed(() => {
+  if (publishForm.value.shiftMode !== 'custom' || !publishForm.value.hasBreakTime) return []
+  return listInvalidBreakPeriodIndexes(
+    publishForm.value.startTime,
+    publishForm.value.endTime,
+    publishForm.value.breakPeriods,
+  )
+})
+
+const hasInvalidBreakPeriods = computed(() => invalidBreakPeriodIndexes.value.length > 0)
+
+function isPublishBreakPeriodInvalid(index: number) {
+  return invalidBreakPeriodIndexes.value.includes(index)
+}
 
 const baseRateDetail = computed(() =>
   resolveGrabShiftBaseHourlyRateDetail(selectedGroup.value, {
@@ -150,14 +229,14 @@ const effectiveHourlyRate = computed(() =>
 )
 
 const publishForm = ref({
-  scopeKey: GRAB_SHIFT_GLOBAL_TEAM_ID,
+  publishScope: 'global' as GrabPublishScope,
   shiftMode: 'template' as 'template' | 'custom',
   shiftTemplateId: '',
   customShiftName: '自定义班次',
   startTime: '08:00',
   endTime: '16:00',
   hasBreakTime: true,
-  breakRule: '',
+  breakPeriods: defaultGrabBreakPeriodsForShift('08:00', '16:00') as GrabShiftBreakPeriod[],
   date: '2026-07-28',
   requiredCount: 1,
   enrollFloatMode: 'absolute' as 'absolute' | 'percent',
@@ -175,13 +254,16 @@ const publishForm = ref({
   requirements: [] as string[],
 })
 
-const publishEnterpriseId = computed(() =>
-  resolveEnterpriseIdByAttendanceGroupId(
-    selectedGroupId.value,
+const publishEnterpriseId = computed(() => {
+  if (publishDepartmentId.value) {
+    return resolveEnterpriseIdByDepartment(publishDepartmentId.value, store.departments)
+  }
+  return resolveEnterpriseIdByAttendanceGroupId(
+    selectedGroup.value?.id ?? selectedGroupId.value,
     store.attendanceGroups,
     store.departments,
-  ),
-)
+  )
+})
 
 const enterprisePositionOptions = computed(() =>
   publishEnterpriseId.value
@@ -225,8 +307,6 @@ watch(selectedTemplateOption, (tpl) => {
   if (!tpl || publishForm.value.shiftMode !== 'template') return
   publishForm.value.startTime = tpl.startTime.slice(0, 5)
   publishForm.value.endTime = tpl.endTime.slice(0, 5)
-  publishForm.value.breakRule = tpl.breakRule ?? ''
-  publishForm.value.hasBreakTime = Boolean(tpl.breakRule)
 })
 
 watch(
@@ -241,14 +321,44 @@ watch(
 )
 
 watch(
-  scopeOptions,
+  publishDepartmentOptions,
   (options) => {
     if (!options.length) return
-    if (!options.some((o) => o.value === publishForm.value.scopeKey)) {
-      publishForm.value.scopeKey = options[0].value
+    if (!options.some((o) => o.id === publishDepartmentId.value)) {
+      publishDepartmentId.value = options[0].id
     }
   },
   { immediate: true },
+)
+
+watch(selectedGroup, (group) => {
+  if (group?.id) selectedGroupId.value = group.id
+})
+
+function addBreakPeriod() {
+  const suggested = defaultGrabBreakPeriodsForShift(
+    publishForm.value.startTime,
+    publishForm.value.endTime,
+  )[0]
+  publishForm.value.breakPeriods.push(
+    suggested ?? { start: publishForm.value.startTime, end: publishForm.value.startTime },
+  )
+}
+
+function removeBreakPeriod(index: number) {
+  if (publishForm.value.breakPeriods.length <= 1) return
+  publishForm.value.breakPeriods.splice(index, 1)
+}
+
+watch(
+  () => [publishForm.value.startTime, publishForm.value.endTime, publishForm.value.shiftMode] as const,
+  ([start, end, mode]) => {
+    if (mode !== 'custom' || !publishForm.value.hasBreakTime) return
+    const invalid = listInvalidBreakPeriodIndexes(start, end, publishForm.value.breakPeriods)
+    if (!invalid.length) return
+    // 班次时段变更导致休息越界时，重置为班次内默认休息
+    publishForm.value.breakPeriods = defaultGrabBreakPeriodsForShift(start, end)
+  },
 )
 
 const skillOptions = ['普通话二级', '客服证', '夜班资质', '叉车证', '电工证', '中国移动业务合规证', '营业厅业务操作证', '健康证']
@@ -505,16 +615,26 @@ const slotApplications = computed(() => {
 })
 
 function openPublish() {
+  if (!publishDepartmentOptions.value.length) {
+    ElMessage.warning('请先配置企业部门')
+    return
+  }
+  if (!publishDepartmentId.value) {
+    publishDepartmentId.value = publishDepartmentOptions.value[0].id
+  }
   const firstTemplate = templateShiftOptions.value[0]
   publishForm.value = {
-    scopeKey: scopeOptions.value[0]?.value ?? GRAB_SHIFT_GLOBAL_TEAM_ID,
+    publishScope: 'global',
     shiftMode: 'template',
     shiftTemplateId: firstTemplate?.templateId ?? '',
     customShiftName: '自定义班次',
     startTime: firstTemplate?.startTime.slice(0, 5) ?? '08:00',
     endTime: firstTemplate?.endTime.slice(0, 5) ?? '16:00',
-    hasBreakTime: Boolean(firstTemplate?.breakRule),
-    breakRule: firstTemplate?.breakRule ?? '',
+    hasBreakTime: true,
+    breakPeriods: defaultGrabBreakPeriodsForShift(
+      firstTemplate?.startTime.slice(0, 5) ?? '08:00',
+      firstTemplate?.endTime.slice(0, 5) ?? '16:00',
+    ),
     date: '2026-07-28',
     requiredCount: 1,
     enrollFloatMode: 'absolute',
@@ -537,14 +657,21 @@ function openPublish() {
 }
 
 function submitPublish() {
-  const group = selectedGroup.value
-  const scopeOption = scopeOptions.value.find((o) => o.value === publishForm.value.scopeKey)
-  if (!group || !scopeOption) {
-    ElMessage.warning('请选择发布范围')
+  if (!publishDepartmentId.value || !selectedPublishDepartment.value) {
+    ElMessage.warning('请选择部门')
     return
   }
+  const group = selectedGroup.value
+  if (!group) {
+    ElMessage.warning('所选部门未绑定班次考勤组，请先在考勤组中关联部门')
+    return
+  }
+  const scopeOption = buildGrabPublishScopeOption(
+    publishForm.value.publishScope,
+    selectedPublishDepartment.value,
+  )
   if (publishForm.value.shiftMode === 'template' && !publishForm.value.shiftTemplateId) {
-    ElMessage.warning('请选择考勤组班次')
+    ElMessage.warning('请选择模板班次')
     return
   }
   if (publishForm.value.shiftMode === 'custom') {
@@ -555,6 +682,21 @@ function submitPublish() {
     if (!publishForm.value.startTime || !publishForm.value.endTime) {
       ElMessage.warning('请填写班次起止时间')
       return
+    }
+    if (publishWorkHours.value <= 0) {
+      ElMessage.warning('起止时间无效，无法测算工时（跨天班请保证结束时刻早于开始时刻）')
+      return
+    }
+    if (publishForm.value.hasBreakTime) {
+      const invalid = publishForm.value.breakPeriods.some((p) => !p.start || !p.end)
+      if (invalid || !publishForm.value.breakPeriods.length) {
+        ElMessage.warning('请完善休息时间段')
+        return
+      }
+      if (hasInvalidBreakPeriods.value) {
+        ElMessage.warning('休息时间段必须完全落在班次起止时间内（跨天班次同理）')
+        return
+      }
     }
   }
   if (!publishForm.value.positionId || !publishForm.value.positionName.trim()) {
@@ -583,8 +725,24 @@ function submitPublish() {
       customShiftName: publishForm.value.customShiftName,
       startTime: publishShiftStartTime.value,
       endTime: publishForm.value.endTime,
-      hasBreakTime: publishForm.value.hasBreakTime,
-      breakRule: publishForm.value.breakRule,
+      hasBreakTime:
+        publishForm.value.shiftMode === 'custom'
+          ? publishForm.value.hasBreakTime
+          : (selectedTemplateOption.value?.hasBreakTime ??
+            Boolean(
+              selectedTemplateOption.value?.breakRule ||
+                (selectedTemplateOption.value?.breakPeriods?.length ?? 0) > 0,
+            )),
+      breakRule:
+        publishForm.value.shiftMode === 'custom'
+          ? undefined
+          : selectedTemplateOption.value?.breakRule,
+      breakPeriods:
+        publishForm.value.shiftMode === 'custom'
+          ? publishForm.value.hasBreakTime
+            ? publishForm.value.breakPeriods
+            : undefined
+          : selectedTemplateOption.value?.breakPeriods,
       date: publishForm.value.date,
       requiredCount: publishForm.value.requiredCount,
       enrollFloatMode: publishForm.value.enrollFloatMode,
@@ -613,6 +771,7 @@ function submitPublish() {
     }),
   )
   publishVisible.value = false
+  activeTab.value = 'publish'
   ElMessage.success('已提交发布审批，通过后将上架小程序')
 }
 
@@ -717,7 +876,7 @@ function openPublishReview(slot: GrabShiftSlot) {
   currentSlot.value = slot
   const breakMinutes =
     slot.breakMinutes ??
-    parseBreakMinutes(slot.breakRule, slot.hasBreakTime)
+    parseBreakMinutes(slot.breakRule, slot.hasBreakTime, slot.breakPeriods)
   const customerBase = slot.baseHourlyRate ?? 0
   const customerSubsidy = slot.hourlySubsidy ?? 0
   reviewForm.value = {
@@ -1105,20 +1264,28 @@ watch(
     <el-dialog v-model="publishVisible" title="发布抢班" width="620px">
       <el-alert type="info" :closable="false" title="提交后进入「抢班管理 · 发布审批」；发布时可配置报名上浮（人数/百分比），审核通过后上架小程序" style="margin-bottom: 16px" />
       <el-form label-width="108px">
-        <el-form-item label="考勤组" required>
-          <el-select v-model="selectedGroupId" style="width: 100%">
-            <el-option v-for="g in groupList" :key="g.id" :label="g.name" :value="g.id" />
+        <el-form-item label="部门" required>
+          <el-select v-model="publishDepartmentId" filterable style="width: 100%">
+            <el-option
+              v-for="d in publishDepartmentOptions"
+              :key="d.id"
+              :label="d.name"
+              :value="d.id"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="发布范围" required>
-          <el-select v-model="publishForm.scopeKey" style="width: 100%">
-            <el-option v-for="opt in scopeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-          </el-select>
-          <p class="field-hint text-muted">可选择全局（考勤组）或组织架构下的部门</p>
+          <el-radio-group v-model="publishForm.publishScope">
+            <el-radio-button value="global">全局</el-radio-button>
+            <el-radio-button value="department">部门</el-radio-button>
+          </el-radio-group>
+          <p class="field-hint text-muted">
+            全局：全域可见；部门：仅该部门抢班池可见
+          </p>
         </el-form-item>
         <el-form-item label="班次类型" required>
           <el-radio-group v-model="publishForm.shiftMode">
-            <el-radio-button value="template">考勤组班次</el-radio-button>
+            <el-radio-button value="template">模板班次</el-radio-button>
             <el-radio-button value="custom">自定义班次</el-radio-button>
           </el-radio-group>
         </el-form-item>
@@ -1127,10 +1294,15 @@ watch(
             <el-option
               v-for="tpl in templateShiftOptions"
               :key="tpl.templateId"
-              :label="`${tpl.templateName}（${tpl.startTime.slice(0, 5)}-${tpl.endTime.slice(0, 5)}）`"
+              :label="`${tpl.templateName}（${formatShiftTimeRangeLabel(tpl.startTime, tpl.endTime)}）`"
               :value="tpl.templateId"
             />
           </el-select>
+          <p class="field-hint text-muted">
+            时段 {{ publishTimeRangeLabel }} · 测算工时
+            <strong>{{ publishWorkHours }}</strong>h
+            <span v-if="publishOvernight">（跨天）</span>
+          </p>
         </el-form-item>
         <template v-else>
           <el-form-item label="班次名称" required>
@@ -1142,15 +1314,45 @@ watch(
               <span class="time-sep">至</span>
               <el-time-picker v-model="publishForm.endTime" format="HH:mm" value-format="HH:mm" placeholder="结束" />
             </div>
+            <p class="field-hint text-muted">
+              {{ publishTimeRangeLabel }} · 测算工时
+              <strong>{{ publishWorkHours }}</strong>h
+              <span v-if="publishOvernight">（结束早于开始，按跨天至次日计算）</span>
+              <span v-else-if="publishWorkHours <= 0">（请填写有效起止时间）</span>
+            </p>
           </el-form-item>
           <el-form-item label="休息时间">
             <el-switch v-model="publishForm.hasBreakTime" />
-            <el-input
-              v-if="publishForm.hasBreakTime"
-              v-model="publishForm.breakRule"
-              placeholder="如：午餐休30分钟"
-              style="width: 100%; margin-top: 8px"
-            />
+            <div v-if="publishForm.hasBreakTime" class="break-periods">
+              <div
+                v-for="(bp, idx) in publishForm.breakPeriods"
+                :key="idx"
+                class="time-range break-period-row"
+                :class="{ 'is-invalid': isPublishBreakPeriodInvalid(idx) }"
+              >
+                <el-time-picker v-model="bp.start" format="HH:mm" value-format="HH:mm" placeholder="开始" />
+                <span class="time-sep">至</span>
+                <el-time-picker v-model="bp.end" format="HH:mm" value-format="HH:mm" placeholder="结束" />
+                <el-button
+                  v-if="publishForm.breakPeriods.length > 1"
+                  link
+                  type="danger"
+                  @click="removeBreakPeriod(idx)"
+                >
+                  删除
+                </el-button>
+                <span v-if="isPublishBreakPeriodInvalid(idx)" class="break-error">须在班次内</span>
+              </div>
+              <el-button link type="primary" @click="addBreakPeriod">添加时段</el-button>
+              <p class="field-hint text-muted">
+                休息时段须完全落在班次 {{ publishTimeRangeLabel }} 内
+                <template v-if="publishOvernight">（跨天班次仅可落在班次覆盖区间）</template>
+                ；工时 = 班次时长 − 休息合计
+              </p>
+              <p v-if="hasInvalidBreakPeriods" class="field-hint break-error-text">
+                存在超出班次的休息时段，请调整后再提交
+              </p>
+            </div>
           </el-form-item>
         </template>
         <el-form-item label="日期" required>
@@ -1337,10 +1539,16 @@ watch(
           <el-descriptions-item label="部门">{{ resolveSlotDepartmentName(currentSlot) }}</el-descriptions-item>
           <el-descriptions-item label="日期">{{ currentSlot.date }}</el-descriptions-item>
           <el-descriptions-item label="时段">
-            {{ currentSlot.startTime }}-{{ currentSlot.endTime }}
+            {{ formatShiftTimeRangeLabel(currentSlot.startTime, currentSlot.endTime) }}
             <template v-if="currentSlot.hasBreakTime && currentSlot.breakRule">
               （{{ currentSlot.breakRule }}）
             </template>
+            <span v-if="isOvernightTimeRange(currentSlot.startTime, currentSlot.endTime)" class="text-muted">
+              · 跨天
+            </span>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="currentSlot.workHours != null" label="测算工时">
+            {{ currentSlot.workHours }}h
           </el-descriptions-item>
           <el-descriptions-item label="范围">
             {{
@@ -1425,9 +1633,12 @@ watch(
           </el-form-item>
           <el-form-item label="时段">
             <el-input
-              :model-value="`${currentSlot.startTime} — ${currentSlot.endTime}`"
+              :model-value="formatShiftTimeRangeLabel(currentSlot.startTime, currentSlot.endTime)"
               disabled
             />
+            <p v-if="isOvernightTimeRange(currentSlot.startTime, currentSlot.endTime)" class="field-hint text-muted">
+              跨天班次：结束时刻早于开始，按次日计算时长
+            </p>
           </el-form-item>
           <el-form-item label="休息">
             <el-input
@@ -1446,7 +1657,7 @@ watch(
           </el-form-item>
           <el-form-item label="本次班次工时">
             <strong class="fee-total">{{ reviewWorkHours }} 小时</strong>
-            <p class="field-hint">按时段扣除休息后自动计算</p>
+            <p class="field-hint">按时段（含跨天）扣除休息后自动计算</p>
           </el-form-item>
           <el-form-item label="需求人数">
             <el-input :model-value="`${currentSlot.requiredCount} 人`" disabled />
@@ -1690,6 +1901,31 @@ watch(
   align-items: center;
   gap: 8px;
   width: 100%;
+}
+
+.break-periods {
+  width: 100%;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.break-period-row {
+  flex-wrap: wrap;
+}
+
+.break-period-row.is-invalid :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #f56c6c inset;
+}
+
+.break-error {
+  color: #f56c6c;
+  font-size: 12px;
+}
+
+.break-error-text {
+  color: #f56c6c;
 }
 
 .time-sep {

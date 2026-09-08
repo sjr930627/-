@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { getDefaultScheduleRuleForSeed } from '@/services/scheduleGroup'
+import { normalizeAttendanceGroupCompliance } from '@/services/scheduleCompliance'
 import {
   clonePricingConfig,
   createDefaultFreePunchConfig,
@@ -16,12 +17,22 @@ import {
   pricingConfigFromPayRule,
   pricingValueModeOptions,
 } from '@/constants/attendanceGroupPricing'
+import {
+  defaultGrabBreakPeriodsForShift,
+  formatBreakPeriodsRule,
+  formatShiftTimeRangeLabel,
+  isOvernightTimeRange,
+  listInvalidBreakPeriodIndexes,
+  normalizeAttendanceShiftTemplateBreak,
+  resolveGrabShiftWorkHoursFromTimes,
+} from '@/services/grabShift'
 import { countDepartmentEmployees, generateId } from '@/utils'
 import { formatVersionLabel } from '@/constants/attendanceGroup'
 import type {
   AttendanceGroup,
   AttendanceGroupShiftTemplate,
   AttendanceGroupType,
+  GrabShiftBreakPeriod,
   PunchLocation,
   VariablePriceConfig,
 } from '@/types'
@@ -33,14 +44,26 @@ const router = useRouter()
 const isEdit = computed(() => Boolean(route.params.id))
 const groupId = computed(() => route.params.id as string | undefined)
 
-const emptyShift = (): AttendanceGroupShiftTemplate => ({
-  id: generateId('st'),
-  name: '',
-  startTime: '09:00',
-  endTime: '18:00',
-  breakRule: '上下午各休15分钟',
-  workHours: 9,
-})
+const emptyShift = (): AttendanceGroupShiftTemplate => {
+  const startTime = '09:00'
+  const endTime = '18:00'
+  const breakPeriods = defaultGrabBreakPeriodsForShift(startTime, endTime)
+  return {
+    id: generateId('st'),
+    name: '',
+    startTime,
+    endTime,
+    hasBreakTime: true,
+    breakPeriods,
+    breakRule: formatBreakPeriodsRule(breakPeriods),
+    workHours: resolveGrabShiftWorkHoursFromTimes({
+      startTime,
+      endTime,
+      hasBreakTime: true,
+      breakPeriods,
+    }),
+  }
+}
 
 const emptyLocation = (): PunchLocation => ({
   id: generateId('loc'),
@@ -62,6 +85,7 @@ const form = ref<Omit<AttendanceGroup, 'id' | 'code' | 'createdAt' | 'updatedAt'
   wifiName: '',
   qrcodeEnabled: true,
   compliance: {
+    enabled: false,
     maxDailyHours: 12,
     maxWeeklyHours: 60,
     minShiftIntervalHours: 12,
@@ -128,6 +152,21 @@ function ensureFreePunchConfig() {
 
 function hydrateForm(source: AttendanceGroup) {
   form.value = JSON.parse(JSON.stringify(source))
+  form.value.compliance = normalizeAttendanceGroupCompliance(form.value.compliance)
+  form.value.shiftTemplates = (form.value.shiftTemplates ?? []).map((tpl) => {
+    const normalized = normalizeAttendanceShiftTemplateBreak(tpl)
+    return {
+      ...tpl,
+      ...normalized,
+      workHours: resolveGrabShiftWorkHoursFromTimes({
+        startTime: tpl.startTime,
+        endTime: tpl.endTime,
+        hasBreakTime: normalized.hasBreakTime,
+        breakPeriods: normalized.breakPeriods,
+        breakRule: normalized.breakRule,
+      }) || tpl.workHours,
+    }
+  })
   if (form.value.attendanceType === 'none') {
     delete form.value.pricingConfig
   } else {
@@ -214,6 +253,60 @@ function removeShift(index: number) {
   form.value.shiftTemplates.splice(index, 1)
 }
 
+/** 按起止时间与休息时间段测算工时（支持跨天） */
+function syncShiftWorkHours(row: AttendanceGroupShiftTemplate) {
+  if (row.hasBreakTime) {
+    const invalid = listInvalidBreakPeriodIndexes(row.startTime, row.endTime, row.breakPeriods)
+    if (invalid.length) {
+      row.breakPeriods = defaultGrabBreakPeriodsForShift(row.startTime, row.endTime)
+    } else {
+      row.breakPeriods = [...(row.breakPeriods ?? [])]
+    }
+    row.breakRule = formatBreakPeriodsRule(row.breakPeriods)
+  } else {
+    row.breakPeriods = []
+    row.breakRule = undefined
+  }
+  const hours = resolveGrabShiftWorkHoursFromTimes({
+    startTime: row.startTime,
+    endTime: row.endTime,
+    hasBreakTime: Boolean(row.hasBreakTime),
+    breakPeriods: row.breakPeriods,
+    breakRule: row.breakRule,
+  })
+  if (hours > 0) row.workHours = hours
+}
+
+function onShiftBreakToggle(row: AttendanceGroupShiftTemplate, enabled: boolean | string | number) {
+  row.hasBreakTime = Boolean(enabled)
+  if (row.hasBreakTime) {
+    row.breakPeriods = defaultGrabBreakPeriodsForShift(row.startTime, row.endTime)
+  } else {
+    row.breakPeriods = []
+  }
+  syncShiftWorkHours(row)
+}
+
+function addShiftBreakPeriod(row: AttendanceGroupShiftTemplate) {
+  if (!row.breakPeriods) row.breakPeriods = []
+  const suggested = defaultGrabBreakPeriodsForShift(row.startTime, row.endTime)[0]
+  row.breakPeriods.push(
+    suggested ?? ({ start: row.startTime, end: row.startTime } as GrabShiftBreakPeriod),
+  )
+  syncShiftWorkHours(row)
+}
+
+function removeShiftBreakPeriod(row: AttendanceGroupShiftTemplate, index: number) {
+  if (!row.breakPeriods || row.breakPeriods.length <= 1) return
+  row.breakPeriods.splice(index, 1)
+  syncShiftWorkHours(row)
+}
+
+function isShiftBreakPeriodInvalid(row: AttendanceGroupShiftTemplate, index: number) {
+  if (!row.hasBreakTime) return false
+  return listInvalidBreakPeriodIndexes(row.startTime, row.endTime, row.breakPeriods).includes(index)
+}
+
 function addLocation() {
   form.value.punchLocations.push(emptyLocation())
 }
@@ -256,6 +349,25 @@ function validate() {
     ElMessage.warning('排班制至少配置一个班次')
     return false
   }
+  if (form.value.attendanceType === 'shift') {
+    for (const tpl of form.value.shiftTemplates) {
+      if (!tpl.name.trim()) {
+        ElMessage.warning('请填写班次名称')
+        return false
+      }
+      if (tpl.hasBreakTime) {
+        const periods = tpl.breakPeriods ?? []
+        if (!periods.length || periods.some((p) => !p.start || !p.end)) {
+          ElMessage.warning(`班次「${tpl.name || '未命名'}」请完善休息时间段`)
+          return false
+        }
+        if (listInvalidBreakPeriodIndexes(tpl.startTime, tpl.endTime, periods).length) {
+          ElMessage.warning(`班次「${tpl.name || '未命名'}」休息时间段须完全落在班次起止时间内`)
+          return false
+        }
+      }
+    }
+  }
   if (form.value.attendanceType === 'free' && form.value.freePunchConfig) {
     if (!form.value.freePunchConfig.startTime || !form.value.freePunchConfig.endTime) {
       ElMessage.warning('请配置自由打卡时段')
@@ -277,6 +389,21 @@ function validate() {
 
 function preparePayload() {
   const payload = { ...form.value }
+  payload.shiftTemplates = (payload.shiftTemplates ?? []).map((tpl) => {
+    const normalized = normalizeAttendanceShiftTemplateBreak(tpl)
+    return {
+      ...tpl,
+      ...normalized,
+      workHours:
+        resolveGrabShiftWorkHoursFromTimes({
+          startTime: tpl.startTime,
+          endTime: tpl.endTime,
+          hasBreakTime: normalized.hasBreakTime,
+          breakPeriods: normalized.breakPeriods,
+          breakRule: normalized.breakRule,
+        }) || tpl.workHours,
+    }
+  })
   if (payload.attendanceType !== 'free') {
     delete payload.freePunchConfig
   } else if (payload.freePunchConfig) {
@@ -423,22 +550,97 @@ function confirmSaveTemplate() {
             <el-input v-model="row.name" size="small" placeholder="早班" />
           </template>
         </el-table-column>
-        <el-table-column label="时段" min-width="200">
+        <el-table-column label="时段" min-width="240">
           <template #default="{ row }">
-            <el-time-select v-model="row.startTime" start="00:00" step="00:30" end="23:30" size="small" style="width: 100px" />
+            <el-time-select
+              v-model="row.startTime"
+              start="00:00"
+              step="00:30"
+              end="23:30"
+              size="small"
+              style="width: 100px"
+              @change="syncShiftWorkHours(row)"
+            />
             <span style="margin: 0 6px">-</span>
-            <el-time-select v-model="row.endTime" start="00:00" step="00:30" end="23:30" size="small" style="width: 100px" />
-            <span class="field-hint">{{ row.workHours }}h</span>
+            <el-time-select
+              v-model="row.endTime"
+              start="00:00"
+              step="00:30"
+              end="23:30"
+              size="small"
+              style="width: 100px"
+              @change="syncShiftWorkHours(row)"
+            />
+            <span class="field-hint">
+              {{ formatShiftTimeRangeLabel(row.startTime, row.endTime) }}
+              · {{ row.workHours }}h
+              <template v-if="isOvernightTimeRange(row.startTime, row.endTime)">（跨天）</template>
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="休息规则" min-width="180">
+        <el-table-column label="休息时间" min-width="280">
           <template #default="{ row }">
-            <el-input v-model="row.breakRule" size="small" />
+            <div class="shift-break-cell">
+              <el-switch
+                :model-value="Boolean(row.hasBreakTime)"
+                size="small"
+                @change="(v: string | number | boolean) => onShiftBreakToggle(row, v)"
+              />
+              <div v-if="row.hasBreakTime" class="shift-break-periods">
+                <div
+                  v-for="(bp, idx) in row.breakPeriods"
+                  :key="idx"
+                  class="shift-break-row"
+                  :class="{ 'is-invalid': isShiftBreakPeriodInvalid(row, idx) }"
+                >
+                  <el-time-select
+                    v-model="bp.start"
+                    start="00:00"
+                    step="00:30"
+                    end="23:30"
+                    size="small"
+                    style="width: 96px"
+                    @change="syncShiftWorkHours(row)"
+                  />
+                  <span class="time-sep">至</span>
+                  <el-time-select
+                    v-model="bp.end"
+                    start="00:00"
+                    step="00:30"
+                    end="23:30"
+                    size="small"
+                    style="width: 96px"
+                    @change="syncShiftWorkHours(row)"
+                  />
+                  <el-button
+                    v-if="(row.breakPeriods?.length ?? 0) > 1"
+                    link
+                    type="danger"
+                    size="small"
+                    @click="removeShiftBreakPeriod(row, idx)"
+                  >
+                    删
+                  </el-button>
+                  <span v-if="isShiftBreakPeriodInvalid(row, idx)" class="break-error">须在班次内</span>
+                </div>
+                <el-button link type="primary" size="small" @click="addShiftBreakPeriod(row)">
+                  添加时段
+                </el-button>
+                <p class="field-hint">须落在班次时段内；跨天班次同理</p>
+              </div>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="工时" width="90">
           <template #default="{ row }">
-            <el-input-number v-model="row.workHours" :min="1" :max="24" size="small" controls-position="right" />
+            <el-input-number
+              v-model="row.workHours"
+              :min="0.5"
+              :max="24"
+              :step="0.5"
+              size="small"
+              controls-position="right"
+            />
           </template>
         </el-table-column>
         <el-table-column label="操作" width="80">
@@ -566,8 +768,18 @@ function confirmSaveTemplate() {
       <div class="section-header">
         <span class="section-num" :class="`section-num--${sectionNums.compliance}`">{{ sectionNums.compliance }}</span>
         <span class="section-title">合规工时红线</span>
+        <el-switch
+          v-model="form.compliance.enabled"
+          inline-prompt
+          active-text="开"
+          inactive-text="关"
+          style="margin-left: auto"
+        />
       </div>
-      <el-row :gutter="24">
+      <p class="field-hint" style="margin: 0 0 12px">
+        默认关闭。开启后仅按本企业内排班统计工时红线，不跨企业汇总。
+      </p>
+      <el-row v-if="form.compliance.enabled" :gutter="24">
         <el-col :span="8">
           <el-form-item label="日最高工时">
             <el-input-number v-model="form.compliance.maxDailyHours" :min="1" :max="24" /> h
@@ -938,5 +1150,34 @@ function confirmSaveTemplate() {
 .dept-check {
   display: flex;
   margin-bottom: 8px;
+}
+
+.shift-break-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.shift-break-periods {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shift-break-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.shift-break-row.is-invalid :deep(.el-input__wrapper) {
+  box-shadow: 0 0 0 1px #f56c6c inset;
+}
+
+.break-error {
+  color: #f56c6c;
+  font-size: 12px;
 }
 </style>

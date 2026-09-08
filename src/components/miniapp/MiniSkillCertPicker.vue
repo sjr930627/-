@@ -1,21 +1,21 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import {
-  MINIAPP_SKILL_CERT_CATALOG,
-  MINIAPP_SKILL_CERT_MAX,
-  type MiniAppSkillCertOption,
-} from '@/constants/miniappAuth'
+import { useAppStore } from '@/stores/app'
+import { MINIAPP_SKILL_CERT_MAX } from '@/constants/miniappAuth'
+import type { SkillLibraryItem } from '@/types'
 
 const selectedIds = defineModel<string[]>({ required: true })
 
-const catalog = MINIAPP_SKILL_CERT_CATALOG
+const store = useAppStore()
+const catalog = computed(() => store.skillLibraryCatalog)
 const maxCount = MINIAPP_SKILL_CERT_MAX
 
 function isSelected(id: string) {
   return selectedIds.value.includes(id)
 }
 
-function toggle(item: MiniAppSkillCertOption) {
+function toggle(item: SkillLibraryItem) {
   const set = new Set(selectedIds.value)
   if (set.has(item.id)) {
     set.delete(item.id)
@@ -43,7 +43,7 @@ function toggle(item: MiniAppSkillCertOption) {
           :class="{ selected: isSelected(item.id) }"
           @click="toggle(item)"
         >
-          <span class="cert-icon">{{ item.icon }}</span>
+          <span class="cert-icon">{{ item.icon || '📌' }}</span>
           <span class="cert-name">{{ item.name }}</span>
         </button>
       </div>

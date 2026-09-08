@@ -12,7 +12,6 @@ import {
   DEFAULT_BENEFITS_CONFIG,
   JOB_BENEFIT_TAG_PRESETS,
   MARKETING_TAG_PRESETS,
-  SKILL_OPTIONS,
   JOB_TYPE_OPTIONS,
   employmentTypeMap,
   formatSalaryRange,
@@ -31,6 +30,7 @@ import type {
 const store = useAppStore()
 const router = useRouter()
 const { isPlatform, isEnterprise, portalPath } = usePortal()
+const skillOptions = computed(() => store.skillLibraryNames)
 
 const drawerVisible = ref(false)
 const importDialogVisible = ref(false)
@@ -481,7 +481,7 @@ function filterByStatus(status: typeof statusFilter.value) {
       </el-form-item>
       <el-form-item label="技能要求">
         <el-checkbox-group v-model="form.skills">
-          <el-checkbox v-for="s in SKILL_OPTIONS" :key="s" :value="s">{{ s }}</el-checkbox>
+          <el-checkbox v-for="s in skillOptions" :key="s" :value="s">{{ s }}</el-checkbox>
         </el-checkbox-group>
       </el-form-item>
       <el-row :gutter="16">

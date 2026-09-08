@@ -242,8 +242,8 @@ function submit() {
 
             <el-form-item label="组织类型">
               <el-select v-model="form.orgType" style="width: 100%">
-                <el-option label="部门/企业" value="department" />
-                <el-option label="企业主体" value="enterprise" />
+                <el-option label="部门" value="department" />
+                <el-option label="企业公司" value="enterprise" />
               </el-select>
             </el-form-item>
 

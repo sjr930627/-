@@ -1,15 +1,25 @@
 <script setup lang="ts">
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { FullScreen, OfficeBuilding } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { listWorkerCurrentOrgs, listWorkerJoinApplications } from '@/services/miniJoin'
 
+const route = useRoute()
+const router = useRouter()
 const store = useAppStore()
 const { employee, employeeId } = useMiniAppWorker()
 const activeTab = ref<'orgs' | 'apps'>('orgs')
+
+function syncTabFromRoute() {
+  activeTab.value = route.query.tab === 'apps' ? 'apps' : 'orgs'
+}
+
+syncTabFromRoute()
+watch(() => route.query.tab, syncTabFromRoute)
 
 const currentOrgs = computed(() =>
   listWorkerCurrentOrgs(
@@ -41,16 +51,21 @@ function formatTime(iso?: string) {
   })
 }
 
+function setTab(tab: 'orgs' | 'apps') {
+  activeTab.value = tab
+  router.replace({ path: '/miniapp/join-manage', query: tab === 'apps' ? { tab: 'apps' } : {} })
+}
+
 async function openScanJoin() {
   try {
     const { value } = await ElMessageBox.prompt(
       '演示：粘贴部门入驻二维码内容（JOIN|企业ID|部门ID）',
       '扫码入驻',
       {
-        confirmButtonText: '申请入驻',
+        confirmButtonText: '下一步',
         cancelButtonText: '取消',
         inputPlaceholder: 'JOIN|ent_xxx|dept_xxx',
-        inputValue: 'JOIN|ent_pingan_partner|dept_pj_store',
+        inputValue: 'JOIN|ent_stars_telecom|dept_prod_a',
       },
     )
     const payload = String(value || '').trim()
@@ -58,16 +73,14 @@ async function openScanJoin() {
       ElMessage.warning('请填写二维码内容')
       return
     }
-    store.applyJoinDepartmentByQr(payload, {
-      name: employee.value?.name || '灵工申请人',
-      phone: employee.value?.phone,
-      employeeId: employeeId.value,
-    })
-    ElMessage.success('已提交入驻申请，请等待企业审批')
-    activeTab.value = 'apps'
+    router.push({ path: '/miniapp/join-apply', query: { qr: payload } })
   } catch {
     /* cancel */
   }
+}
+
+function openDetail(id: string) {
+  router.push(`/miniapp/join-applications/${id}`)
 }
 </script>
 
@@ -87,7 +100,7 @@ async function openScanJoin() {
         type="button"
         class="join-tab"
         :class="{ active: activeTab === 'orgs' }"
-        @click="activeTab = 'orgs'"
+        @click="setTab('orgs')"
       >
         当前组织
         <span v-if="currentOrgs.length" class="join-tab-count">{{ currentOrgs.length }}</span>
@@ -96,7 +109,7 @@ async function openScanJoin() {
         type="button"
         class="join-tab"
         :class="{ active: activeTab === 'apps' }"
-        @click="activeTab = 'apps'"
+        @click="setTab('apps')"
       >
         入驻申请
         <span v-if="applications.length" class="join-tab-count">{{ applications.length }}</span>
@@ -137,23 +150,37 @@ async function openScanJoin() {
       </template>
 
       <template v-else>
-        <div v-for="app in applications" :key="app.id" class="mini-card app-card">
+        <div
+          v-for="app in applications"
+          :key="app.id"
+          class="mini-card app-card"
+          @click="openDetail(app.id)"
+        >
           <div class="app-head">
             <div class="app-title">{{ app.enterpriseName }}</div>
             <span class="mini-tag" :class="app.statusTag">{{ app.statusLabel }}</span>
           </div>
           <div class="app-dept">申请部门：{{ app.departmentName }}</div>
+          <div class="app-dept">申请岗位：{{ app.appliedPositionLabel }}</div>
           <div v-if="app.status === 'approved' && app.assignedDepartmentName" class="app-dept">
             入驻部门：{{ app.assignedDepartmentName }}
             <template v-if="app.assignedPosition"> · {{ app.assignedPosition }}</template>
           </div>
           <div v-if="app.reviewNote" class="app-note">{{ app.reviewNote }}</div>
           <div class="app-foot">
-            申请时间 {{ formatTime(app.appliedAt) }}
-            <template v-if="app.reviewedAt"> · 审批 {{ formatTime(app.reviewedAt) }}</template>
+            <span>
+              申请时间 {{ formatTime(app.appliedAt) }}
+              <template v-if="app.reviewedAt"> · 审批 {{ formatTime(app.reviewedAt) }}</template>
+            </span>
+            <button type="button" class="detail-link" @click.stop="openDetail(app.id)">
+              查看详情
+            </button>
           </div>
         </div>
-        <div v-if="applications.length === 0" class="mini-empty">暂无扫码入驻申请</div>
+        <div v-if="applications.length === 0" class="mini-empty">
+          暂无入驻申请
+          <button type="button" class="scan-empty-btn" @click="openScanJoin">扫码申请入驻</button>
+        </div>
       </template>
     </div>
   </div>
@@ -175,7 +202,7 @@ async function openScanJoin() {
   gap: 4px;
   border: none;
   background: none;
-  color: var(--mini-primary, #4FD1C5);
+  color: var(--mini-primary, #4fd1c5);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -207,8 +234,8 @@ async function openScanJoin() {
 }
 
 .join-tab.active {
-  color: var(--app-primary, #4FD1C5);
-  border-bottom-color: var(--app-primary, #4FD1C5);
+  color: var(--app-primary, #4fd1c5);
+  border-bottom-color: var(--app-primary, #4fd1c5);
   font-weight: 600;
 }
 
@@ -217,8 +244,8 @@ async function openScanJoin() {
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--app-primary-light, #E6FFFA);
-  color: var(--app-primary, #4FD1C5);
+  background: var(--app-primary-light, #e6fffa);
+  color: var(--app-primary, #4fd1c5);
   font-size: 11px;
   line-height: 18px;
 }
@@ -234,7 +261,7 @@ async function openScanJoin() {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: #E6FFFA;
+  background: #e6fffa;
   color: #14b8a6;
   display: flex;
   align-items: center;
@@ -287,6 +314,10 @@ async function openScanJoin() {
   text-align: right;
 }
 
+.app-card {
+  cursor: pointer;
+}
+
 .app-title {
   flex: 1;
   min-width: 0;
@@ -304,7 +335,35 @@ async function openScanJoin() {
 
 .app-foot {
   margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px;
   color: #bbb;
+}
+
+.detail-link {
+  border: none;
+  background: none;
+  color: var(--mini-primary, #4fd1c5);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.scan-empty-btn {
+  display: block;
+  margin: 14px auto 0;
+  border: none;
+  background: var(--mini-primary, #4fd1c5);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 18px;
+  border-radius: 10px;
+  cursor: pointer;
 }
 </style>

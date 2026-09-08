@@ -261,7 +261,6 @@ function resetFilters() {
       <el-table-column label="发布时间" width="160">
         <template #default="{ row }">{{ formatVersionTime(row.publishedAt) }}</template>
       </el-table-column>
-      <el-table-column prop="changeNote" label="变更说明" min-width="160" show-overflow-tooltip />
       <el-table-column label="操作" width="100" align="center">
         <template #default="{ row }">
           <el-button link type="primary" @click="viewVersionDetail(row)">查看配置</el-button>

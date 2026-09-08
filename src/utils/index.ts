@@ -1,5 +1,5 @@
 const STORAGE_PREFIX = 'shift-attendance:'
-const DEMO_BRANDING_VERSION = 'sinopec-v25'
+const DEMO_BRANDING_VERSION = 'sinopec-v26'
 
 const DEMO_BRANDING_KEYS = [
   'enterprises',
@@ -40,6 +40,9 @@ const DEMO_BRANDING_KEYS = [
   'billingRules',
   'settlementBills',
   'serviceContracts',
+  'attendanceGroupSettlementOverrides',
+  'departmentSettlementOverrides',
+  'taskTypeSettlementOverrides',
 ]
 
 /** 演示数据品牌升级：刷新本地缓存以加载最新 seed */
@@ -94,12 +97,25 @@ export function ensureSettlementBills(
 ): import('@/types').SettlementBill[] {
   return bills.map((bill) => {
     const departmentScope = bill.departmentScope ?? 'all'
+    const payerSubjectType =
+      bill.payerSubjectType === 'other'
+        ? 'other'
+        : bill.payerSubjectType === 'self'
+          ? 'self'
+          : !bill.payerEnterpriseName?.trim() ||
+              bill.payerEnterpriseName.trim() === bill.enterpriseName.trim()
+            ? 'self'
+            : 'other'
+    const payerEnterpriseName =
+      bill.payerEnterpriseName?.trim() ||
+      (payerSubjectType === 'self' ? bill.enterpriseName : undefined)
     return {
       ...bill,
       departmentScope,
       departmentName: bill.departmentName?.trim() || '全公司',
       departmentId: departmentScope === 'department' ? bill.departmentId : undefined,
-      payerEnterpriseName: bill.payerEnterpriseName,
+      payerSubjectType,
+      payerEnterpriseName,
       payerCreditCode: bill.payerCreditCode,
       serviceFeeWaiver: bill.serviceFeeWaiver ?? 0,
     }

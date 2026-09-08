@@ -29,6 +29,7 @@ export function scheduleRuleToCompliance(
     maxConsecutiveWorkdays: rule.maxConsecutiveDays,
     minShiftIntervalHours: rule.minRestHours,
     ...(base ?? {}),
+    enabled: base?.enabled === true,
   }
 }
 

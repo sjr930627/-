@@ -11,7 +11,7 @@ import { seedDepartments } from '@/mock/seed'
 import {
   formatGrabPositionAgeRange,
   formatGrabPositionGender,
-  isGrabShiftOpenForWorkers,
+  isGrabSlotVisibleToWorker,
   resolveGrabSlotPositionProfile,
 } from '@/services/grabShift'
 import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
@@ -26,9 +26,15 @@ const subscribed = ref(false)
 const selectedSlotIds = ref<string[]>([])
 const reqExpanded = ref(true)
 
+const worker = computed(() => store.employees.find((e) => e.id === employeeId.value))
+
 const slots = computed(() =>
   store.grabShiftSlots
-    .filter((s) => s.teamId === teamId.value && isGrabShiftOpenForWorkers(s))
+    .filter(
+      (s) =>
+        s.teamId === teamId.value &&
+        isGrabSlotVisibleToWorker(s, worker.value, store.teams, store.departments),
+    )
     .map((s) => {
       const extra = getGrabShiftSlotExtra(s.id, s.date)
       const applied = store.grabShiftApplications.some(

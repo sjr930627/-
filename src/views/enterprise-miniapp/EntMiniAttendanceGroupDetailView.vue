@@ -19,11 +19,22 @@ import {
   pricingValueModeOptions,
 } from '@/constants/attendanceGroupPricing'
 import { getDefaultScheduleRuleForSeed } from '@/services/scheduleGroup'
+import { normalizeAttendanceGroupCompliance } from '@/services/scheduleCompliance'
+import {
+  defaultGrabBreakPeriodsForShift,
+  formatBreakPeriodsRule,
+  formatShiftTimeRangeLabel,
+  isOvernightTimeRange,
+  listInvalidBreakPeriodIndexes,
+  normalizeAttendanceShiftTemplateBreak,
+  resolveGrabShiftWorkHoursFromTimes,
+} from '@/services/grabShift'
 import { countDepartmentEmployees, generateId } from '@/utils'
 import type {
   AttendanceGroup,
   AttendanceGroupShiftTemplate,
   AttendanceGroupType,
+  GrabShiftBreakPeriod,
   PunchLocation,
   VariablePriceConfig,
 } from '@/types'
@@ -48,14 +59,26 @@ const existingGroup = computed(() =>
   groupId.value ? store.attendanceGroups.find((g) => g.id === groupId.value) : undefined,
 )
 
-const emptyShift = (): AttendanceGroupShiftTemplate => ({
-  id: generateId('st'),
-  name: '',
-  startTime: '09:00',
-  endTime: '18:00',
-  breakRule: '上下午各休15分钟',
-  workHours: 9,
-})
+const emptyShift = (): AttendanceGroupShiftTemplate => {
+  const startTime = '09:00'
+  const endTime = '18:00'
+  const breakPeriods = defaultGrabBreakPeriodsForShift(startTime, endTime)
+  return {
+    id: generateId('st'),
+    name: '',
+    startTime,
+    endTime,
+    hasBreakTime: true,
+    breakPeriods,
+    breakRule: formatBreakPeriodsRule(breakPeriods),
+    workHours: resolveGrabShiftWorkHoursFromTimes({
+      startTime,
+      endTime,
+      hasBreakTime: true,
+      breakPeriods,
+    }),
+  }
+}
 
 const emptyLocation = (): PunchLocation => ({
   id: generateId('loc'),
@@ -81,6 +104,7 @@ function emptyForm(): Omit<
     wifiName: '',
     qrcodeEnabled: true,
     compliance: {
+      enabled: false,
       maxDailyHours: 12,
       maxWeeklyHours: 60,
       minShiftIntervalHours: 12,
@@ -161,7 +185,7 @@ function hydrateFromGroup(group: AttendanceGroup) {
     wifiEnabled: group.wifiEnabled,
     wifiName: group.wifiName,
     qrcodeEnabled: group.qrcodeEnabled,
-    compliance: group.compliance,
+    compliance: normalizeAttendanceGroupCompliance(group.compliance),
     scheduleRule: group.scheduleRule,
     departmentBindings: group.departmentBindings,
     payRule: group.payRule,
@@ -169,6 +193,20 @@ function hydrateFromGroup(group: AttendanceGroup) {
     minMonthlyOnlineHours: group.minMonthlyOnlineHours,
     attendanceArea: group.attendanceArea,
   }))
+  form.value.shiftTemplates = (form.value.shiftTemplates ?? []).map((tpl) => {
+    const normalized = normalizeAttendanceShiftTemplateBreak(tpl)
+    return {
+      ...tpl,
+      ...normalized,
+      workHours: resolveGrabShiftWorkHoursFromTimes({
+        startTime: tpl.startTime,
+        endTime: tpl.endTime,
+        hasBreakTime: normalized.hasBreakTime,
+        breakPeriods: normalized.breakPeriods,
+        breakRule: normalized.breakRule,
+      }) || tpl.workHours,
+    }
+  })
   if (form.value.attendanceType === 'none') {
     delete form.value.pricingConfig
   } else {
@@ -243,6 +281,58 @@ watch(selectedDeptIds, syncDepartmentBindings, { deep: true })
 
 function addShiftTemplate() {
   form.value.shiftTemplates.push(emptyShift())
+}
+
+/** 按起止时间与休息时间段测算工时（支持跨天） */
+function syncShiftWorkHours(row: AttendanceGroupShiftTemplate) {
+  if (row.hasBreakTime) {
+    const invalid = listInvalidBreakPeriodIndexes(row.startTime, row.endTime, row.breakPeriods)
+    if (invalid.length) {
+      row.breakPeriods = defaultGrabBreakPeriodsForShift(row.startTime, row.endTime)
+    }
+    row.breakRule = formatBreakPeriodsRule(row.breakPeriods)
+  } else {
+    row.breakPeriods = []
+    row.breakRule = undefined
+  }
+  const hours = resolveGrabShiftWorkHoursFromTimes({
+    startTime: row.startTime,
+    endTime: row.endTime,
+    hasBreakTime: Boolean(row.hasBreakTime),
+    breakPeriods: row.breakPeriods,
+    breakRule: row.breakRule,
+  })
+  if (hours > 0) row.workHours = hours
+}
+
+function onShiftBreakToggle(row: AttendanceGroupShiftTemplate, enabled: boolean) {
+  row.hasBreakTime = enabled
+  if (enabled) {
+    row.breakPeriods = defaultGrabBreakPeriodsForShift(row.startTime, row.endTime)
+  } else {
+    row.breakPeriods = []
+  }
+  syncShiftWorkHours(row)
+}
+
+function addShiftBreakPeriod(row: AttendanceGroupShiftTemplate) {
+  if (!row.breakPeriods) row.breakPeriods = []
+  const suggested = defaultGrabBreakPeriodsForShift(row.startTime, row.endTime)[0]
+  row.breakPeriods.push(
+    suggested ?? ({ start: row.startTime, end: row.startTime } as GrabShiftBreakPeriod),
+  )
+  syncShiftWorkHours(row)
+}
+
+function removeShiftBreakPeriod(row: AttendanceGroupShiftTemplate, index: number) {
+  if (!row.breakPeriods || row.breakPeriods.length <= 1) return
+  row.breakPeriods.splice(index, 1)
+  syncShiftWorkHours(row)
+}
+
+function isShiftBreakPeriodInvalid(row: AttendanceGroupShiftTemplate, index: number) {
+  if (!row.hasBreakTime) return false
+  return listInvalidBreakPeriodIndexes(row.startTime, row.endTime, row.breakPeriods).includes(index)
 }
 
 function removeShiftTemplate(index: number) {
@@ -328,6 +418,25 @@ function validate() {
     ElMessage.warning('排班制至少配置一个班次')
     return false
   }
+  if (form.value.attendanceType === 'shift') {
+    for (const tpl of form.value.shiftTemplates) {
+      if (!tpl.name.trim()) {
+        ElMessage.warning('请填写班次名称')
+        return false
+      }
+      if (tpl.hasBreakTime) {
+        const periods = tpl.breakPeriods ?? []
+        if (!periods.length || periods.some((p) => !p.start || !p.end)) {
+          ElMessage.warning(`班次「${tpl.name || '未命名'}」请完善休息时间段`)
+          return false
+        }
+        if (listInvalidBreakPeriodIndexes(tpl.startTime, tpl.endTime, periods).length) {
+          ElMessage.warning(`班次「${tpl.name || '未命名'}」休息时间段须完全落在班次起止时间内`)
+          return false
+        }
+      }
+    }
+  }
   if (form.value.attendanceType === 'free' && form.value.freePunchConfig) {
     if (!form.value.freePunchConfig.startTime || !form.value.freePunchConfig.endTime) {
       ElMessage.warning('请配置自由打卡时段')
@@ -350,6 +459,21 @@ function validate() {
 
 function preparePayload() {
   const payload = { ...form.value }
+  payload.shiftTemplates = (payload.shiftTemplates ?? []).map((tpl) => {
+    const normalized = normalizeAttendanceShiftTemplateBreak(tpl)
+    return {
+      ...tpl,
+      ...normalized,
+      workHours:
+        resolveGrabShiftWorkHoursFromTimes({
+          startTime: tpl.startTime,
+          endTime: tpl.endTime,
+          hasBreakTime: normalized.hasBreakTime,
+          breakPeriods: normalized.breakPeriods,
+          breakRule: normalized.breakRule,
+        }) || tpl.workHours,
+    }
+  })
   if (payload.attendanceType !== 'free') {
     delete payload.freePunchConfig
   } else if (payload.freePunchConfig) {
@@ -452,13 +576,62 @@ function publish() {
           <input v-model="shift.name" type="text" placeholder="早班">
           <label>时段</label>
           <div class="row-2">
-            <input v-model="shift.startTime" type="time">
-            <input v-model="shift.endTime" type="time">
+            <input
+              v-model="shift.startTime"
+              type="time"
+              @change="syncShiftWorkHours(shift)"
+            >
+            <input
+              v-model="shift.endTime"
+              type="time"
+              @change="syncShiftWorkHours(shift)"
+            >
           </div>
-          <label>休息规则</label>
-          <input v-model="shift.breakRule" type="text" placeholder="上下午各休15分钟">
+          <p class="hint">
+            {{ formatShiftTimeRangeLabel(shift.startTime, shift.endTime) }}
+            · 测算 {{ shift.workHours }}h
+            <template v-if="isOvernightTimeRange(shift.startTime, shift.endTime)">（跨天）</template>
+          </p>
+          <label>休息时间</label>
+          <label class="radio-item">
+            <input
+              type="checkbox"
+              :checked="Boolean(shift.hasBreakTime)"
+              @change="onShiftBreakToggle(shift, ($event.target as HTMLInputElement).checked)"
+            >
+            启用休息
+          </label>
+          <div v-if="shift.hasBreakTime" class="break-periods">
+            <div
+              v-for="(bp, bIdx) in shift.breakPeriods"
+              :key="bIdx"
+              class="row-2 break-row"
+              :class="{ invalid: isShiftBreakPeriodInvalid(shift, bIdx) }"
+            >
+              <input
+                v-model="bp.start"
+                type="time"
+                @change="syncShiftWorkHours(shift)"
+              >
+              <input
+                v-model="bp.end"
+                type="time"
+                @change="syncShiftWorkHours(shift)"
+              >
+              <button
+                v-if="(shift.breakPeriods?.length ?? 0) > 1"
+                type="button"
+                class="link danger"
+                @click="removeShiftBreakPeriod(shift, bIdx)"
+              >
+                删除
+              </button>
+            </div>
+            <button type="button" class="link" @click="addShiftBreakPeriod(shift)">添加时段</button>
+            <p class="hint">休息时段须落在班次起止时间内</p>
+          </div>
           <label>工时（小时）</label>
-          <input v-model.number="shift.workHours" type="number" min="1" max="24" step="0.5">
+          <input v-model.number="shift.workHours" type="number" min="0.5" max="24" step="0.5">
           <button
             v-if="form.shiftTemplates.length > 1"
             type="button"
@@ -553,38 +726,47 @@ function publish() {
 
       <!-- 5 合规工时红线 -->
       <section v-if="form.attendanceType === 'shift'" class="form-section">
-        <h3 class="section-title">合规工时红线</h3>
-        <div class="row-2">
-          <div>
-            <label>日最高工时</label>
-            <input v-model.number="form.compliance.maxDailyHours" type="number" min="1" max="24">
-          </div>
-          <div>
-            <label>周最高工时</label>
-            <input v-model.number="form.compliance.maxWeeklyHours" type="number" min="1" max="168">
-          </div>
+        <div class="section-head">
+          <h3 class="section-title">合规工时红线</h3>
+          <label class="inline-check">
+            <input v-model="form.compliance.enabled" type="checkbox">
+            启用
+          </label>
         </div>
-        <div class="row-2">
-          <div>
-            <label>班次最小间隔</label>
-            <input v-model.number="form.compliance.minShiftIntervalHours" type="number" min="1" max="48">
+        <p class="hint">默认关闭。开启后仅按本企业内排班统计，不跨企业汇总。</p>
+        <template v-if="form.compliance.enabled">
+          <div class="row-2">
+            <div>
+              <label>日最高工时</label>
+              <input v-model.number="form.compliance.maxDailyHours" type="number" min="1" max="24">
+            </div>
+            <div>
+              <label>周最高工时</label>
+              <input v-model.number="form.compliance.maxWeeklyHours" type="number" min="1" max="168">
+            </div>
           </div>
-          <div>
-            <label>月最高工时</label>
-            <input v-model.number="form.compliance.maxMonthlyHours" type="number" min="1" max="400">
+          <div class="row-2">
+            <div>
+              <label>班次最小间隔</label>
+              <input v-model.number="form.compliance.minShiftIntervalHours" type="number" min="1" max="48">
+            </div>
+            <div>
+              <label>月最高工时</label>
+              <input v-model.number="form.compliance.maxMonthlyHours" type="number" min="1" max="400">
+            </div>
           </div>
-        </div>
-        <div class="row-2">
-          <div>
-            <label>最大连续工作（天）</label>
-            <input v-model.number="form.compliance.maxConsecutiveWorkdays" type="number" min="1" max="14">
+          <div class="row-2">
+            <div>
+              <label>最大连续工作（天）</label>
+              <input v-model.number="form.compliance.maxConsecutiveWorkdays" type="number" min="1" max="14">
+            </div>
+            <div>
+              <label>月最低在线（小时）</label>
+              <input v-model.number="form.minMonthlyOnlineHours" type="number" min="0" max="400">
+            </div>
           </div>
-          <div>
-            <label>月最低在线（小时）</label>
-            <input v-model.number="form.minMonthlyOnlineHours" type="number" min="0" max="400">
-          </div>
-        </div>
-        <p class="hint">月最低在线填 0 表示不限制</p>
+          <p class="hint">月最低在线填 0 表示不限制</p>
+        </template>
       </section>
 
       <!-- 6 关联组织 -->
@@ -810,6 +992,21 @@ function publish() {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.break-periods {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.break-row {
+  align-items: center;
+}
+
+.break-row.invalid input {
+  border-color: #f56c6c;
 }
 
 .row-2 > div {

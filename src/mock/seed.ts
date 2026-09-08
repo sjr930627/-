@@ -34,7 +34,7 @@ export const defaultScheduleRule: ScheduleRule = {
 export const seedDepartments: Department[] = [
   {
     id: 'dept_root',
-    name: '星辰通信集团',
+    name: '星辰通信企业公司',
     parentId: null,
     sort: 0,
     orgType: 'enterprise',
@@ -137,6 +137,7 @@ export const seedEmployees: Employee[] = [
     skillCertificates: [
       {
         id: 'cert_health_001',
+        skillId: 'health',
         name: '健康证',
         certificateNo: 'JK20240315001',
         issueDate: '2024-03-15',
@@ -144,6 +145,7 @@ export const seedEmployees: Employee[] = [
       },
       {
         id: 'cert_demo_001',
+        skillId: 'forklift',
         name: '叉车证',
         certificateNo: 'FC-2022-001',
         issueDate: '2022-01-10',
@@ -415,6 +417,17 @@ export const seedShifts: Shift[] = [
     description: '休息日',
   },
   {
+    id: 'shift_free_punch',
+    name: '自由打卡',
+    code: 'FREE',
+    startTime: '07:00',
+    endTime: '22:00',
+    breakMinutes: 0,
+    color: '#0EA5E9',
+    isSpecial: true,
+    description: '自由打卡考勤（无固定排班）',
+  },
+  {
     id: 'shift_custom',
     name: '自定义',
     code: 'CUSTOM',
@@ -475,13 +488,20 @@ function buildJulyAssignments(): ScheduleAssignment[] {
 
 export const seedAssignmentsWithDemo: ScheduleAssignment[] = (() => {
   const items = buildJulyAssignments()
-  // Demo 锚定日：emp_001 早班（工作台默认展示未打卡，便于演示打卡流程）
-  const demoAsn = items.find((a) => a.employeeId === 'emp_001' && a.date === '2026-07-27')
-  if (demoAsn) {
-    demoAsn.shiftId = 'shift_morning'
-    demoAsn.confirmStatus = 'confirmed'
-    demoAsn.published = true
-  }
+  // Demo 锚定日 2026-07-27：排班人员正常/休息；自由打卡人员不写排班（靠打卡算出勤）
+  ;[
+    { employeeId: 'emp_001', shiftId: 'shift_morning' },
+    { employeeId: 'emp_002', shiftId: 'shift_rest' },
+    { employeeId: 'emp_003', shiftId: 'shift_morning' },
+    { employeeId: 'emp_004', shiftId: 'shift_morning' },
+  ].forEach((row) => {
+    const asn = items.find((a) => a.employeeId === row.employeeId && a.date === '2026-07-27')
+    if (!asn) return
+    asn.shiftId = row.shiftId
+    asn.published = true
+    asn.confirmStatus = 'confirmed'
+  })
+  // emp_005 / emp_007 属自由打卡组（ag_sales），当日不排班
   const grabAsn = items.find((a) => a.employeeId === 'emp_001' && a.date === '2026-07-28')
   if (grabAsn) {
     grabAsn.fromGrabSlotId = 'gs_001'
@@ -721,6 +741,16 @@ export const seedPunches: AttendancePunch[] = [
   { id: 'punch_008', employeeId: 'emp_001', date: '2026-07-25', time: '08:06', type: 'clock_in', source: 'mobile', location: '中国移动朝阳营业厅', inRange: true },
   { id: 'punch_009', employeeId: 'emp_002', date: '2026-07-25', time: '08:04', type: 'clock_in', source: 'access_control', location: '中国移动朝阳营业厅', inRange: true },
   { id: 'punch_010', employeeId: 'emp_002', date: '2026-07-25', time: '15:58', type: 'clock_out', source: 'access_control', location: '中国移动朝阳营业厅', inRange: true },
+  // 企业小程序今日出勤锚定日：排班人员正常上下班 + 自由打卡人员打卡（打卡即出勤）
+  { id: 'punch_today_001', employeeId: 'emp_001', date: '2026-07-27', time: '07:58', type: 'clock_in', source: 'mobile', location: '中国移动朝阳营业厅', inRange: true },
+  { id: 'punch_today_002', employeeId: 'emp_001', date: '2026-07-27', time: '16:02', type: 'clock_out', source: 'mobile', location: '中国移动朝阳营业厅', inRange: true },
+  { id: 'punch_today_003', employeeId: 'emp_003', date: '2026-07-27', time: '08:01', type: 'clock_in', source: 'mobile', location: '中国移动朝阳营业厅', inRange: true },
+  { id: 'punch_today_004', employeeId: 'emp_003', date: '2026-07-27', time: '15:59', type: 'clock_out', source: 'mobile', location: '中国移动朝阳营业厅', inRange: true },
+  { id: 'punch_today_005', employeeId: 'emp_004', date: '2026-07-27', time: '07:55', type: 'clock_in', source: 'access_control', location: '中国移动朝阳营业厅', inRange: true },
+  { id: 'punch_today_006', employeeId: 'emp_004', date: '2026-07-27', time: '16:05', type: 'clock_out', source: 'access_control', location: '中国移动朝阳营业厅', inRange: true },
+  // 自由打卡（ag_sales / clock_in_only）：仅上班卡即算出勤
+  { id: 'punch_today_free_001', employeeId: 'emp_005', date: '2026-07-27', time: '09:12', type: 'clock_in', source: 'mobile', location: '望京 SOHO 外勤点', inRange: true },
+  { id: 'punch_today_free_002', employeeId: 'emp_007', date: '2026-07-27', time: '10:05', type: 'clock_in', source: 'mobile', location: '三里屯外勤点', inRange: true },
   // 历史抢班出勤打卡
   { id: 'punch_grab_hist_001', employeeId: 'emp_001', date: '2026-07-20', time: '08:05', type: 'clock_in', source: 'mobile', location: '中国移动朝阳营业厅', inRange: true },
   { id: 'punch_grab_hist_002', employeeId: 'emp_001', date: '2026-07-20', time: '16:02', type: 'clock_out', source: 'mobile', location: '中国移动朝阳营业厅', inRange: true },
@@ -932,7 +962,7 @@ export const seedExceptions: AttendanceException[] = [
   {
     id: 'exc_003',
     employeeId: 'emp_005',
-    date: '2026-07-27',
+    date: '2026-07-25',
     type: 'late',
     status: 'open',
     message: '陈芳 · 中班签到晚于开始时间',

@@ -11,7 +11,6 @@ import {
   MINIAPP_BRAND_OPTIONS,
   MINIAPP_JOB_OPTIONS,
   MINIAPP_ONBOARDING_STEPS,
-  MINIAPP_SKILL_CERT_CATALOG,
   MINIAPP_SKILL_CERT_MAX,
 } from '@/constants/miniappAuth'
 import type { WorkerPartTimePreference, WorkerSkillCertificate } from '@/types'
@@ -126,9 +125,8 @@ function skipTimePref() {
 }
 
 function certIdsToRecords(ids: string[]): WorkerSkillCertificate[] {
-  const all = MINIAPP_SKILL_CERT_CATALOG.flatMap((c) => c.items)
   return ids.map((id) => {
-    const item = all.find((i) => i.id === id)
+    const item = store.resolveSkillLibraryItem(id)
     return { id, name: item?.name ?? id }
   })
 }

@@ -247,7 +247,7 @@ async function removeAccount(row: SystemAccount) {
   <div class="ops-page">
     <div class="org-panel page-card">
       <div class="org-panel-header">
-        <span class="org-title">{{ scope === 'enterprise' ? '企业组织' : '组织架构树' }}</span>
+        <span class="org-title">灵工组织架构</span>
       </div>
       <el-input v-model="treeKeyword" placeholder="搜索部门" clearable prefix-icon="Search" class="org-search" />
       <el-tree
