@@ -11,12 +11,13 @@ import {
   buildHallTaskRow,
   getWorkerClaimedQuantity,
   groupHallTasksByEnterprise,
+  isTaskVisibleToWorker,
   resolvePricingForTask,
 } from '@/services/miniTask'
 
 const store = useAppStore()
 const router = useRouter()
-const { employeeId } = useMiniAppWorker()
+const { employeeId, employee } = useMiniAppWorker()
 const { ensureActionAllowed } = useMiniAppActionGate()
 const { pendingMyActionCount } = useMiniWorkerTasks()
 
@@ -34,7 +35,7 @@ const tagToneMap: Record<string, string> = {
 
 const hallTaskRows = computed(() =>
   store.tasks
-    .filter((t) => t.status === 'active' && t.dispatchMode === 'hall')
+    .filter((t) => isTaskVisibleToWorker(t, employee.value?.departmentId))
     .map((t) => {
       const pricing = resolvePricingForTask(t, store.taskTypes)
       const myCount = getWorkerClaimedQuantity(store.taskInstances, t.id, employeeId.value)

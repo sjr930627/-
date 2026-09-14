@@ -6,7 +6,14 @@ import { useAppStore } from '@/stores/app'
 import WorkflowFlowChart from '@/components/task/WorkflowFlowChart.vue'
 import { formatWorkflowEnterpriseLabel, workflowStatusMap } from '@/constants/task'
 import { countWorkflowBoundTasks } from '@/services/task'
-import type { TaskWorkflow } from '@/types'
+import {
+  ensureWorkflowVersions,
+  formatWorkflowVersionLabel,
+  formatWorkflowVersionTime,
+  summarizeWorkflowVersionSnapshot,
+  workflowFromVersionSnapshot,
+} from '@/services/taskWorkflowVersion'
+import type { TaskWorkflow, TaskWorkflowVersion } from '@/types'
 
 const store = useAppStore()
 const router = useRouter()
@@ -15,6 +22,11 @@ const keyword = ref('')
 const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
 const chartVisible = ref(false)
 const viewingWorkflow = ref<TaskWorkflow | null>(null)
+
+const historyVisible = ref(false)
+const historyWorkflow = ref<TaskWorkflow | null>(null)
+const versionDetailVisible = ref(false)
+const selectedVersion = ref<TaskWorkflowVersion | null>(null)
 
 const tableData = computed(() =>
   store.taskWorkflows
@@ -25,14 +37,34 @@ const tableData = computed(() =>
       const enterpriseLabel = formatWorkflowEnterpriseLabel(w, store.enterprises)
       return w.name.includes(kw) || enterpriseLabel.includes(kw)
     })
-    .map((w) => ({
-      ...w,
-      enterpriseLabel: formatWorkflowEnterpriseLabel(w, store.enterprises),
-      statusLabel: workflowStatusMap[w.status],
-      nodeCount: w.nodes.length,
-      boundTaskCount: countWorkflowBoundTasks(store.tasks, w.id),
-    })),
+    .map((w) => {
+      const ensured = ensureWorkflowVersions(w)
+      return {
+        ...ensured,
+        enterpriseLabel: formatWorkflowEnterpriseLabel(w, store.enterprises),
+        statusLabel: workflowStatusMap[w.status],
+        nodeCount: w.nodes.length,
+        boundTaskCount: countWorkflowBoundTasks(store.tasks, w.id),
+        versionLabel: formatWorkflowVersionLabel(ensured.version),
+      }
+    }),
 )
+
+const versionHistory = computed(() => {
+  if (!historyWorkflow.value) return []
+  return [...(historyWorkflow.value.versions ?? [])].sort((a, b) => b.version - a.version)
+})
+
+const versionDetailLines = computed(() =>
+  selectedVersion.value
+    ? summarizeWorkflowVersionSnapshot(selectedVersion.value.snapshot, store.enterprises)
+    : [],
+)
+
+const versionPreviewWorkflow = computed(() => {
+  if (!historyWorkflow.value || !selectedVersion.value) return null
+  return workflowFromVersionSnapshot(historyWorkflow.value, selectedVersion.value)
+})
 
 function openCreate() {
   router.push('/task-workflows/create')
@@ -67,6 +99,41 @@ async function remove(row: TaskWorkflow) {
 function viewChart(row: TaskWorkflow) {
   viewingWorkflow.value = row
   chartVisible.value = true
+}
+
+function openVersionHistory(row: TaskWorkflow) {
+  const live = store.taskWorkflows.find((w) => w.id === row.id) ?? row
+  historyWorkflow.value = ensureWorkflowVersions(live)
+  // 写回确保旧数据有 versions
+  Object.assign(live, historyWorkflow.value)
+  historyVisible.value = true
+}
+
+function viewVersionDetail(version: TaskWorkflowVersion) {
+  selectedVersion.value = version
+  versionDetailVisible.value = true
+}
+
+async function restoreVersion(version: TaskWorkflowVersion) {
+  if (!historyWorkflow.value) return
+  if (version.isActive) {
+    ElMessage.info('当前已是该版本')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将流程恢复为 V${version.version} 的配置，并生成新版本生效。已绑定任务时节点也会一并恢复，请确认。`,
+      '恢复版本',
+      { type: 'warning' },
+    )
+    const record = store.restoreTaskWorkflowVersion(historyWorkflow.value.id, version.id)
+    const live = store.taskWorkflows.find((w) => w.id === historyWorkflow.value!.id)
+    historyWorkflow.value = live ? ensureWorkflowVersions(live) : historyWorkflow.value
+    ElMessage.success(`已恢复并发布为 V${record.version}`)
+    versionDetailVisible.value = false
+  } catch (e) {
+    if (e !== 'cancel' && e instanceof Error) ElMessage.error(e.message)
+  }
 }
 </script>
 
@@ -103,7 +170,13 @@ function viewChart(row: TaskWorkflow) {
           <span v-else class="text-muted">0</span>
         </template>
       </el-table-column>
-      <el-table-column prop="version" label="版本" width="70" align="center" />
+      <el-table-column label="版本" width="100" align="center">
+        <template #default="{ row }">
+          <el-button link type="primary" class="version-link" @click="openVersionHistory(row)">
+            {{ row.versionLabel }}
+          </el-button>
+        </template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.status === 'enabled' ? 'success' : 'info'" size="small">
@@ -128,6 +201,72 @@ function viewChart(row: TaskWorkflow) {
   <el-dialog v-model="chartVisible" title="流程预览" width="800px">
     <WorkflowFlowChart v-if="viewingWorkflow" :workflow="viewingWorkflow" compact />
   </el-dialog>
+
+  <el-dialog
+    v-model="historyVisible"
+    :title="historyWorkflow ? `${historyWorkflow.name} · 版本历史` : '版本历史'"
+    width="760px"
+  >
+    <el-table :data="versionHistory" border stripe size="small">
+      <el-table-column label="版本" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag :type="row.isActive ? 'success' : 'info'" size="small">
+            V{{ row.version }}
+          </el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="90" align="center">
+        <template #default="{ row }">
+          <span v-if="row.isActive" class="active-label">生效中</span>
+          <span v-else class="text-muted">历史</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="发布时间" width="160">
+        <template #default="{ row }">{{ formatWorkflowVersionTime(row.publishedAt) }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="150" align="center" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="viewVersionDetail(row)">查看</el-button>
+          <el-button
+            v-if="!row.isActive"
+            link
+            type="warning"
+            @click="restoreVersion(row)"
+          >
+            恢复
+          </el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-dialog>
+
+  <el-dialog
+    v-model="versionDetailVisible"
+    :title="selectedVersion ? `V${selectedVersion.version} 配置详情` : '配置详情'"
+    width="820px"
+  >
+    <div v-if="selectedVersion" class="version-detail">
+      <div class="version-meta">
+        <span>发布时间：{{ formatWorkflowVersionTime(selectedVersion.publishedAt) }}</span>
+        <el-tag v-if="selectedVersion.isActive" size="small" type="success">当前生效</el-tag>
+      </div>
+      <ul class="version-lines">
+        <li v-for="(line, index) in versionDetailLines" :key="index">{{ line }}</li>
+      </ul>
+      <div v-if="versionPreviewWorkflow" class="version-chart">
+        <WorkflowFlowChart :workflow="versionPreviewWorkflow" compact />
+      </div>
+      <div class="version-actions">
+        <el-button
+          v-if="!selectedVersion.isActive"
+          type="warning"
+          @click="restoreVersion(selectedVersion)"
+        >
+          恢复此版本
+        </el-button>
+      </div>
+    </div>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -136,5 +275,56 @@ function viewChart(row: TaskWorkflow) {
   gap: 12px;
   margin-bottom: 16px;
   align-items: center;
+}
+
+.version-link {
+  font-weight: 600;
+}
+
+.active-label {
+  color: var(--el-color-success);
+  font-size: 13px;
+}
+
+.version-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.version-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.version-note {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.version-lines {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--el-text-color-regular);
+}
+
+.version-chart {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.version-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>

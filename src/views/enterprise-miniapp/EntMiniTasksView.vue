@@ -3,12 +3,17 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import EntMiniPageHeader from '@/components/enterprise-miniapp/EntMiniPageHeader.vue'
+import TaskPublishFormBody, {
+  type TaskPublishFormModel,
+} from '@/components/task/TaskPublishFormBody.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import { useEnterpriseInstanceAction } from '@/composables/useEnterpriseInstanceAction'
 import {
-  dispatchModeMap,
   formatTaskQuantity,
+  formatTaskRegionLabel,
+  resolveTaskPublishDepartmentScope,
+  taskPublishScopeMap,
   taskPublishStatusMap,
   workflowStatusMap,
 } from '@/constants/task'
@@ -21,8 +26,9 @@ import {
   isInstanceAtEnterpriseNode,
   resolveInstanceWorkflowStatus,
 } from '@/services/task'
-import type { PricingMode, TaskInstance, TieredPrice, WorkflowActionConfig } from '@/types'
+import type { Task, TaskInstance, WorkflowActionConfig } from '@/types'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
+import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,31 +43,40 @@ const instanceStatusFilter = ref<'all' | 'pending_me' | 'running' | 'completed' 
 const filterTaskId = ref('')
 const publishVisible = ref(false)
 
-const emptyTier = (): TieredPrice => ({ minCount: 1, maxCount: 10, unitPrice: 50 })
+function createEmptyForm(): TaskPublishFormModel {
+  return {
+    serviceProviderId: '',
+    publishScope: 'global',
+    departmentIds: [],
+    workflowId: '',
+    name: '',
+    description: '',
+    regionCodes: [],
+    addressDetail: '',
+    metadataFields: [],
+    fixedPrice: 50,
+    trainingCourseId: '',
+    plannedTotal: 100,
+    unlimitedQuantity: false,
+    longTerm: false,
+    dateRange: ['2026-07-26', '2026-08-26'],
+    maxPerPerson: 5,
+  }
+}
 
-const form = ref({
-  name: '',
-  workflowId: '',
-  departmentId: '',
-  pricingMode: 'fixed' as PricingMode,
-  fixedPrice: 50,
-  tieredPrices: [emptyTier()] as TieredPrice[],
-  plannedTotal: 100 as number | undefined,
-  unlimitedQuantity: false,
-  longTerm: false,
-  dateRange: ['2026-07-26', '2026-08-26'] as string[],
-  dispatchMode: 'hall' as 'assign' | 'hall',
-  maxPerPerson: 5,
-  region: '',
-  description: '',
-})
+const form = ref<TaskPublishFormModel>(createEmptyForm())
 
 const departmentOptions = computed(() =>
   store.departments.filter((d) => {
-    if (d.orgType === 'enterprise') return false
-    if (d.id.includes('unassigned')) return false
+    if (isEnterpriseRootDepartment(d) || isUnassignedDepartment(d.id)) return false
     return resolveEnterpriseIdByDepartment(d.id, store.departments) === enterpriseId.value
   }),
+)
+
+const providerOptions = computed(() =>
+  store.serviceProviders
+    .filter((p) => p.status === 'cooperating')
+    .map((p) => ({ label: p.name, value: p.id })),
 )
 
 const workflowOptions = computed(() =>
@@ -111,12 +126,17 @@ const overviewTasks = computed(() =>
     .map((t) => {
       const { progress } = calcEnterpriseTaskProgress(t)
       const wf = store.taskWorkflows.find((w) => w.id === t.workflowId)
+      const scopeLabel =
+        t.publishScope === 'department'
+          ? `${taskPublishScopeMap.department}·${t.departmentName || '—'}`
+          : taskPublishScopeMap.global
       return {
         ...t,
         workflowName: wf?.name ?? t.taskTypeName,
         departmentLabel: t.departmentName || '—',
+        providerLabel: t.serviceProviderName || '—',
+        scopeLabel,
         statusLabel: taskPublishStatusMap[t.status],
-        dispatchLabel: dispatchModeMap[t.dispatchMode],
         quantityLabel: formatTaskQuantity(t.unlimitedQuantity, t.plannedTotal),
         progress,
       }
@@ -213,20 +233,10 @@ function switchTab(tab: 'overview' | 'detail') {
 function resetPublishForm() {
   const workflowId = workflowOptions.value[0]?.value ?? ''
   form.value = {
-    name: workflowId ? store.suggestTaskName(workflowId) : '',
+    ...createEmptyForm(),
+    serviceProviderId: providerOptions.value[0]?.value ?? '',
     workflowId,
-    departmentId: departmentOptions.value[0]?.id ?? '',
-    pricingMode: 'fixed',
-    fixedPrice: 50,
-    tieredPrices: [emptyTier()],
-    plannedTotal: 100,
-    unlimitedQuantity: false,
-    longTerm: false,
-    dateRange: ['2026-07-26', '2026-08-26'],
-    dispatchMode: 'hall',
-    maxPerPerson: 5,
-    region: '',
-    description: '',
+    name: workflowId ? store.suggestTaskName(workflowId) : '',
   }
 }
 
@@ -244,8 +254,8 @@ function openPublish() {
     ElMessage.warning('暂无可用任务流程，请联系平台配置')
     return
   }
-  if (!departmentOptions.value.length) {
-    ElMessage.warning('暂无可用部门/公司')
+  if (!providerOptions.value.length) {
+    ElMessage.warning('暂无合作服务商，请联系平台配置')
     return
   }
   resetPublishForm()
@@ -253,6 +263,10 @@ function openPublish() {
 }
 
 function validatePublish() {
+  if (!form.value.serviceProviderId) {
+    ElMessage.warning('请选择服务商')
+    return false
+  }
   if (!form.value.name.trim()) {
     ElMessage.warning('请输入任务名称')
     return false
@@ -261,15 +275,19 @@ function validatePublish() {
     ElMessage.warning('请选择任务流程')
     return false
   }
-  if (!form.value.departmentId) {
-    ElMessage.warning('请选择部门/公司')
+  if (form.value.publishScope === 'department' && !form.value.departmentIds.length) {
+    ElMessage.warning('请选择发布部门')
     return false
   }
   if (!form.value.description.trim()) {
     ElMessage.warning('请填写任务内容')
     return false
   }
-  if (form.value.pricingMode === 'fixed' && (!form.value.fixedPrice || form.value.fixedPrice < 1)) {
+  if (!form.value.regionCodes?.length || form.value.regionCodes.length < 3) {
+    ElMessage.warning('请选择省市区')
+    return false
+  }
+  if (!form.value.fixedPrice || form.value.fixedPrice < 1) {
     ElMessage.warning('请填写固定单价')
     return false
   }
@@ -281,14 +299,21 @@ function validatePublish() {
     ElMessage.warning('请设置任务期限或选择长期')
     return false
   }
-  if (!form.value.region.trim()) {
-    ElMessage.warning('请填写任务地点')
-    return false
-  }
   return true
 }
 
-function buildPayload() {
+function buildPayload(): Omit<
+  Task,
+  | 'id'
+  | 'enterpriseId'
+  | 'enterpriseName'
+  | 'taskTypeName'
+  | 'status'
+  | 'acceptedCount'
+  | 'completedCount'
+  | 'approvedCount'
+  | 'createdAt'
+> {
   const now = new Date()
   const start = form.value.longTerm
     ? `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T00:00:00.000Z`
@@ -297,23 +322,45 @@ function buildPayload() {
     ? '2099-12-31T23:59:59.000Z'
     : `${form.value.dateRange[1]}T23:59:59.000Z`
 
+  const provider = store.serviceProviders.find((p) => p.id === form.value.serviceProviderId)
+  const deptScope =
+    form.value.publishScope === 'department'
+      ? resolveTaskPublishDepartmentScope(store.departments, form.value.departmentIds)
+      : {
+          publishDepartmentIds: [] as string[],
+          departmentId: undefined as string | undefined,
+          departmentName: undefined as string | undefined,
+          scopeDepartmentIds: undefined as string[] | undefined,
+        }
+  const region = formatTaskRegionLabel(form.value.regionCodes, form.value.addressDetail)
+
   return {
     name: form.value.name.trim(),
     workflowId: form.value.workflowId,
-    departmentId: form.value.departmentId,
-    departmentName: store.departments.find((d) => d.id === form.value.departmentId)?.name,
-    pricingMode: form.value.pricingMode,
-    fixedPrice: form.value.pricingMode === 'fixed' ? form.value.fixedPrice : undefined,
-    tieredPrices: form.value.pricingMode === 'tiered' ? form.value.tieredPrices : undefined,
+    serviceProviderId: form.value.serviceProviderId,
+    serviceProviderName: provider?.name,
+    publishScope: form.value.publishScope,
+    departmentId: deptScope.departmentId,
+    departmentName: deptScope.departmentName,
+    publishDepartmentIds: deptScope.publishDepartmentIds.length
+      ? deptScope.publishDepartmentIds
+      : undefined,
+    scopeDepartmentIds: deptScope.scopeDepartmentIds,
+    pricingMode: 'fixed',
+    fixedPrice: form.value.fixedPrice,
+    trainingCourseId: form.value.trainingCourseId.trim() || undefined,
     unlimitedQuantity: form.value.unlimitedQuantity,
     plannedTotal: form.value.unlimitedQuantity ? undefined : form.value.plannedTotal,
     longTerm: form.value.longTerm,
     startTime: start,
     endTime: end,
-    dispatchMode: form.value.dispatchMode,
+    dispatchMode: 'hall',
     maxPerPerson: form.value.maxPerPerson,
-    region: form.value.region.trim(),
+    regionCodes: [...form.value.regionCodes],
+    addressDetail: form.value.addressDetail.trim() || undefined,
+    region,
     description: form.value.description.trim(),
+    metadataFields: form.value.metadataFields.filter((m) => m.label.trim()),
   }
 }
 
@@ -406,7 +453,7 @@ function handleAction(
             <strong>{{ t.name }}</strong>
             <span class="tag">{{ t.statusLabel }}</span>
           </div>
-          <p>{{ t.departmentLabel }} · {{ t.workflowName }} · {{ t.quantityLabel }} · {{ t.dispatchLabel }}</p>
+          <p>{{ t.providerLabel }} · {{ t.scopeLabel }} · {{ t.workflowName }} · {{ t.quantityLabel }}</p>
           <div class="progress">
             <div class="bar"><i :style="{ width: `${t.progress}%` }" /></div>
             <span>完成 {{ t.completedCount }} / 接单 {{ t.acceptedCount }}</span>
@@ -493,69 +540,15 @@ function handleAction(
           <strong>任务发布</strong>
           <button type="button" class="close" @click="publishVisible = false">关闭</button>
         </div>
-        <div class="sheet-body">
-          <label>部门/公司</label>
-          <select v-model="form.departmentId">
-            <option value="" disabled>请选择</option>
-            <option v-for="d in departmentOptions" :key="d.id" :value="d.id">
-              {{ d.name }}
-            </option>
-          </select>
-
-          <label>任务流程</label>
-          <select v-model="form.workflowId">
-            <option v-for="opt in workflowOptions" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-
-          <label>任务名称</label>
-          <input v-model="form.name" type="text" placeholder="任务名称" />
-
-          <label>任务内容</label>
-          <textarea v-model="form.description" rows="3" placeholder="任务说明、完成标准等" />
-
-          <label>任务地点</label>
-          <input v-model="form.region" type="text" placeholder="如：北京市朝阳区" />
-
-          <label>单价（元/单）</label>
-          <input v-model.number="form.fixedPrice" type="number" min="1" />
-
-          <label>任务数量</label>
-          <div class="inline">
-            <input
-              v-model.number="form.plannedTotal"
-              type="number"
-              min="1"
-              :disabled="form.unlimitedQuantity"
+        <div class="sheet-body publish-form">
+          <el-form label-position="top">
+            <TaskPublishFormBody
+              v-model="form"
+              :provider-options="providerOptions"
+              :department-options="departmentOptions"
+              :workflow-options="workflowOptions"
             />
-            <label class="check">
-              <input v-model="form.unlimitedQuantity" type="checkbox" />
-              无上限
-            </label>
-          </div>
-
-          <label>任务期限</label>
-          <div class="inline">
-            <label class="check">
-              <input v-model="form.longTerm" type="checkbox" />
-              长期
-            </label>
-          </div>
-          <div v-if="!form.longTerm" class="inline dates">
-            <input v-model="form.dateRange[0]" type="date" />
-            <span>至</span>
-            <input v-model="form.dateRange[1]" type="date" />
-          </div>
-
-          <label>派单方式</label>
-          <select v-model="form.dispatchMode">
-            <option value="hall">发布到任务大厅</option>
-            <option value="assign">指派特定人员</option>
-          </select>
-
-          <label>每人限领</label>
-          <input v-model.number="form.maxPerPerson" type="number" min="1" max="99" />
+          </el-form>
         </div>
         <div class="sheet-foot">
           <button type="button" class="ghost" @click="publishVisible = false">取消</button>
@@ -767,8 +760,8 @@ function handleAction(
   justify-content: center;
 }
 .sheet {
-  width: min(100%, 430px);
-  max-height: 88vh;
+  width: min(100%, 560px);
+  max-height: 92vh;
   background: #fff;
   border-radius: 16px 16px 0 0;
   display: flex;
@@ -853,5 +846,14 @@ function handleAction(
   border: none;
   background: #228BFF;
   color: #fff;
+}
+.publish-form {
+  gap: 0;
+}
+.publish-form :deep(.el-form-item) {
+  margin-bottom: 12px;
+}
+.publish-form :deep(.task-publish-form-body) {
+  font-size: 13px;
 }
 </style>

@@ -47,6 +47,24 @@ export function resolvePricingForTask(task: Task, taskTypes: TaskType[]): TaskPr
   return resolveTaskPricing(task, taskTypes) as TaskPricingLike | undefined
 }
 
+/** 任务大厅可见性：全局所有灵工；部门范围仅所选部门及下级灵工 */
+export function isTaskVisibleToWorker(
+  task: Task,
+  workerDepartmentId: string | undefined,
+): boolean {
+  if (task.status !== 'active') return false
+  // 兼容旧数据：未声明时视为大厅可见
+  if (task.dispatchMode && task.dispatchMode !== 'hall') return false
+  if (!task.publishScope || task.publishScope === 'global') return true
+  if (!workerDepartmentId) return false
+  const scopeIds = task.scopeDepartmentIds?.length
+    ? task.scopeDepartmentIds
+    : task.departmentId
+      ? [task.departmentId]
+      : []
+  return scopeIds.includes(workerDepartmentId)
+}
+
 export function getWorkerClaimedQuantity(
   instances: TaskInstance[],
   taskId: string,

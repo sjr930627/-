@@ -8,6 +8,7 @@ import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import {
   buildHallTaskRow,
   getWorkerClaimedQuantity,
+  isTaskVisibleToWorker,
   resolvePricingForTask,
 } from '@/services/miniTask'
 import {
@@ -18,7 +19,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
-const { employeeId } = useMiniAppWorker()
+const { employeeId, employee } = useMiniAppWorker()
 const { ensureActionAllowed } = useMiniAppActionGate()
 
 const enterpriseId = computed(() => String(route.params.enterpriseId))
@@ -38,8 +39,7 @@ const taskRows = computed(() =>
     .filter(
       (t) =>
         t.enterpriseId === enterpriseId.value &&
-        t.status === 'active' &&
-        t.dispatchMode === 'hall' &&
+        isTaskVisibleToWorker(t, employee.value?.departmentId) &&
         (!enterpriseNameFilter.value || t.enterpriseName === enterpriseNameFilter.value),
     )
     .map((t) => {

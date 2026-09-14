@@ -144,6 +144,12 @@ import {
   buildVersionRecord,
   ensureGroupVersions,
 } from '@/services/attendanceGroupVersion'
+import {
+  buildWorkflowVersionRecord,
+  createSnapshotFromWorkflow,
+  ensureWorkflowVersions,
+  nextWorkflowVersionNumber,
+} from '@/services/taskWorkflowVersion'
 import { seedEnterpriseRoleTemplates, buildEnterpriseRolesForAll, buildEnterpriseRoleId, seedSystemRoles, findEnterpriseRoleByCode } from '@/mock/permissionSeed'
 import { seedSystemAccounts } from '@/mock/accountSeed'
 import { seedSystemOperationLogs } from '@/mock/operationLogSeed'
@@ -177,6 +183,7 @@ import { seedEnterprisePositions, findSeedPositionId } from '@/mock/positionSeed
 import {
   normalizeDeptInterviewRule,
   normalizeGrabInterviewDeptRule,
+  normalizeGrabInterviewScheduleRule,
 } from '@/constants/grabInterview'
 import {
   isAssignmentConfirmedLocked,
@@ -267,7 +274,16 @@ import { resolveTaskPricing } from '@/constants/task'
 import { generateEnterpriseCode, normalizeEnterpriseModules } from '@/constants/enterprise'
 import { normalizeSystemAccount, accountHasRole } from '@/constants/account'
 import { unionMenuPermissions, unionPermissionIds } from '@/constants/permission'
-import { generateContractNo, generateServiceProviderCode, addContractRenewPeriod, resolveContractRenewBaseDate, contractRenewPeriodOptions, type ContractRenewPeriod } from '@/constants/partnership'
+import {
+  generateContractNo,
+  generateServiceProviderCode,
+  addContractRenewPeriod,
+  resolveContractRenewBaseDate,
+  resolveContractDisplayStatus,
+  resolveContractApprovalStatus,
+  contractRenewPeriodOptions,
+  type ContractRenewPeriod,
+} from '@/constants/partnership'
 import {
   applyContractConfig,
   createContractVersion,
@@ -278,7 +294,7 @@ import {
   pickContractConfig,
   restoreEffectiveConfig,
 } from '@/services/contractVersion'
-import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage } from '@/utils'
+import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureServiceContracts, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage, calcAgeFromIdCard } from '@/utils'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
 import { generateBillNo, resolveBillTaxFlagsFromContract, resolveServiceProviderForEnterprise } from '@/services/billSettlement'
 import { estimateServiceFeeWaiverByQuantity } from '@/constants/payrollBill'
@@ -328,31 +344,53 @@ function loadEnterprisePositions(
 ): EnterprisePosition[] {
   let list = loadFromStorage<EnterprisePosition[]>('enterprisePositions', seedEnterprisePositions)
 
-  // 合并 seed 中缺失的岗位（按 id）
+  // 合并 seed 中缺失的岗位（按 id）；已存在的同步为最新 seed 字段（去掉历史「模板」名等）
   for (const seed of seedEnterprisePositions) {
-    if (!list.some((p) => p.id === seed.id)) {
+    const idx = list.findIndex((p) => p.id === seed.id)
+    if (idx < 0) {
       list = [...list, seed]
+    } else {
+      list[idx] = {
+        ...list[idx],
+        ...seed,
+        profile: { ...list[idx].profile, ...seed.profile },
+        schedule: seed.schedule ?? list[idx].schedule,
+      }
     }
   }
 
   // 从面试配置模版库迁移到顶层岗位库
   for (const cfg of configs) {
-    const hasAny = list.some((p) => p.enterpriseId === cfg.enterpriseId)
     for (const tpl of cfg.positionTemplates ?? []) {
       if (list.some((p) => p.id === tpl.id)) continue
-      // 企业已有岗位时，仅按 id 补齐；企业完全为空时整库灌入
-      if (!hasAny || true) {
-        list = [
-          ...list,
-          {
-            ...tpl,
-            enterpriseId: cfg.enterpriseId,
-            updatedAt: tpl.updatedAt || new Date().toISOString(),
+      const positionName = (tpl.profile.positionName || tpl.name || '').trim()
+      list = [
+        ...list,
+        {
+          ...tpl,
+          name: positionName,
+          enterpriseId: cfg.enterpriseId,
+          profile: {
+            ...tpl.profile,
+            positionName,
           },
-        ]
-      }
+          updatedAt: tpl.updatedAt || new Date().toISOString(),
+        },
+      ]
     }
   }
+
+  // 统一 name = 岗位名称（兼容本地缓存仍带「xxx模板」）
+  list = list.map((p) => {
+    const positionName = (p.profile.positionName || p.name || '').trim()
+    if (!positionName) return p
+    if (p.name === positionName && p.profile.positionName === positionName) return p
+    return {
+      ...p,
+      name: positionName,
+      profile: { ...p.profile, positionName },
+    }
+  })
 
   // 员工岗位名称对齐 positionId
   for (const emp of employees) {
@@ -374,6 +412,17 @@ function loadEnterprisePositions(
   return list
 }
 
+function normalizeEmployeeAgesFromIdCard(employees: Employee[]): Employee[] {
+  let changed = false
+  const next = employees.map((emp) => {
+    const age = calcAgeFromIdCard(emp.idCardNo)
+    if (age == null || emp.age === age) return emp
+    changed = true
+    return { ...emp, age }
+  })
+  return changed ? next : employees
+}
+
 function loadWorkforceSeed() {
   const merged = mergeWorkforceSeed(
     loadFromStorage<Department[]>('departments', seedDepartments),
@@ -382,7 +431,8 @@ function loadWorkforceSeed() {
     loadFromStorage<AttendanceGroup[]>('attendanceGroups', seedAttendanceGroups),
   )
   const departments = normalizeWorkforceEnterpriseId(merged.departments)
-  const employees = normalizeWorkforceEnterpriseId(merged.employees)
+  let employees = normalizeWorkforceEnterpriseId(merged.employees)
+  employees = normalizeEmployeeAgesFromIdCard(employees)
   const grabInterviewConfigs = loadFromStorage<GrabInterviewConfig[]>(
     'grabInterviewConfigs',
     seedGrabInterviewConfigs,
@@ -392,6 +442,10 @@ function loadWorkforceSeed() {
   for (const cfg of grabInterviewConfigs) {
     cfg.positionTemplates = enterprisePositions.filter((p) => p.enterpriseId === cfg.enterpriseId)
   }
+  // 写回纠正后的演示数据，避免刷新后又回到旧缓存
+  saveToStorage('employees', employees)
+  saveToStorage('enterprisePositions', enterprisePositions)
+  saveToStorage('grabInterviewConfigs', grabInterviewConfigs)
   return {
     departments,
     employees,
@@ -461,7 +515,9 @@ export const useAppStore = defineStore('app', {
     overtimeRequests: loadFromStorage<OvertimeRequest[]>('overtimeRequests', seedOvertimeRequests),
     payrollConfig: loadFromStorage<PayrollConfig>('payrollConfig', defaultPayrollConfig),
     integrationLogs: loadFromStorage<IntegrationLog[]>('integrationLogs', seedIntegrationLogs),
-    taskWorkflows: loadFromStorage<TaskWorkflow[]>('taskWorkflows', seedTaskWorkflows),
+    taskWorkflows: loadFromStorage<TaskWorkflow[]>('taskWorkflows', seedTaskWorkflows).map(
+      ensureWorkflowVersions,
+    ),
     taskTypes: loadFromStorage<TaskType[]>('taskTypes', seedTaskTypes),
     tasks: loadFromStorage<Task[]>('tasks', seedTasks),
     taskInstances: loadFromStorage<TaskInstance[]>('taskInstances', seedTaskInstances),
@@ -526,8 +582,14 @@ export const useAppStore = defineStore('app', {
       seedSystemOperationLogs,
     ),
     serviceProviders: loadFromStorage<ServiceProvider[]>('serviceProviders', seedServiceProviders),
-    serviceContracts: loadFromStorage<ServiceContract[]>('serviceContracts', seedServiceContracts).map(
-      (c) => ensureContractVersions({ ...c, versions: c.versions ? c.versions.map((v) => ({ ...v })) : undefined }),
+    serviceContracts: ensureServiceContracts(
+      loadFromStorage<ServiceContract[]>('serviceContracts', seedServiceContracts),
+      seedServiceContracts,
+    ).map((c) =>
+      ensureContractVersions({
+        ...c,
+        versions: c.versions ? c.versions.map((v) => ({ ...v })) : undefined,
+      }),
     ),
     settlementBills: ensureSettlementBills(
       loadFromStorage<SettlementBill[]>('settlementBills', seedSettlementBills),
@@ -618,26 +680,35 @@ export const useAppStore = defineStore('app', {
       state.makeupRequests.filter((r) => r.status === 'pending').length +
       state.cancelShiftRequests.filter((r) => r.status === 'pending').length,
     pendingScheduleAttendanceApprovalCount: (state) => {
-      const isSchedule = (employeeId: string, date: string) =>
+      const isScheduleCancel = (r: (typeof state.cancelShiftRequests)[number]) => {
+        if (r.source) return r.source === 'schedule'
+        if (r.grabSlotId) return false
+        const asn = state.assignments.find((a) => a.employeeId === r.employeeId && a.date === r.date)
+        return !asn?.fromGrabSlotId
+      }
+      const isScheduleMakeup = (employeeId: string, date: string) =>
         !state.assignments.find((a) => a.employeeId === employeeId && a.date === date)?.fromGrabSlotId
       return (
-        state.makeupRequests.filter((r) => r.status === 'pending' && isSchedule(r.employeeId, r.date))
+        state.makeupRequests.filter((r) => r.status === 'pending' && isScheduleMakeup(r.employeeId, r.date))
           .length +
-        state.cancelShiftRequests.filter(
-          (r) => r.status === 'pending' && isSchedule(r.employeeId, r.date),
-        ).length
+        state.cancelShiftRequests.filter((r) => r.status === 'pending' && isScheduleCancel(r)).length
       )
     },
     pendingGrabAttendanceApprovalCount: (state) => {
-      const isGrab = (employeeId: string, date: string) =>
+      const isGrabCancel = (r: (typeof state.cancelShiftRequests)[number]) => {
+        if (r.source) return r.source === 'grab'
+        if (r.grabSlotId) return true
+        const asn = state.assignments.find((a) => a.employeeId === r.employeeId && a.date === r.date)
+        return Boolean(asn?.fromGrabSlotId)
+      }
+      const isGrabMakeup = (employeeId: string, date: string) =>
         Boolean(
           state.assignments.find((a) => a.employeeId === employeeId && a.date === date)?.fromGrabSlotId,
         )
       return (
-        state.makeupRequests.filter((r) => r.status === 'pending' && isGrab(r.employeeId, r.date))
+        state.makeupRequests.filter((r) => r.status === 'pending' && isGrabMakeup(r.employeeId, r.date))
           .length +
-        state.cancelShiftRequests.filter((r) => r.status === 'pending' && isGrab(r.employeeId, r.date))
-          .length
+        state.cancelShiftRequests.filter((r) => r.status === 'pending' && isGrabCancel(r)).length
       )
     },
     openExceptionCount: (state) =>
@@ -765,7 +836,7 @@ export const useAppStore = defineStore('app', {
       )
 
       const liveDepartmentCount = depts.filter(
-        (d) => !isUnassignedDepartment(d.id) && d.orgType !== 'enterprise',
+        (d) => !isUnassignedDepartment(d.id) && !isEnterpriseRootDepartment(d),
       ).length
 
       /** 演示快照优先，保证后台「企业人员统计」指标有稳定可读数据；需求缺口始终按招聘需求实时汇总 */
@@ -936,7 +1007,19 @@ export const useAppStore = defineStore('app', {
     },
 
     addDepartment(dept: Omit<Department, 'id'>) {
-      const item: Department = { ...dept, id: generateId('dept') }
+      if (!dept.parentId) {
+        throw new Error('请选择父级部门，不可与一级企业并列创建')
+      }
+      if (isUnassignedDepartment(dept.parentId)) {
+        throw new Error('不可挂在待入驻人员下')
+      }
+      const parent = this.departments.find((d) => d.id === dept.parentId)
+      const item: Department = {
+        ...dept,
+        id: generateId('dept'),
+        enterpriseId:
+          dept.enterpriseId ?? parent?.enterpriseId ?? DEFAULT_WORKFORCE_ENTERPRISE_ID,
+      }
       this.departments.push(item)
       this.persist('departments')
       return item
@@ -947,9 +1030,23 @@ export const useAppStore = defineStore('app', {
       if (existing && isEnterpriseRootDepartment(existing)) {
         throw new Error('企业根节点不可编辑')
       }
+      if (data.parentId === null || data.parentId === '') {
+        throw new Error('请选择父级部门，不可与一级企业并列')
+      }
+      if (data.parentId && isUnassignedDepartment(data.parentId)) {
+        throw new Error('不可挂在待入驻人员下')
+      }
       const idx = this.departments.findIndex((d) => d.id === id)
       if (idx >= 0) {
-        this.departments[idx] = { ...this.departments[idx], ...data }
+        const next = { ...this.departments[idx], ...data }
+        if (!next.parentId) {
+          throw new Error('请选择父级部门，不可与一级企业并列')
+        }
+        if (data.parentId) {
+          const parent = this.departments.find((d) => d.id === data.parentId)
+          if (parent?.enterpriseId) next.enterpriseId = parent.enterpriseId
+        }
+        this.departments[idx] = next
         this.persist('departments')
       }
     },
@@ -984,7 +1081,10 @@ export const useAppStore = defineStore('app', {
       if (descendantIds.has(targetId)) throw new Error('不能移动到自身或子部门下')
 
       const newParentId = position === 'inner' ? targetId : target.parentId
-      if (newParentId && descendantIds.has(newParentId)) {
+      if (!newParentId) {
+        throw new Error('不可与一级企业并列，请挂在企业下')
+      }
+      if (descendantIds.has(newParentId)) {
         throw new Error('不能移动到自身或子部门下')
       }
 
@@ -1032,6 +1132,10 @@ export const useAppStore = defineStore('app', {
 
     // Employee
     addEmployee(emp: Omit<Employee, 'id'>) {
+      const dept = this.departments.find((d) => d.id === emp.departmentId)
+      if (dept && !isUnassignedDepartment(dept.id) && dept.nodeType !== 'leaf') {
+        throw new Error('仅叶子部门可添加人员')
+      }
       const item: Employee = {
         ...emp,
         id: generateId('emp'),
@@ -1047,6 +1151,12 @@ export const useAppStore = defineStore('app', {
       return item
     },
     updateEmployee(id: string, data: Partial<Employee>) {
+      if (data.departmentId) {
+        const dept = this.departments.find((d) => d.id === data.departmentId)
+        if (dept && !isUnassignedDepartment(dept.id) && dept.nodeType !== 'leaf') {
+          throw new Error('仅可分配到叶子部门')
+        }
+      }
       const idx = this.employees.findIndex((e) => e.id === id)
       if (idx >= 0) {
         this.employees[idx] = { ...this.employees[idx], ...data }
@@ -1137,30 +1247,28 @@ export const useAppStore = defineStore('app', {
       })
     },
 
-    assignPendingOnboardEmployee(
-      employeeId: string,
-      data: { departmentId: string; position: string; employeeNo: string; positionId?: string },
-    ) {
-      const emp = this.employees.find((e) => e.id === employeeId)
-      if (!emp) throw new Error('人员不存在')
-      if (!data.employeeNo.trim()) throw new Error('请填写人员 ID')
-      this.batchAssignEmployees([employeeId], data.departmentId, data.position, {
-        employeeNo: data.employeeNo,
-        positionId: data.positionId,
-      })
-    },
-
-    /** 已申请入驻：审批通过并分配部门、岗位、人员 ID */
+    /** 已申请入驻：审批通过并分配部门、岗位 */
     approveOnboardApplication(
       employeeId: string,
-      data: { departmentId: string; position: string; employeeNo: string; positionId?: string },
+      data: { departmentId: string; position: string; employeeNo?: string; positionId?: string },
     ) {
       const emp = this.employees.find((e) => e.id === employeeId)
       if (!emp) throw new Error('人员不存在')
       if (emp.onboardingStage !== 'applied' && emp.status === 'pending') {
         // 仍允许审批待申请以外的已申请
       }
-      if (!data.employeeNo.trim()) throw new Error('请填写人员 ID')
+      this.batchAssignEmployees([employeeId], data.departmentId, data.position, {
+        employeeNo: data.employeeNo,
+        positionId: data.positionId,
+      })
+    },
+
+    assignPendingOnboardEmployee(
+      employeeId: string,
+      data: { departmentId: string; position: string; employeeNo?: string; positionId?: string },
+    ) {
+      const emp = this.employees.find((e) => e.id === employeeId)
+      if (!emp) throw new Error('人员不存在')
       this.batchAssignEmployees([employeeId], data.departmentId, data.position, {
         employeeNo: data.employeeNo,
         positionId: data.positionId,
@@ -1284,6 +1392,9 @@ export const useAppStore = defineStore('app', {
       if (!dept) throw new Error('目标部门不存在')
       if (isUnassignedDepartment(dept.id) || isEnterpriseRootDepartment(dept)) {
         throw new Error('请扫描具体业务部门二维码')
+      }
+      if (dept.nodeType !== 'leaf') {
+        throw new Error('仅叶子部门支持扫码入驻')
       }
       const enterpriseId =
         params.enterpriseId ||
@@ -1438,6 +1549,7 @@ export const useAppStore = defineStore('app', {
         this.employees,
         this.departments,
         gate,
+        this.trainingExams,
       )
       if (blocked.length > 0) {
         throw new Error(formatCourseGateBlockMessage(blocked, gate))
@@ -2515,7 +2627,10 @@ export const useAppStore = defineStore('app', {
           | 'hourlySubsidy'
           | 'baseHourlyRate'
           | 'effectiveHourlyRate'
+          | 'positionId'
+          | 'positionName'
           | 'positionRequirement'
+          | 'positionProfile'
           | 'requirements'
           | 'hasBreakTime'
           | 'breakRule'
@@ -2558,6 +2673,8 @@ export const useAppStore = defineStore('app', {
       edits?: Partial<
         Pick<
           GrabShiftSlot,
+          | 'positionId'
+          | 'positionName'
           | 'positionRequirement'
           | 'positionProfile'
           | 'requirements'
@@ -2700,12 +2817,7 @@ export const useAppStore = defineStore('app', {
             (a) => a.slotId === slot.id && a.status === 'approved',
           ).length
         }
-        slot.status =
-          slot.grabbedCount <= 0
-            ? 'open'
-            : slot.grabbedCount >= slot.requiredCount
-              ? 'full'
-              : 'partial'
+        slot.status = slot.grabbedCount >= slot.requiredCount ? 'full' : 'open'
 
         pushRecord(employeeId, 'person')
         this.persist('grabShiftSlots')
@@ -2771,7 +2883,7 @@ export const useAppStore = defineStore('app', {
         fromGrabSlotId: slotId,
       })
       slot.grabbedCount += 1
-      slot.status = slot.grabbedCount >= slot.requiredCount ? 'full' : 'partial'
+      slot.status = slot.grabbedCount >= slot.requiredCount ? 'full' : 'open'
       this.persist('grabShiftSlots')
       this.persist('assignments')
     },
@@ -2835,7 +2947,7 @@ export const useAppStore = defineStore('app', {
           fromGrabSlotId: slot.id,
         })
         slot.grabbedCount += 1
-        slot.status = slot.grabbedCount >= slot.requiredCount ? 'full' : 'partial'
+        slot.status = slot.grabbedCount >= slot.requiredCount ? 'full' : 'open'
         this.persist('grabShiftSlots')
         this.persist('assignments')
         this.pushNotification({
@@ -2995,6 +3107,7 @@ export const useAppStore = defineStore('app', {
           requireInterview: false,
           deptRules: [],
           positionTemplates: [],
+          scheduleTemplates: [],
           updatedAt: new Date().toISOString(),
         }
         this.grabInterviewConfigs.push(cfg)
@@ -3002,6 +3115,10 @@ export const useAppStore = defineStore('app', {
       }
       if (!cfg.positionTemplates) {
         cfg.positionTemplates = []
+        dirty = true
+      }
+      if (!cfg.scheduleTemplates) {
+        cfg.scheduleTemplates = []
         dirty = true
       }
       // 岗位模版库以 enterprisePositions 为准
@@ -3015,13 +3132,23 @@ export const useAppStore = defineStore('app', {
       }
       const needNorm = cfg.deptRules.some(
         (r) =>
+          r.requireInterview === undefined ||
           !Array.isArray(r.positions) ||
-          !r.departmentSchedule ||
           !!r.positionName ||
-          r.positions.some((p) => !p.id || !p.profile),
+          r.positions.some(
+            (p) =>
+              !p.id ||
+              !p.profile ||
+              !p.schedule ||
+              p.ruleScope === 'department',
+          ),
       )
       if (needNorm) {
-        cfg.deptRules = cfg.deptRules.map((r) => normalizeDeptInterviewRule(r))
+        cfg.deptRules = cfg.deptRules.map((r) =>
+          normalizeDeptInterviewRule(r, {
+            fallbackRequireInterview: cfg.requireInterview,
+          }),
+        )
         dirty = true
       }
       if (dirty) {
@@ -3060,6 +3187,49 @@ export const useAppStore = defineStore('app', {
     removeGrabInterviewDeptRule(enterpriseId: string, departmentId: string) {
       const cfg = this.ensureGrabInterviewConfig(enterpriseId)
       cfg.deptRules = cfg.deptRules.filter((r) => r.departmentId !== departmentId)
+      cfg.updatedAt = new Date().toISOString()
+      this.persist('grabInterviewConfigs')
+    },
+
+    getGrabInterviewScheduleTemplates(enterpriseId: string) {
+      return this.ensureGrabInterviewConfig(enterpriseId).scheduleTemplates ?? []
+    },
+
+    upsertGrabInterviewScheduleTemplate(
+      enterpriseId: string,
+      template: Omit<import('@/types').GrabInterviewScheduleTemplate, 'enterpriseId' | 'updatedAt'> & {
+        enterpriseId?: string
+        updatedAt?: string
+      },
+    ) {
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      const name = (template.name || '').trim()
+      if (!name) throw new Error('请填写模版名称')
+      const next: import('@/types').GrabInterviewScheduleTemplate = {
+        id: template.id || generateId('gist'),
+        enterpriseId,
+        name,
+        schedule: normalizeGrabInterviewScheduleRule(template.schedule),
+        updatedAt: new Date().toISOString(),
+      }
+      const list = cfg.scheduleTemplates ?? (cfg.scheduleTemplates = [])
+      const idx = list.findIndex((t) => t.id === next.id)
+      if (idx >= 0) list[idx] = next
+      else list.push(next)
+      cfg.updatedAt = new Date().toISOString()
+      this.persist('grabInterviewConfigs')
+      return next
+    },
+
+    removeGrabInterviewScheduleTemplate(enterpriseId: string, templateId: string) {
+      const cfg = this.ensureGrabInterviewConfig(enterpriseId)
+      cfg.scheduleTemplates = (cfg.scheduleTemplates ?? []).filter((t) => t.id !== templateId)
+      cfg.deptRules = cfg.deptRules.map((rule) => ({
+        ...rule,
+        positions: rule.positions.map((p) =>
+          p.scheduleTemplateId === templateId ? { ...p, scheduleTemplateId: null } : p,
+        ),
+      }))
       cfg.updatedAt = new Date().toISOString()
       this.persist('grabInterviewConfigs')
     },
@@ -3175,7 +3345,7 @@ export const useAppStore = defineStore('app', {
           fromGrabSlotId: slot.id,
         })
         slot.grabbedCount += 1
-        slot.status = slot.grabbedCount >= slot.requiredCount ? 'full' : 'partial'
+        slot.status = slot.grabbedCount >= slot.requiredCount ? 'full' : 'open'
         this.persist('grabShiftSlots')
         this.persist('assignments')
       }
@@ -3264,29 +3434,96 @@ export const useAppStore = defineStore('app', {
     },
 
     // Task Workflow
-    addTaskWorkflow(data: Omit<TaskWorkflow, 'id' | 'version' | 'boundTaskTypeCount' | 'createdAt' | 'updatedAt'>) {
+    addTaskWorkflow(
+      data: Omit<
+        TaskWorkflow,
+        'id' | 'version' | 'versions' | 'boundTaskTypeCount' | 'createdAt' | 'updatedAt'
+      >,
+    ) {
       const now = new Date().toISOString()
-      const item: TaskWorkflow = {
+      const item = ensureWorkflowVersions({
         ...data,
         id: generateId('wf'),
         version: 1,
+        versions: [],
         boundTaskTypeCount: 0,
         createdAt: now,
         updatedAt: now,
+      })
+      // ensureWorkflowVersions 在 versions 为空时会生成初始版本
+      if (item.versions?.[0]) {
+        item.versions[0].changeNote = data.status === 'enabled' ? '首次发布' : '初始草稿'
+        item.versions[0].publishedAt = now
       }
       this.taskWorkflows.push(item)
       this.persist('taskWorkflows')
       return item
     },
 
-    updateTaskWorkflow(id: string, data: Partial<Omit<TaskWorkflow, 'id' | 'boundTaskTypeCount'>>) {
+    /** 草稿保存：更新内容但不升版本 */
+    updateTaskWorkflow(
+      id: string,
+      data: Partial<Omit<TaskWorkflow, 'id' | 'boundTaskTypeCount' | 'versions'>>,
+    ) {
       const wf = this.taskWorkflows.find((w) => w.id === id)
       if (!wf) throw new Error('工作流不存在')
+      Object.assign(wf, ensureWorkflowVersions(wf))
       if (countWorkflowBoundTasks(this.tasks, id) > 0 && data.nodes) {
         throw new Error('工作流已绑定任务，不可修改节点，请停用后创建新版本')
       }
       Object.assign(wf, data, { updatedAt: new Date().toISOString() })
       this.persist('taskWorkflows')
+    },
+
+    /** 发布：写入新版本快照并设为生效 */
+    publishTaskWorkflow(
+      id: string,
+      data: Partial<Omit<TaskWorkflow, 'id' | 'boundTaskTypeCount' | 'versions' | 'version'>>,
+      changeNote?: string,
+    ) {
+      const wf = this.taskWorkflows.find((w) => w.id === id)
+      if (!wf) throw new Error('工作流不存在')
+      Object.assign(wf, ensureWorkflowVersions(wf))
+      if (countWorkflowBoundTasks(this.tasks, id) > 0 && data.nodes) {
+        throw new Error('工作流已绑定任务，不可修改节点，请从版本历史恢复或停用后新建')
+      }
+      Object.assign(wf, data, {
+        status: data.status ?? 'enabled',
+        updatedAt: new Date().toISOString(),
+      })
+      const nextVersion = nextWorkflowVersionNumber(wf)
+      ;(wf.versions ?? []).forEach((v) => {
+        v.isActive = false
+      })
+      const record = buildWorkflowVersionRecord(wf, nextVersion, changeNote || '配置发布')
+      if (!wf.versions) wf.versions = []
+      wf.versions.unshift(record)
+      wf.version = nextVersion
+      this.persist('taskWorkflows')
+      return record
+    },
+
+    restoreTaskWorkflowVersion(workflowId: string, versionId: string) {
+      const wf = this.taskWorkflows.find((w) => w.id === workflowId)
+      if (!wf) throw new Error('工作流不存在')
+      Object.assign(wf, ensureWorkflowVersions(wf))
+      const target = wf.versions?.find((v) => v.id === versionId)
+      if (!target) throw new Error('版本不存在')
+      const snapshot = createSnapshotFromWorkflow(target.snapshot)
+      Object.assign(wf, snapshot, { updatedAt: new Date().toISOString() })
+      const nextVersion = nextWorkflowVersionNumber(wf)
+      ;(wf.versions ?? []).forEach((v) => {
+        v.isActive = false
+      })
+      const record = buildWorkflowVersionRecord(
+        wf,
+        nextVersion,
+        `从 V${target.version} 恢复`,
+      )
+      wf.versions!.unshift(record)
+      wf.version = nextVersion
+      this.persist('taskWorkflows')
+      return record
     },
 
     copyTaskWorkflow(id: string) {
@@ -3631,7 +3868,7 @@ export const useAppStore = defineStore('app', {
             ? 'effective'
             : 'draft'
       const version = createContractVersion(item, versionStatus, {
-        changeNote: changeNote || '初始版本',
+        changeNote: changeNote !== undefined ? changeNote : '初始版本',
         submittedBy: item.submittedBy,
         submittedAt: item.submittedAt,
       })
@@ -3702,14 +3939,17 @@ export const useAppStore = defineStore('app', {
         let working = existingWorking
         if (!working) {
           working = createContractVersion(contract, 'draft', {
-            changeNote: options?.changeNote || '改版草稿',
+            changeNote: options?.changeNote !== undefined ? options.changeNote : '改版草稿',
             config: nextConfig,
           })
           contract.versions = [...(contract.versions ?? []), working]
         } else {
           Object.assign(working, nextConfig, {
             status: 'draft' as const,
-            changeNote: options?.changeNote || working.changeNote || '改版草稿',
+            changeNote:
+              options?.changeNote !== undefined
+                ? options.changeNote
+                : working.changeNote || '改版草稿',
             submittedBy: undefined,
             submittedAt: undefined,
             approvedBy: undefined,
@@ -3946,6 +4186,22 @@ export const useAppStore = defineStore('app', {
           createdAt: new Date().toLocaleString('zh-CN'),
         },
       ]
+      this.persist('serviceContracts')
+    },
+
+    /** 仅草稿 + 待提交/已驳回可删除 */
+    deleteServiceContract(id: string) {
+      const contract = this.serviceContracts.find((c) => c.id === id)
+      if (!contract) throw new Error('合约不存在')
+      const displayStatus = resolveContractDisplayStatus(contract)
+      const approval = resolveContractApprovalStatus(contract)
+      if (displayStatus !== 'draft') {
+        throw new Error('仅草稿状态合同可删除')
+      }
+      if (approval !== 'draft' && approval !== 'rejected') {
+        throw new Error('仅待提交或已驳回的合同可删除')
+      }
+      this.serviceContracts = this.serviceContracts.filter((c) => c.id !== id)
       this.persist('serviceContracts')
     },
 
@@ -4240,6 +4496,8 @@ export const useAppStore = defineStore('app', {
           | 'name'
           | 'description'
           | 'region'
+          | 'regionCodes'
+          | 'addressDetail'
           | 'plannedTotal'
           | 'unlimitedQuantity'
           | 'incentive'
@@ -4250,6 +4508,12 @@ export const useAppStore = defineStore('app', {
           | 'settlementUnitPrice'
           | 'departmentId'
           | 'departmentName'
+          | 'publishDepartmentIds'
+          | 'serviceProviderId'
+          | 'serviceProviderName'
+          | 'publishScope'
+          | 'scopeDepartmentIds'
+          | 'metadataFields'
           | 'startTime'
           | 'endTime'
           | 'longTerm'
@@ -6232,12 +6496,36 @@ export const useAppStore = defineStore('app', {
         id: generateId('tmc'),
         name,
         enterpriseId: data.enterpriseId,
-        builtin: false,
         createdAt: new Date().toISOString(),
       }
       this.trainingMaterialCategories.push(item)
       this.persist('trainingMaterialCategories')
       return item
+    },
+    /** 为企业补齐默认分类库（首次进入时） */
+    ensureTrainingMaterialCategoryLibrary(enterpriseId: string | null) {
+      const eid = enterpriseId ?? null
+      const exists = this.trainingMaterialCategories.some((c) => (c.enterpriseId ?? null) === eid)
+      if (exists) return
+      const defs = [
+        { key: 'info_security', name: '信息安全' },
+        { key: 'safety', name: '安全生产' },
+        { key: 'anti_fraud', name: '反诈骗' },
+        { key: 'service', name: '服务规范' },
+        { key: 'emergency', name: '应急处理' },
+        { key: 'other', name: '其他' },
+      ]
+      const prefix = eid ? `tmc_${eid}` : 'tmc'
+      const now = new Date().toISOString()
+      for (const d of defs) {
+        this.trainingMaterialCategories.push({
+          id: `${prefix}_${d.key}`,
+          name: d.name,
+          enterpriseId: eid,
+          createdAt: now,
+        })
+      }
+      this.persist('trainingMaterialCategories')
     },
     updateTrainingMaterialCategory(id: string, name: string) {
       const item = this.trainingMaterialCategories.find((c) => c.id === id)
@@ -6250,7 +6538,6 @@ export const useAppStore = defineStore('app', {
     removeTrainingMaterialCategory(id: string) {
       const item = this.trainingMaterialCategories.find((c) => c.id === id)
       if (!item) throw new Error('分类不存在')
-      if (item.builtin) throw new Error('内置分类不可删除')
       const used = this.trainingMaterials.some((m) => m.category === id || m.category === item.name)
       if (used) throw new Error('仍有资料使用该分类，不可删除')
       this.trainingMaterialCategories = this.trainingMaterialCategories.filter((c) => c.id !== id)
@@ -6657,9 +6944,17 @@ export const useAppStore = defineStore('app', {
     acceptTaskFromHall(taskId: string, employeeId: string, quantity = 1) {
       const task = this.tasks.find((t) => t.id === taskId)
       if (!task || task.status !== 'active') throw new Error('任务不可领取')
-      if (task.dispatchMode !== 'hall') throw new Error('该任务不支持大厅抢单')
+      if (task.dispatchMode && task.dispatchMode !== 'hall') throw new Error('该任务不支持大厅抢单')
       const emp = this.employees.find((e) => e.id === employeeId)
       if (!emp) throw new Error('人员不存在')
+      if (
+        task.publishScope === 'department' &&
+        !(task.scopeDepartmentIds?.length
+          ? task.scopeDepartmentIds.includes(emp.departmentId)
+          : task.departmentId === emp.departmentId)
+      ) {
+        throw new Error('该任务仅对指定部门灵工开放')
+      }
       this.assertCourseGateForEmployee(employeeId, 'task')
       if (isEmployeeUnavailableInRange(emp, task.startTime, task.endTime)) {
         throw new Error('您已配置请假/不上岗，任务期限内无法领取')
@@ -6926,6 +7221,18 @@ export const useAppStore = defineStore('app', {
       agr.status = 'terminated'
       this.persist('workerAgreements')
       return agr
+    },
+
+    /** 删除待签署协议 */
+    deleteWorkerAgreement(id: string) {
+      const idx = this.workerAgreements.findIndex((a) => a.id === id)
+      if (idx < 0) throw new Error('协议不存在')
+      const agr = this.workerAgreements[idx]
+      if (agr.signed || agr.status === 'signed') {
+        throw new Error('已签署协议不可删除')
+      }
+      this.workerAgreements.splice(idx, 1)
+      this.persist('workerAgreements')
     },
 
     bindWorkerPayment(

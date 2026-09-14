@@ -21,6 +21,7 @@ import type {
   WorkflowRole,
   WorkflowStatus,
 } from '@/types'
+import { getDepartmentDescendantIds } from '@/utils'
 
 export const industryTagMap: Record<IndustryTag, string> = {
   telecom: '运营商',
@@ -183,6 +184,89 @@ export const taskPublishStatusMap: Record<TaskPublishStatus, string> = {
 export const dispatchModeMap: Record<DispatchMode, string> = {
   assign: '指派人员',
   hall: '任务大厅',
+}
+
+export const taskPublishScopeMap: Record<import('@/types').TaskPublishScope, string> = {
+  global: '全局',
+  department: '部门',
+}
+
+export const taskMetadataFieldTypeMap: Record<
+  import('@/types').TaskMetadataFieldType,
+  string
+> = {
+  address: '地址',
+  time: '时间',
+  timeRange: '时间段',
+  text: '文本',
+  file: '文件',
+  image: '图片',
+}
+
+export const taskMetadataFieldTypeOptions = Object.entries(taskMetadataFieldTypeMap).map(
+  ([value, label]) => ({
+    value: value as import('@/types').TaskMetadataFieldType,
+    label,
+  }),
+)
+
+export function formatTaskRegionLabel(codes?: string[], detail?: string): string {
+  const base = (codes ?? []).filter(Boolean).join(' / ')
+  if (base && detail?.trim()) return `${base} ${detail.trim()}`
+  return detail?.trim() || base || ''
+}
+
+export function emptyTaskMetadataField(
+  index = 0,
+): import('@/types').TaskMetadataField {
+  return {
+    key: `meta_${index + 1}_${Date.now().toString(36)}`,
+    label: '',
+    type: 'text',
+    value: '',
+  }
+}
+
+/** 多选发布部门 → 展示名 + 展开后的可见部门 ID */
+export function resolveTaskPublishDepartmentScope(
+  departments: import('@/types').Department[],
+  selectedIds: string[],
+): {
+  publishDepartmentIds: string[]
+  departmentId: string | undefined
+  departmentName: string | undefined
+  scopeDepartmentIds: string[] | undefined
+} {
+  const ids = [...new Set(selectedIds.filter(Boolean))]
+  if (!ids.length) {
+    return {
+      publishDepartmentIds: [],
+      departmentId: undefined,
+      departmentName: undefined,
+      scopeDepartmentIds: undefined,
+    }
+  }
+  const names = ids
+    .map((id) => departments.find((d) => d.id === id)?.name)
+    .filter((n): n is string => Boolean(n))
+  const scope = new Set<string>()
+  for (const id of ids) {
+    getDepartmentDescendantIds(departments, id).forEach((x) => scope.add(x))
+  }
+  return {
+    publishDepartmentIds: ids,
+    departmentId: ids[0],
+    departmentName: names.join('、') || undefined,
+    scopeDepartmentIds: [...scope],
+  }
+}
+
+/** 回填表单：优先多选字段，兼容旧单选 */
+export function taskPublishDepartmentIdsFromTask(
+  task: Pick<import('@/types').Task, 'publishDepartmentIds' | 'departmentId'>,
+): string[] {
+  if (task.publishDepartmentIds?.length) return [...task.publishDepartmentIds]
+  return task.departmentId ? [task.departmentId] : []
 }
 
 export const industryOptions = Object.entries(industryTagMap).map(([value, label]) => ({

@@ -23,7 +23,10 @@ export interface Department {
   orgType?: DepartmentOrgType
   nodeType?: DepartmentNodeType
   description?: string
+  /** @deprecated 使用 managerEmployeeIds */
   managerEmployeeId?: string | null
+  /** 部门负责人（可多选） */
+  managerEmployeeIds?: string[]
   attendanceGroupId?: string | null
   /** 部门图片（可选） */
   imageUrl?: string
@@ -82,6 +85,8 @@ export interface Employee {
   positionId?: string
   /** 入驻日期 */
   hireDate: string
+  /** 离职日期（status=resigned 时用于期间统计） */
+  resignDate?: string
   skills: string[]
   preferredShiftIds: string[]
   unavailableDates: string[]
@@ -196,7 +201,7 @@ export interface ScheduleTemplate {
 }
 
 /** 抢班独立班次状态（容量/招募） */
-export type GrabShiftStatus = 'open' | 'partial' | 'full' | 'cancelled'
+export type GrabShiftStatus = 'open' | 'full' | 'cancelled'
 
 /** 抢班班次发布审批状态（上架小程序前） */
 export type GrabShiftPublishStatus = 'pending' | 'published' | 'rejected'
@@ -256,8 +261,8 @@ export interface GrabInterviewPositionProfile {
 /** 面试时间与席位规则 */
 export interface GrabInterviewScheduleRule {
   /**
-   * - unified：各选中星期共用 timeSlots
-   * - by_day：按日在 dayTimeSlots 分别配置
+   * - unified：所选日期统一面试时间（共用 timeSlots）
+   * - by_day：不同日期不同时间段（dayTimeSlots）
    */
   scheduleMode?: GrabInterviewScheduleMode
   weekdays: GrabInterviewWeekday[]
@@ -267,6 +272,15 @@ export interface GrabInterviewScheduleRule {
   seatUnitMinutes?: GrabInterviewSeatUnitMinutes
   /** 每个计量单位可面试人数 */
   seatsPerUnit?: number
+}
+
+/** 可复用的面试时间模版 */
+export interface GrabInterviewScheduleTemplate {
+  id: string
+  enterpriseId: string
+  name: string
+  schedule: GrabInterviewScheduleRule
+  updatedAt: string
 }
 
 /** 企业级岗位模板 */
@@ -290,16 +304,17 @@ export type EnterprisePosition = GrabInterviewPositionTemplate
 /** 部门下的岗位配置 */
 export interface GrabInterviewDeptPosition {
   id: string
-  /** 来源模板 */
+  /** 来源岗位库 */
   templateId?: string | null
+  /** 套用的面试时间模版 */
+  scheduleTemplateId?: string | null
   profile: GrabInterviewPositionProfile
   /**
-   * - position：使用本岗位独立面试规则
-   * - department：应用部门统一面试规则
+   * @deprecated 已取消部门统一规则，岗位均自带 schedule；仅兼容旧数据
    */
-  ruleScope: 'position' | 'department'
-  /** 岗位独立规则（ruleScope=position） */
-  schedule?: GrabInterviewScheduleRule
+  ruleScope?: 'position' | 'department'
+  /** 本岗位面试时间 */
+  schedule: GrabInterviewScheduleRule
 }
 
 /** 抢班/直面发布范围 */
@@ -312,15 +327,19 @@ export type GrabPublishScope = 'global' | 'department'
 export interface GrabInterviewDeptRule {
   departmentId: string
   /**
-   * 发布范围：
-   * - global：企业下抢班池人员可见
-   * - department：仅该部门抢班池可见
-   * 缺省按 global
+   * 本部门抢班是否需要面试。
+   * 缺省时兼容读取企业级 requireInterview。
+   */
+  requireInterview?: boolean
+  /**
+   * @deprecated 面试配置已取消发布范围，统一对企业抢班池可见；字段仅兼容旧数据
    */
   publishScope?: GrabPublishScope
   /** 部门下多岗位 */
   positions: GrabInterviewDeptPosition[]
-  /** 部门统一面试规则（岗位选择「应用全部门」时使用） */
+  /**
+   * @deprecated 已改为岗位自带面试时间 + 面试时间模版；仅兼容迁移
+   */
   departmentSchedule?: GrabInterviewScheduleRule
   /** @deprecated 旧版单岗位字段，仅兼容读取 */
   positionName?: string
@@ -344,11 +363,15 @@ export interface GrabInterviewDeptRule {
 export interface GrabInterviewConfig {
   id: string
   enterpriseId: string
-  /** 抢班是否需要面试 */
+  /**
+   * @deprecated 已下沉到部门规则 requireInterview；仅作旧数据回退
+   */
   requireInterview: boolean
   deptRules: GrabInterviewDeptRule[]
   /** 企业岗位模板库 */
   positionTemplates?: GrabInterviewPositionTemplate[]
+  /** 面试时间模版库 */
+  scheduleTemplates?: GrabInterviewScheduleTemplate[]
   updatedAt: string
 }
 
@@ -741,6 +764,13 @@ export interface AttendanceGroupShiftTemplate {
 export interface PunchLocation {
   id: string
   name: string
+  /** 省 */
+  province?: string
+  /** 市 */
+  city?: string
+  /** 区/县 */
+  district?: string
+  /** 详细地址（不含省市区） */
   address?: string
 }
 
@@ -1764,10 +1794,28 @@ export interface TaskWorkflow {
   nodes: WorkflowNode[]
   fields?: WorkflowFieldConfig[]
   status: WorkflowStatus
+  /** 当前生效版本号 */
   version: number
+  /** 历史版本（含当前生效） */
+  versions?: TaskWorkflowVersion[]
   boundTaskTypeCount: number
   createdAt: string
   updatedAt: string
+}
+
+/** 任务流程某一版本的配置快照 */
+export type TaskWorkflowVersionSnapshot = Omit<
+  TaskWorkflow,
+  'id' | 'createdAt' | 'updatedAt' | 'version' | 'versions' | 'boundTaskTypeCount'
+>
+
+export interface TaskWorkflowVersion {
+  id: string
+  version: number
+  isActive: boolean
+  publishedAt: string
+  changeNote?: string
+  snapshot: TaskWorkflowVersionSnapshot
 }
 
 export type PricingMode = 'fixed' | 'tiered'
@@ -1812,6 +1860,16 @@ export interface TaskType {
 
 export type TaskPublishStatus = 'draft' | 'pending' | 'active' | 'ended' | 'cancelled' | 'rejected'
 export type DispatchMode = 'assign' | 'hall'
+/** 任务发布范围：全局全部灵工可见；部门含所选部门及全部下级 */
+export type TaskPublishScope = 'global' | 'department'
+export type TaskMetadataFieldType = 'address' | 'time' | 'timeRange' | 'text' | 'file' | 'image'
+
+export interface TaskMetadataField {
+  key: string
+  label: string
+  type: TaskMetadataFieldType
+  value: string
+}
 
 export interface Task {
   id: string
@@ -1823,9 +1881,18 @@ export interface Task {
   /** 展示用：多为关联流程名称 */
   taskTypeName: string
   workflowId: string
-  /** 发布归属部门/公司 */
+  /** 合作服务商 */
+  serviceProviderId?: string
+  serviceProviderName?: string
+  /** 发布范围：默认 global */
+  publishScope?: TaskPublishScope
+  /** 发布归属部门（兼容旧数据 / 列表首项） */
   departmentId?: string
   departmentName?: string
+  /** 发布部门多选（用户勾选的节点，不含自动展开的下级） */
+  publishDepartmentIds?: string[]
+  /** 部门范围：所选部门及其全部下级 ID（用于大厅可见性） */
+  scopeDepartmentIds?: string[]
   pricingMode?: PricingMode
   pricingUnit?: TaskPricingUnit
   fixedPrice?: number
@@ -1835,6 +1902,7 @@ export interface Task {
    * 未设置时认领金额回退客户定价
    */
   settlementUnitPrice?: number
+  /** @deprecated 已取消任务激励，保留兼容旧数据 */
   incentive?: string
   trainingCourseId?: string
   plannedTotal?: number
@@ -1844,10 +1912,16 @@ export interface Task {
   longTerm?: boolean
   startTime: string
   endTime: string
+  /** @deprecated 派单方式已取消，新任务固定 hall */
   dispatchMode: DispatchMode
   assigneeIds?: string[]
   maxPerPerson?: number
+  /** 省市区展示文案，如：浙江省 / 杭州市 / 西湖区 */
   region?: string
+  /** 省市区级联值 [省, 市, 区] */
+  regionCodes?: string[]
+  /** 详细地址（非必填） */
+  addressDetail?: string
   description: string
   status: TaskPublishStatus
   acceptedCount: number
@@ -1857,7 +1931,7 @@ export interface Task {
   reviewedAt?: string
   reviewNote?: string
   /** 大任务级自定义元数据 */
-  metadataFields?: { key: string; label: string; value: string }[]
+  metadataFields?: TaskMetadataField[]
   createdAt: string
 }
 
@@ -2411,12 +2485,13 @@ export type TrainingMaterialCategory =
   | 'other'
 export type TrainingMaterialStatus = 'draft' | 'approved'
 
-/** 培训资料分类（可自定义增删改） */
+/** 培训资料分类（按企业 / 平台通用各自维护，均可增删） */
 export interface TrainingMaterialCategoryItem {
   id: string
   name: string
-  /** null 表示平台通用分类 */
+  /** null 表示平台通用分类库 */
   enterpriseId: string | null
+  /** @deprecated 已统一为自定义分类，保留兼容旧数据 */
   builtin?: boolean
   createdAt: string
 }
@@ -2446,7 +2521,7 @@ export interface TrainingMaterial {
   updatedAt: string
 }
 
-export type CourseStudyMode = 'sequential' | 'free'
+export type CourseStudyMode = 'required' | 'optional'
 export type CourseStatus = 'draft' | 'published' | 'offline' | 'closed'
 export type CourseScopeType = 'all' | 'department' | 'tag'
 
@@ -2475,9 +2550,9 @@ export interface TrainingCourse {
   /** 关联企业部门（scopeType=department） */
   scopeDepartmentIds?: string[]
   scopeTags?: string[]
-  /** 考核通过后才可排班 / 抢班 */
+  /** @deprecated 考核门槛已迁移至 TrainingExam */
   requireExamPassForSchedule?: boolean
-  /** 考核通过后才可接任务 */
+  /** @deprecated 考核门槛已迁移至 TrainingExam */
   requireExamPassForTask?: boolean
   validFrom?: string
   validTo?: string
@@ -2493,14 +2568,25 @@ export type AiRiskScenario = 'info_security' | 'safety' | 'service' | 'emergency
 export type AiQuestionDifficulty = 'easy' | 'medium' | 'hard'
 export type ExamStatus = 'draft' | 'published' | 'offline'
 
+/** 考核题目选项 */
+export interface ExamQuestionOption {
+  key: string
+  text: string
+  /** 选项配图（可选） */
+  imageUrl?: string
+}
+
 /** 考核题目 */
 export interface ExamQuestion {
   id: string
   examId: string
   type: ExamQuestionType
   content: string
+  /** @deprecated 使用 imageUrls，保留兼容旧单图 */
   imageUrl?: string
-  options: { key: string; text: string }[]
+  /** 题干配图（可多张） */
+  imageUrls?: string[]
+  options: ExamQuestionOption[]
   correctAnswers: string[]
   score: number
   partialScore?: boolean
@@ -2525,6 +2611,10 @@ export interface TrainingExam {
   passScore: number
   maxRetakes: number
   retakeIntervalHours?: number
+  /** 考核通过后才可排班/抢班 */
+  requireExamPassForSchedule?: boolean
+  /** 考核通过后才可接任务 */
+  requireExamPassForTask?: boolean
   status: ExamStatus
   createdAt: string
   updatedAt: string

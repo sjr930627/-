@@ -366,13 +366,21 @@ function save(asDraft = false) {
   const payload = buildPayload(status)
   try {
     if (isEdit.value && editingId.value) {
-      store.updateTaskWorkflow(editingId.value, payload)
-      ElMessage.success(asDraft ? '草稿已保存' : '更新成功')
+      if (asDraft) {
+        store.updateTaskWorkflow(editingId.value, payload)
+        ElMessage.success('草稿已保存')
+      } else {
+        store.publishTaskWorkflow(editingId.value, payload, '配置发布')
+        ElMessage.success('已发布新版本')
+      }
     } else {
       store.addTaskWorkflow({
         ...payload,
         status,
-      } as Omit<TaskWorkflow, 'id' | 'version' | 'boundTaskTypeCount' | 'createdAt' | 'updatedAt'>)
+      } as Omit<
+        TaskWorkflow,
+        'id' | 'version' | 'versions' | 'boundTaskTypeCount' | 'createdAt' | 'updatedAt'
+      >)
       ElMessage.success(asDraft ? '草稿已保存' : '创建成功')
     }
     router.push('/task-workflows')
