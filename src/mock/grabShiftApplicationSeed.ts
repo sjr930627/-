@@ -2,6 +2,16 @@ import type { GrabShiftApplication } from '@/types'
 
 export const seedGrabShiftApplications: GrabShiftApplication[] = [
   {
+    id: 'gsa_today_0727',
+    slotId: 'gs_today_0727',
+    employeeId: 'emp_001',
+    message: 'Demo 锚定日已抢早班',
+    status: 'approved',
+    createdAt: '2026-07-26T20:00:00.000Z',
+    reviewedBy: '店长',
+    reviewedAt: '2026-07-26T21:00:00.000Z',
+  },
+  {
     id: 'gsa_001',
     slotId: 'gs_001',
     employeeId: 'emp_002',

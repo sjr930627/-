@@ -1,17 +1,25 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import TaskFormSection from '@/components/task/TaskFormSection.vue'
 import TaskQuantityField from '@/components/task/TaskQuantityField.vue'
 import DepartmentLeafCascader from '@/components/employee/DepartmentLeafCascader.vue'
+import WorkflowNodeConfigPanel from '@/components/task/WorkflowNodeConfigPanel.vue'
+import WorkflowDesignCanvas from '@/components/task/WorkflowDesignCanvas.vue'
 import {
   emptyTaskMetadataField,
+  formatWorkflowEnterpriseLabel,
   taskMetadataFieldTypeOptions,
+  workflowStatusMap,
 } from '@/constants/task'
 import { REGION_CASCADER_OPTIONS } from '@/constants/region'
+import { useAppStore } from '@/stores/app'
 import type {
   Department,
   TaskMetadataField,
   TaskMetadataFieldType,
   TaskPublishScope,
+  TaskWorkflow,
+  WorkflowNode,
 } from '@/types'
 
 export interface TaskPublishFormModel {
@@ -28,7 +36,6 @@ export interface TaskPublishFormModel {
   metadataFields: TaskMetadataField[]
   fixedPrice: number
   settlementUnitPrice?: number
-  trainingCourseId: string
   plannedTotal: number | undefined
   unlimitedQuantity: boolean
   longTerm: boolean
@@ -41,6 +48,12 @@ const form = defineModel<TaskPublishFormModel>({ required: true })
 withDefaults(
   defineProps<{
     readonly?: boolean
+    /** 审核时锁定服务商不可改 */
+    lockProvider?: boolean
+    /** 审核时锁定固定单价（客户价）不可改 */
+    lockFixedPrice?: boolean
+    /** 任务地点是否必填，默认必填 */
+    requireLocation?: boolean
     showEnterprise?: boolean
     showSettlement?: boolean
     enterpriseOptions?: { label: string; value: string }[]
@@ -48,14 +61,20 @@ withDefaults(
     departmentOptions: Department[]
     workflowOptions: { label: string; value: string }[]
     customerUnitPrice?: number
+    /** 详情展示：可领任务数（待审核/待提交/无上限为 —） */
+    claimableLabel?: string
   }>(),
   {
     readonly: false,
+    lockProvider: false,
+    lockFixedPrice: false,
+    requireLocation: true,
     showEnterprise: false,
     showSettlement: false,
     enterpriseOptions: () => [],
     providerOptions: () => [],
     customerUnitPrice: 0,
+    claimableLabel: undefined,
   },
 )
 
@@ -63,6 +82,40 @@ const emit = defineEmits<{
   'update:enterpriseId': [id: string]
   syncSettlement: []
 }>()
+
+const store = useAppStore()
+const workflowPreviewVisible = ref(false)
+const previewSelectedNodeId = ref('')
+
+const previewWorkflow = computed((): TaskWorkflow | null => {
+  if (!form.value.workflowId) return null
+  return store.taskWorkflows.find((w) => w.id === form.value.workflowId) ?? null
+})
+
+const previewNodes = computed(() =>
+  (previewWorkflow.value?.nodes ?? []).map((n) => ({
+    ...n,
+    actions: n.actions.map((a) => ({ ...a })),
+  })),
+)
+
+const previewFields = computed(() =>
+  (previewWorkflow.value?.fields ?? []).map((f) => ({
+    ...f,
+    nodeIds: [...f.nodeIds],
+  })),
+)
+
+const previewSelectedNode = computed((): WorkflowNode | null => {
+  if (!previewSelectedNodeId.value) return null
+  return previewNodes.value.find((n) => n.id === previewSelectedNodeId.value) ?? null
+})
+
+function openWorkflowPreview() {
+  if (!previewWorkflow.value) return
+  previewSelectedNodeId.value = previewNodes.value[0]?.id ?? ''
+  workflowPreviewVisible.value = true
+}
 
 function addMetadataField() {
   form.value.metadataFields.push(emptyTaskMetadataField(form.value.metadataFields.length))
@@ -130,7 +183,7 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
           filterable
           placeholder="选择合作服务商"
           style="width: 100%"
-          :disabled="readonly"
+          :disabled="readonly || lockProvider"
         >
           <el-option
             v-for="opt in providerOptions"
@@ -164,20 +217,30 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
         />
       </el-form-item>
 
-      <el-form-item label="流程模板" required>
-        <el-select
-          v-model="form.workflowId"
-          placeholder="选择已启用的流程"
-          style="width: 100%"
-          :disabled="readonly"
-        >
-          <el-option
-            v-for="opt in workflowOptions"
-            :key="opt.value"
-            :label="opt.label"
-            :value="opt.value"
-          />
-        </el-select>
+      <el-form-item label="任务流程" required>
+        <div class="workflow-select-row">
+          <el-select
+            v-model="form.workflowId"
+            placeholder="选择已启用的任务流程"
+            style="flex: 1"
+            :disabled="readonly"
+          >
+            <el-option
+              v-for="opt in workflowOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+          <el-button
+            link
+            type="primary"
+            :disabled="!form.workflowId"
+            @click="openWorkflowPreview"
+          >
+            查看配置
+          </el-button>
+        </div>
       </el-form-item>
 
       <el-form-item label="任务名称" required>
@@ -194,7 +257,7 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
         />
       </el-form-item>
 
-      <el-form-item label="任务地点" required>
+      <el-form-item label="任务地点" :required="requireLocation">
         <el-cascader
           v-model="form.regionCodes"
           :options="REGION_CASCADER_OPTIONS"
@@ -295,8 +358,13 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
     </TaskFormSection>
 
     <TaskFormSection title="定价配置" subtitle="固定单价" icon="价" icon-variant="green">
-      <el-form-item label="固定单价" required>
-        <el-input-number v-model="form.fixedPrice" :min="1" :max="9999" :disabled="readonly" />
+      <el-form-item :label="showSettlement ? '固定单价（客户价）' : '固定单价'" required>
+        <el-input-number
+          v-model="form.fixedPrice"
+          :min="1"
+          :max="9999"
+          :disabled="readonly || lockFixedPrice"
+        />
         元/单
       </el-form-item>
       <el-form-item v-if="showSettlement" label="结算单价" required>
@@ -309,18 +377,11 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
             :disabled="readonly"
           />
           <span>元/单</span>
-          <el-button v-if="!readonly" link type="primary" @click="emit('syncSettlement')">
+          <el-button v-if="!readonly && !lockFixedPrice" link type="primary" @click="emit('syncSettlement')">
             同步客户单价（¥{{ customerUnitPrice }}）
           </el-button>
         </div>
         <p class="field-hint">灵工认领结算按此单价；客户费用按上方固定单价</p>
-      </el-form-item>
-      <el-form-item label="培训要求">
-        <el-input
-          v-model="form.trainingCourseId"
-          placeholder="可选，关联培训课程 ID"
-          :disabled="readonly"
-        />
       </el-form-item>
     </TaskFormSection>
 
@@ -331,6 +392,9 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
           v-model:unlimited="form.unlimitedQuantity"
           :disabled="readonly"
         />
+      </el-form-item>
+      <el-form-item v-if="claimableLabel != null" label="可领任务数">
+        <el-input :model-value="claimableLabel" disabled />
       </el-form-item>
       <el-form-item label="任务期限">
         <el-radio-group v-model="form.longTerm" :disabled="readonly">
@@ -361,9 +425,88 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
       </el-form-item>
     </TaskFormSection>
   </div>
+
+  <el-dialog
+    v-model="workflowPreviewVisible"
+    :title="previewWorkflow ? `流程配置 · ${previewWorkflow.name}` : '流程配置'"
+    width="960px"
+    destroy-on-close
+    append-to-body
+    class="workflow-preview-dialog"
+  >
+    <template v-if="previewWorkflow">
+      <div class="preview-meta">
+        <el-tag size="small" :type="previewWorkflow.status === 'enabled' ? 'success' : 'info'">
+          {{ workflowStatusMap[previewWorkflow.status] }}
+        </el-tag>
+        <span>适用企业：{{ formatWorkflowEnterpriseLabel(previewWorkflow, store.enterprises) }}</span>
+        <span>节点数：{{ previewWorkflow.nodes.length }}</span>
+        <span v-if="previewWorkflow.description" class="preview-desc">
+          {{ previewWorkflow.description }}
+        </span>
+      </div>
+      <div class="preview-studio">
+        <WorkflowDesignCanvas
+          :nodes="previewNodes"
+          :workflow-fields="previewFields"
+          :selected-node-id="previewSelectedNodeId"
+          mode="config"
+          readonly
+          @select-node="previewSelectedNodeId = $event"
+        />
+        <aside class="preview-side">
+          <WorkflowNodeConfigPanel
+            :node="previewSelectedNode"
+            :all-nodes="previewNodes"
+            :workflow-fields="previewFields"
+            readonly
+            fields-only
+          />
+        </aside>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
+.workflow-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.preview-desc {
+  width: 100%;
+  color: var(--el-text-color-regular);
+}
+
+.preview-studio {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 0;
+  min-height: 480px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.preview-side {
+  border-left: 1px solid var(--el-border-color-lighter);
+  overflow: auto;
+  background: var(--el-fill-color-blank);
+}
+
 .field-hint {
   margin: 6px 0 0;
   font-size: 12px;

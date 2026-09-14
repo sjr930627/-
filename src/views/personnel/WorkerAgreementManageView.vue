@@ -1,35 +1,40 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
+  buildWorkerAgreementPdfBlob,
   resolveWorkerAgreementStatus,
   workerAgreementStatusMap,
   workerAgreementTypeMap,
+  type WorkerAgreementDisplayStatus,
 } from '@/constants/workerAgreement'
-import type { WorkerAgreement, WorkerAgreementStatus, WorkerAgreementType } from '@/types'
+import type { WorkerAgreement } from '@/types'
+
+type RemindChannel = 'sms' | 'service_account' | 'message'
+
+const REMIND_CHANNEL_OPTIONS: { value: RemindChannel; label: string }[] = [
+  { value: 'sms', label: '短信' },
+  { value: 'service_account', label: '服务号' },
+  { value: 'message', label: '消息通知' },
+]
 
 const store = useAppStore()
 
 const keyword = ref('')
-const statusFilter = ref<'all' | WorkerAgreementStatus>('all')
+const statusFilter = ref<'all' | WorkerAgreementDisplayStatus>('all')
 const providerFilter = ref('all')
 const page = ref(1)
 const pageSize = ref(10)
 const detailVisible = ref(false)
 const selected = ref<WorkerAgreement | null>(null)
-const createVisible = ref(false)
+const pdfVisible = ref(false)
+const pdfUrl = ref('')
+const pdfTitle = ref('PDF合同')
 
-const createForm = reactive({
-  employeeId: '',
-  providerId: '',
-  title: '',
-  content: '',
-  agreementType: 'service' as WorkerAgreementType,
-  required: true,
-  effectiveDate: '',
-  expiryDate: '',
-})
+const remindVisible = ref(false)
+const remindTarget = ref<(WorkerAgreement & { employeeName?: string; phone?: string }) | null>(null)
+const remindChannels = ref<RemindChannel[]>(['sms', 'message'])
 
 const employeeMap = computed(() => Object.fromEntries(store.employees.map((e) => [e.id, e])))
 const providerMap = computed(() =>
@@ -40,16 +45,12 @@ const stats = computed(() => {
   const all = store.workerAgreements.filter((a) => (a.agreementType ?? 'service') === 'service')
   let pending = 0
   let signed = 0
-  let expired = 0
-  let terminated = 0
   for (const a of all) {
     const s = resolveWorkerAgreementStatus(a)
     if (s === 'pending') pending += 1
-    else if (s === 'signed') signed += 1
-    else if (s === 'expired') expired += 1
-    else if (s === 'terminated') terminated += 1
+    else signed += 1
   }
-  return { total: all.length, pending, signed, expired, terminated }
+  return { total: all.length, pending, signed }
 })
 
 const tableData = computed(() =>
@@ -99,54 +100,86 @@ function resetFilters() {
   page.value = 1
 }
 
-function openDetail(row: WorkerAgreement) {
+function revokePdfUrl() {
+  if (pdfUrl.value) {
+    URL.revokeObjectURL(pdfUrl.value)
+    pdfUrl.value = ''
+  }
+}
+
+function openRemind(row: WorkerAgreement & { employeeName?: string; phone?: string }) {
+  remindTarget.value = row
+  remindChannels.value = ['sms', 'message']
+  remindVisible.value = true
+}
+
+function submitRemind() {
+  if (!remindChannels.value.length) {
+    ElMessage.warning('请至少选择一种通知方式')
+    return
+  }
+  const row = remindTarget.value
+  if (!row) return
+  const name = row.employeeName || employeeMap.value[row.employeeId]?.name || '该灵工'
+  const channelLabel = REMIND_CHANNEL_OPTIONS.filter((o) => remindChannels.value.includes(o.value))
+    .map((o) => o.label)
+    .join('、')
+  remindVisible.value = false
+  ElMessage.success(`已通过${channelLabel}提醒 ${name} 签署「${row.title}」`)
+  remindTarget.value = null
+}
+
+async function removePending(row: WorkerAgreement & { employeeName?: string; contractNo?: string }) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除待签署协议「${row.contractNo || row.title}」吗？`,
+      '删除协议',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+    store.deleteWorkerAgreement(row.id)
+    ElMessage.success('已删除')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
+function openDetail(row: WorkerAgreement & { displayStatus?: WorkerAgreementDisplayStatus }) {
   selected.value = row
+  const status = row.displayStatus ?? resolveWorkerAgreementStatus(row)
+  if (status === 'signed') {
+    openPdf(row)
+    return
+  }
   detailVisible.value = true
 }
 
-function openCreate() {
-  createForm.employeeId = ''
-  createForm.providerId = store.serviceProviders[0]?.id ?? ''
-  createForm.title = '灵工服务协议（标准版）'
-  createForm.content = '约定灵工与服务商之间的服务关系、服务范围、结算方式及权利义务。'
-  createForm.agreementType = 'service'
-  createForm.required = true
-  createForm.effectiveDate = new Date().toISOString().slice(0, 10)
-  createForm.expiryDate = ''
-  createVisible.value = true
+function openPdf(row: WorkerAgreement) {
+  const emp = employeeMap.value[row.employeeId]
+  const provider = row.providerId ? providerMap.value[row.providerId] : undefined
+  revokePdfUrl()
+  const blob = buildWorkerAgreementPdfBlob(row, {
+    employeeName: emp?.name ?? '-',
+    phone: emp?.phone || '-',
+    providerName: provider?.name ?? (row.providerId ? '-' : '平台通用'),
+  })
+  pdfUrl.value = URL.createObjectURL(blob)
+  pdfTitle.value = `${row.contractNo || '合同'} · PDF`
+  selected.value = row
+  pdfVisible.value = true
 }
 
-function submitCreate() {
-  if (!createForm.employeeId) {
-    ElMessage.warning('请选择灵工人员')
-    return
-  }
-  if (!createForm.providerId) {
-    ElMessage.warning('请选择服务商')
-    return
-  }
-  if (!createForm.title.trim()) {
-    ElMessage.warning('请填写协议名称')
-    return
-  }
-  store.createWorkerAgreement({
-    employeeId: createForm.employeeId,
-    providerId: createForm.providerId,
-    title: createForm.title.trim(),
-    content: createForm.content.trim() || createForm.title.trim(),
-    agreementType: createForm.agreementType,
-    required: createForm.required,
-    effectiveDate: createForm.effectiveDate || undefined,
-    expiryDate: createForm.expiryDate || undefined,
-  })
-  createVisible.value = false
-  ElMessage.success('已发起协议，待灵工签署')
+function closePdf() {
+  pdfVisible.value = false
+  revokePdfUrl()
 }
 
 function formatDateTime(iso?: string) {
   if (!iso) return '-'
   return new Date(iso).toLocaleString('zh-CN')
 }
+
+onBeforeUnmount(revokePdfUrl)
 </script>
 
 <template>
@@ -154,12 +187,8 @@ function formatDateTime(iso?: string) {
     <div class="page-header">
       <div>
         <h2 class="page-title">合同管理</h2>
-        <p class="text-muted">管理灵工人员签署的灵工服务协议，支持查看合同内容</p>
+        <p class="text-muted">管理灵工人员签署的灵工服务协议，已签署可查看 PDF 合同</p>
       </div>
-      <el-button type="primary" @click="openCreate">
-        <el-icon><Plus /></el-icon>
-        发起协议
-      </el-button>
     </div>
 
     <div class="stat-row">
@@ -174,14 +203,6 @@ function formatDateTime(iso?: string) {
       <div class="stat-item active">
         <span class="stat-label">已签署</span>
         <span class="stat-value">{{ stats.signed }}</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">已过期</span>
-        <span class="stat-value">{{ stats.expired }}</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">已终止</span>
-        <span class="stat-value">{{ stats.terminated }}</span>
       </div>
     </div>
 
@@ -207,8 +228,6 @@ function formatDateTime(iso?: string) {
         <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="pending">待签署</el-radio-button>
         <el-radio-button value="signed">已签署</el-radio-button>
-        <el-radio-button value="expired">已过期</el-radio-button>
-        <el-radio-button value="terminated">已终止</el-radio-button>
       </el-radio-group>
       <el-button text @click="resetFilters">
         <el-icon><RefreshLeft /></el-icon>
@@ -231,9 +250,6 @@ function formatDateTime(iso?: string) {
       <el-table-column prop="providerName" label="服务商" min-width="180" show-overflow-tooltip />
       <el-table-column prop="title" label="协议名称" min-width="180" show-overflow-tooltip />
       <el-table-column prop="typeLabel" label="类型" width="130" />
-      <el-table-column label="生效日期" width="120">
-        <template #default="{ row }">{{ row.effectiveDate || '-' }}</template>
-      </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="row.statusMeta.tag" size="small">{{ row.statusMeta.label }}</el-tag>
@@ -242,9 +258,20 @@ function formatDateTime(iso?: string) {
       <el-table-column label="签署时间" width="160">
         <template #default="{ row }">{{ formatDateTime(row.signedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="100" fixed="right">
+      <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row)">查看合同</el-button>
+          <el-button
+            v-if="row.displayStatus === 'signed'"
+            link
+            type="primary"
+            @click="openDetail(row)"
+          >
+            查看PDF
+          </el-button>
+          <template v-else>
+            <el-button link type="primary" @click="openRemind(row)">提醒签署</el-button>
+            <el-button link type="danger" @click="removePending(row)">删除</el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>
@@ -296,54 +323,49 @@ function formatDateTime(iso?: string) {
       </template>
     </el-drawer>
 
-    <el-dialog v-model="createVisible" title="发起灵工协议" width="520px" destroy-on-close>
-      <el-form label-width="96px">
-        <el-form-item label="灵工人员" required>
-          <el-select v-model="createForm.employeeId" filterable placeholder="选择人员" style="width: 100%">
-            <el-option
-              v-for="e in store.activeEmployees"
-              :key="e.id"
-              :label="`${e.name}（${e.employeeNo}）`"
-              :value="e.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="服务商" required>
-          <el-select v-model="createForm.providerId" filterable placeholder="选择服务商" style="width: 100%">
-            <el-option
-              v-for="p in store.serviceProviders"
-              :key="p.id"
-              :label="p.name"
-              :value="p.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="协议类型" required>
-          <el-select v-model="createForm.agreementType" style="width: 100%" disabled>
-            <el-option label="灵工服务协议" value="service" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="协议名称" required>
-          <el-input v-model="createForm.title" placeholder="协议名称" />
-        </el-form-item>
-        <el-form-item label="协议内容">
-          <el-input v-model="createForm.content" type="textarea" :rows="3" placeholder="协议摘要" />
-        </el-form-item>
-        <el-form-item label="生效日期">
-          <el-date-picker
-            v-model="createForm.effectiveDate"
-            type="date"
-            value-format="YYYY-MM-DD"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="是否必签">
-          <el-switch v-model="createForm.required" />
-        </el-form-item>
-      </el-form>
+    <el-dialog
+      :model-value="pdfVisible"
+      :title="pdfTitle"
+      width="860px"
+      top="4vh"
+      destroy-on-close
+      class="pdf-dialog"
+      @update:model-value="(v: boolean) => (v ? (pdfVisible = true) : closePdf())"
+    >
+      <div v-if="selected" class="pdf-meta">
+        <span>{{ selected.title }}</span>
+        <span>{{ employeeMap[selected.employeeId]?.name ?? '-' }}</span>
+        <a v-if="pdfUrl" :href="pdfUrl" :download="`${selected.contractNo || 'agreement'}.pdf`">
+          下载 PDF
+        </a>
+      </div>
+      <iframe v-if="pdfUrl" :src="pdfUrl" class="pdf-frame" title="PDF合同" />
+    </el-dialog>
+
+    <el-dialog v-model="remindVisible" title="提醒签署" width="440px" destroy-on-close>
+      <template v-if="remindTarget">
+        <p class="remind-tip">
+          向 <strong>{{ remindTarget.employeeName || employeeMap[remindTarget.employeeId]?.name || '灵工' }}</strong>
+          发送「{{ remindTarget.title }}」签署提醒
+        </p>
+        <el-form label-position="top">
+          <el-form-item label="通知方式" required>
+            <el-checkbox-group v-model="remindChannels">
+              <el-checkbox
+                v-for="opt in REMIND_CHANNEL_OPTIONS"
+                :key="opt.value"
+                :label="opt.value"
+                :value="opt.value"
+              >
+                {{ opt.label }}
+              </el-checkbox>
+            </el-checkbox-group>
+          </el-form-item>
+        </el-form>
+      </template>
       <template #footer>
-        <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitCreate">确认发起</el-button>
+        <el-button @click="remindVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitRemind">发送提醒</el-button>
       </template>
     </el-dialog>
   </div>
@@ -357,9 +379,16 @@ function formatDateTime(iso?: string) {
   margin-bottom: 16px;
 }
 
+.remind-tip {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+}
+
 .stat-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -400,11 +429,6 @@ function formatDateTime(iso?: string) {
   margin-bottom: 14px;
 }
 
-.sub {
-  font-size: 12px;
-  color: #909399;
-}
-
 .table-footer {
   display: flex;
   justify-content: space-between;
@@ -412,8 +436,28 @@ function formatDateTime(iso?: string) {
   margin-top: 14px;
 }
 
-.drawer-actions {
-  margin-top: 20px;
+.pdf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.pdf-meta a {
+  margin-left: auto;
+  color: var(--el-color-primary);
+  text-decoration: none;
+}
+
+.pdf-frame {
+  width: 100%;
+  height: 72vh;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f5f5f5;
 }
 
 @media (max-width: 1100px) {

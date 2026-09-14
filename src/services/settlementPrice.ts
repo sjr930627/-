@@ -247,7 +247,7 @@ export function resolveDepartmentHourlySettlementPrice(
     return {
       ...hourly,
       source: 'department',
-      sourceLabel: '部门结算价',
+      sourceLabel: '灵工结算价',
       dailySettlement: deptConfig!.dailySettlement ?? false,
       autoSettlement: !!(deptConfig!.dailySettlement && deptConfig!.autoSettlement),
       configured: true,

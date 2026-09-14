@@ -8,6 +8,7 @@ import { getDepartmentName } from '@/utils'
 import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 import {
   assignmentMatchesSource,
+  cancelShiftMatchesSource,
   type AttendanceAssignmentSource,
 } from '@/services/attendance'
 
@@ -21,9 +22,7 @@ const assignmentSource = computed<AttendanceAssignmentSource>(() =>
   route.meta.assignmentSource === 'grab' ? 'grab' : 'schedule',
 )
 
-const pageTitle = computed(() =>
-  assignmentSource.value === 'grab' ? '考勤审批处理' : '考勤审批数据',
-)
+const pageTitle = computed(() => '考勤审批')
 
 const sourceLabel = computed(() => (assignmentSource.value === 'grab' ? '抢班' : '排班'))
 
@@ -56,7 +55,9 @@ const makeupList = computed(() =>
 
 const cancelShiftList = computed(() =>
   store.cancelShiftRequests
-    .filter((r) => matchesSource(r.employeeId, r.date))
+    .filter((r) =>
+      cancelShiftMatchesSource(r, assignmentSource.value, store.getAssignment(r.employeeId, r.date)),
+    )
     .filter((r) => filterStatus.value === 'all' || r.status === 'pending')
     .map((r) => ({
       ...r,

@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
+import { ElMessage } from 'element-plus'
 import {
   buildDailyAttendanceList,
+  buildMonthlyAttendanceCsv,
   buildMonthlySummary,
   filterAssignmentsBySource,
   formatDailyWorkHoursText,
@@ -12,6 +14,7 @@ import {
   getStatusTagType,
   isDailyAttendanceVisible,
 } from '@/services/attendance'
+import { downloadTextFile } from '@/services/payroll'
 import { getDepartmentName } from '@/utils'
 import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 import type { AttendanceHoursAudit } from '@/types'
@@ -127,9 +130,7 @@ const tableData = computed(() => {
   })
 })
 
-const shiftColumnLabel = computed(() =>
-  props.assignmentSource === 'grab' ? '班次' : '排班',
-)
+const shiftColumnLabel = computed(() => '班次')
 
 function isRowExpanded(employeeId: string) {
   return expandedIds.value.includes(employeeId)
@@ -201,6 +202,40 @@ function getSummaries({ columns, data }: { columns: { property?: string }[]; dat
 watch([selectedMonth, filterDept, filterEmployeeId], () => {
   expandedIds.value = []
 })
+
+function exportCsv() {
+  const rows = tableData.value
+  if (!rows.length) {
+    ElMessage.warning('当前筛选下暂无月考勤数据可导出')
+    return
+  }
+  const csv = buildMonthlyAttendanceCsv(
+    rows.map((r) => ({
+      enterpriseName: r.enterpriseName,
+      departmentName: r.departmentName,
+      name: r.name,
+      phone: r.phone,
+      scheduledDays: r.scheduledDays,
+      actualDays: r.actualDays,
+      lateCount: r.lateCount,
+      earlyLeaveCount: r.earlyLeaveCount,
+      missingPunchCount: r.missingPunchCount,
+      absentCount: r.absentCount,
+      leaveDays: r.leaveDays,
+      overtimeHours: r.overtimeHours,
+      totalWorkHours: r.totalWorkHours,
+    })),
+  )
+  const source = props.assignmentSource === 'grab' ? 'grab' : 'schedule'
+  downloadTextFile(
+    csv,
+    `monthly_attendance_${source}_${selectedMonth.value}.csv`,
+    'text/csv;charset=utf-8',
+  )
+  ElMessage.success(`已导出 ${rows.length} 条月考勤数据`)
+}
+
+defineExpose({ exportCsv })
 </script>
 
 <template>
@@ -294,7 +329,7 @@ watch([selectedMonth, filterDept, filterEmployeeId], () => {
               <el-table-column
                 prop="shiftName"
                 :label="shiftColumnLabel"
-                :min-width="assignmentSource === 'grab' ? 200 : 90"
+                min-width="180"
                 show-overflow-tooltip
               />
               <el-table-column label="上班" width="80">

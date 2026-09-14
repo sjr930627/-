@@ -1,23 +1,23 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
 import {
   contractStatusMap,
-  formatRate,
-  formatTierRange,
+  formatContractExpiry,
   providerStatusMap,
-  serviceFeeTypeMap,
-  settlementCycleMap,
+  resolveContractDisplayStatus,
 } from '@/constants/partnership'
-import type { ServiceContract } from '@/types'
+import { getContractBillingListItems } from '@/services/contractBilling'
 
 const store = useAppStore()
+const router = useRouter()
+const { pathPrefix } = usePortal()
 
 const keyword = ref('')
 const statusFilter = ref<'all' | 'cooperating' | 'suspended' | 'terminated'>('all')
 const selectedProviderId = ref('sp_zhongqin')
-const contractDrawer = ref(false)
-const viewingContract = ref<ServiceContract | null>(null)
 
 const providerList = computed(() =>
   store.serviceProviders
@@ -26,23 +26,26 @@ const providerList = computed(() =>
       if (!keyword.value.trim()) return true
       const kw = keyword.value.trim().toLowerCase()
       return (
-        p.name.includes(kw) ||
+        p.name.toLowerCase().includes(kw) ||
         p.code.toLowerCase().includes(kw) ||
-        p.contact.includes(kw) ||
-        p.businessScope.includes(kw)
+        (p.shortName ?? '').toLowerCase().includes(kw)
       )
     })
-    .map((p) => ({
-      ...p,
-      statusLabel: providerStatusMap[p.status].label,
-      statusType: providerStatusMap[p.status].type,
-      contractCount: store.getContractsByProvider(p.id).length,
-      activeContractCount: store.getContractsByProvider(p.id).filter((c) => c.status === 'active')
-        .length,
-      linkedEnterprises: p.linkedEnterpriseIds
-        .map((id) => store.enterprises.find((e) => e.id === id)?.name)
-        .filter(Boolean),
-    })),
+    .map((p) => {
+      const contracts = store
+        .getContractsByProvider(p.id)
+        .filter((c) => !store.currentEnterpriseId || c.enterpriseId === store.currentEnterpriseId)
+      const activeContracts = contracts.filter(
+        (c) => resolveContractDisplayStatus(c) === 'active',
+      )
+      return {
+        ...p,
+        statusLabel: providerStatusMap[p.status].label,
+        statusType: providerStatusMap[p.status].type,
+        contractCount: contracts.length,
+        activeContractCount: activeContracts.length,
+      }
+    }),
 )
 
 const selectedProvider = computed(() =>
@@ -53,32 +56,37 @@ const contractList = computed(() => {
   if (!selectedProviderId.value) return []
   return store
     .getContractsByProvider(selectedProviderId.value)
-    .map((c) => ({
-      ...c,
-      feeTypeLabel: serviceFeeTypeMap[c.feeType].label,
-      statusLabel: contractStatusMap[c.status].label,
-      statusType: contractStatusMap[c.status].type,
-      settlementLabel: settlementCycleMap[c.settlementCycle],
-      baseRateLabel: formatRate(c.feeType, c.baseRate),
-      tierCount: c.tiers.length,
-      dateRange: c.expiryDate ? `${c.effectiveDate} ~ ${c.expiryDate}` : `${c.effectiveDate} 起`,
-    }))
+    .filter((c) => !store.currentEnterpriseId || c.enterpriseId === store.currentEnterpriseId)
+    .map((c) => {
+      const displayStatus = resolveContractDisplayStatus(c)
+      return {
+        ...c,
+        displayStatus,
+        statusMeta: contractStatusMap[displayStatus],
+        billingItems: getContractBillingListItems(c),
+        expiryLabel: formatContractExpiry(c.expiryDate, c.contractTerm),
+        versionLabel: c.currentVersion ? `V${c.currentVersion}` : '—',
+        versionCount: c.versions?.length ?? 0,
+      }
+    })
+    .filter((c) => c.displayStatus === 'active')
     .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))
 })
 
 const summary = computed(() => ({
   total: store.serviceProviders.length,
   cooperating: store.serviceProviders.filter((p) => p.status === 'cooperating').length,
-  contracts: store.serviceContracts.filter((c) => c.status === 'active').length,
 }))
 
 function selectProvider(id: string) {
   selectedProviderId.value = id
 }
 
-function openContractDetail(row: ServiceContract) {
-  viewingContract.value = row
-  contractDrawer.value = true
+function openContractDetail(row: { id: string }) {
+  router.push({
+    path: `${pathPrefix.value}/contracts/${row.id}`,
+    query: { from: 'partnership' },
+  })
 }
 </script>
 
@@ -116,8 +124,7 @@ function openContractDetail(row: ServiceContract) {
         </div>
         <div class="provider-meta">{{ provider.code }}</div>
         <div class="provider-meta">
-          合同 {{ provider.activeContractCount }}/{{ provider.contractCount }}
-          <span v-if="provider.rating"> · ★ {{ provider.rating }}</span>
+          生效合同 {{ provider.activeContractCount }}/{{ provider.contractCount }}
         </div>
       </div>
       <el-empty v-if="!providerList.length" description="无匹配服务商" :image-size="60" />
@@ -128,35 +135,20 @@ function openContractDetail(row: ServiceContract) {
         <div class="summary-header">
           <div>
             <h2 class="page-title">{{ selectedProvider.name }}</h2>
-            <p class="text-muted">
-              {{ selectedProvider.businessScope }} · 合作自 {{ selectedProvider.cooperationStartDate }}
-            </p>
+            <p class="text-muted">合作自 {{ selectedProvider.cooperationStartDate }}</p>
           </div>
           <el-tag :type="selectedProvider.statusType">{{ selectedProvider.statusLabel }}</el-tag>
         </div>
 
         <el-descriptions :column="3" border>
           <el-descriptions-item label="服务商编码">{{ selectedProvider.code }}</el-descriptions-item>
-          <el-descriptions-item label="联系人">{{ selectedProvider.contact }}</el-descriptions-item>
-          <el-descriptions-item label="联系电话">{{ selectedProvider.phone }}</el-descriptions-item>
-          <el-descriptions-item label="邮箱">
-            {{ selectedProvider.email ?? '—' }}
+          <el-descriptions-item label="合作起始日">
+            {{ selectedProvider.cooperationStartDate || '—' }}
           </el-descriptions-item>
-          <el-descriptions-item label="地址" :span="2">
-            {{ selectedProvider.address ?? '—' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="关联企业" :span="3">
-            <template v-if="selectedProvider.linkedEnterprises.length">
-              <el-tag
-                v-for="name in selectedProvider.linkedEnterprises"
-                :key="name"
-                size="small"
-                class="ent-tag"
-              >
-                {{ name }}
-              </el-tag>
-            </template>
-            <span v-else class="text-muted">暂无关联平台企业</span>
+          <el-descriptions-item label="状态">
+            <el-tag size="small" :type="selectedProvider.statusType">
+              {{ selectedProvider.statusLabel }}
+            </el-tag>
           </el-descriptions-item>
           <el-descriptions-item v-if="selectedProvider.remark" label="备注" :span="3">
             {{ selectedProvider.remark }}
@@ -167,33 +159,61 @@ function openContractDetail(row: ServiceContract) {
       <div class="page-card contract-card">
         <div class="page-header">
           <div>
-            <h3 class="section-title">合作合同与费率</h3>
-            <p class="text-muted">查看合同编号、计费方式及阶梯差价规则</p>
+            <h3 class="section-title">合作合同</h3>
+            <p class="text-muted">仅展示生效中的合同，服务费配置与后台合同管理一致</p>
           </div>
         </div>
 
-        <el-table :data="contractList" border stripe empty-text="暂无合同">
-          <el-table-column prop="contractNo" label="合同编号" width="150" />
+        <el-table :data="contractList" border stripe empty-text="暂无生效中合同">
+          <el-table-column prop="contractNo" label="合同编号" width="150">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openContractDetail(row)">
+                {{ row.contractNo }}
+              </el-button>
+            </template>
+          </el-table-column>
           <el-table-column prop="name" label="合同名称" min-width="180" show-overflow-tooltip />
-          <el-table-column label="计费方式" width="110">
+          <el-table-column label="服务费配置" min-width="240">
             <template #default="{ row }">
-              <el-tag size="small">{{ row.feeTypeLabel }}</el-tag>
+              <div v-if="row.billingItems.length" class="billing-config-cell">
+                <div
+                  v-for="item in row.billingItems"
+                  :key="item.type"
+                  class="billing-config-row"
+                >
+                  <el-tag
+                    size="small"
+                    :type="item.type === 'hourly' ? 'primary' : 'success'"
+                    class="billing-type-tag"
+                  >
+                    {{ item.typeLabel }}
+                  </el-tag>
+                  <span class="billing-rate">{{ item.rateLabel }}</span>
+                </div>
+              </div>
+              <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column prop="baseRateLabel" label="基准费率" width="130" />
-          <el-table-column label="阶梯" width="80" align="center">
-            <template #default="{ row }">{{ row.tierCount }} 档</template>
-          </el-table-column>
-          <el-table-column prop="settlementLabel" label="结算周期" width="100" />
-          <el-table-column prop="dateRange" label="有效期" min-width="170" />
-          <el-table-column label="状态" width="90">
+          <el-table-column label="合同期限" min-width="200">
             <template #default="{ row }">
-              <el-tag size="small" :type="row.statusType">{{ row.statusLabel }}</el-tag>
+              {{ row.effectiveDate }} ~ {{ row.expiryLabel }}
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="100" fixed="right">
+          <el-table-column label="生效版本" width="100">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openContractDetail(row)">费率详情</el-button>
+              <el-tag size="small" type="success">{{ row.versionLabel }}</el-tag>
+              <span v-if="row.versionCount > 1" class="ver-count">/{{ row.versionCount }}版</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="合同状态" width="100">
+            <template #default="{ row }">
+              <span class="status-dot" :style="{ background: row.statusMeta.dot }" />
+              {{ row.statusMeta.label }}
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openContractDetail(row)">详情</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -202,70 +222,6 @@ function openContractDetail(row: ServiceContract) {
 
     <el-empty v-else description="请选择服务商" class="page-card empty-panel" />
   </div>
-
-  <el-drawer v-model="contractDrawer" title="合同费率详情" size="560px" destroy-on-close>
-    <template v-if="viewingContract">
-      <el-descriptions :column="1" border class="contract-desc">
-        <el-descriptions-item label="合同编号">{{ viewingContract.contractNo }}</el-descriptions-item>
-        <el-descriptions-item label="合同名称">{{ viewingContract.name }}</el-descriptions-item>
-        <el-descriptions-item label="计费方式">
-          {{ serviceFeeTypeMap[viewingContract.feeType].label }}
-        </el-descriptions-item>
-        <el-descriptions-item label="说明">
-          {{ serviceFeeTypeMap[viewingContract.feeType].desc }}
-        </el-descriptions-item>
-        <el-descriptions-item label="基准费率">
-          {{ formatRate(viewingContract.feeType, viewingContract.baseRate) }}
-        </el-descriptions-item>
-        <el-descriptions-item label="结算周期">
-          {{ settlementCycleMap[viewingContract.settlementCycle] }}
-        </el-descriptions-item>
-        <el-descriptions-item label="有效期">
-          {{
-            viewingContract.expiryDate
-              ? `${viewingContract.effectiveDate} ~ ${viewingContract.expiryDate}`
-              : `${viewingContract.effectiveDate} 起`
-          }}
-        </el-descriptions-item>
-        <el-descriptions-item v-if="viewingContract.remark" label="备注">
-          {{ viewingContract.remark }}
-        </el-descriptions-item>
-      </el-descriptions>
-
-      <h4 class="tier-title">阶梯差价</h4>
-      <el-table :data="viewingContract.tiers" border stripe size="small">
-        <el-table-column label="档位" width="60" align="center">
-          <template #default="{ $index }">{{ $index + 1 }}</template>
-        </el-table-column>
-        <el-table-column label="量级区间" min-width="180">
-          <template #default="{ row }">
-            {{ formatTierRange(viewingContract!.feeType, row.minQuantity, row.maxQuantity) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="费率" width="140">
-          <template #default="{ row }">
-            <strong>{{ formatRate(viewingContract!.feeType, row.rate) }}</strong>
-          </template>
-        </el-table-column>
-        <el-table-column prop="label" label="说明" min-width="120">
-          <template #default="{ row }">{{ row.label ?? '—' }}</template>
-        </el-table-column>
-      </el-table>
-
-      <el-alert
-        type="info"
-        :closable="false"
-        style="margin-top: 16px"
-        :title="
-          viewingContract.feeType === 'percentage'
-            ? '结算时按当月累计任务结算额落入对应档位费率计算平台服务费'
-            : viewingContract.feeType === 'hourly'
-              ? '结算时按当月累计人时落入对应档位单价计费'
-              : '结算时按当月累计有效件/次数落入对应档位单价计费'
-        "
-      />
-    </template>
-  </el-drawer>
 </template>
 
 <style scoped>
@@ -362,11 +318,6 @@ function openContractDetail(row: ServiceContract) {
   margin-bottom: 4px;
 }
 
-.ent-tag {
-  margin-right: 6px;
-  margin-bottom: 4px;
-}
-
 .section-title {
   margin: 0;
   font-size: 16px;
@@ -377,14 +328,40 @@ function openContractDetail(row: ServiceContract) {
   margin-bottom: 12px;
 }
 
-.contract-desc {
-  margin-bottom: 20px;
+.billing-config-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.tier-title {
-  margin: 0 0 12px;
-  font-size: 14px;
-  font-weight: 600;
+.billing-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.billing-type-tag {
+  flex-shrink: 0;
+}
+
+.billing-rate {
+  font-size: 13px;
+  color: #303133;
+}
+
+.ver-count {
+  margin-left: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 .empty-panel {

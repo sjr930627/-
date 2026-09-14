@@ -72,6 +72,9 @@ const invalidReason = computed(() => {
   if (isUnassignedDepartment(department.value.id) || isEnterpriseRootDepartment(department.value)) {
     return '请扫描具体业务部门二维码'
   }
+  if (department.value.nodeType !== 'leaf') {
+    return '仅叶子部门支持扫码入驻'
+  }
   if (!enterpriseId.value) return '无法识别企业'
   if (!positions.value.length) return '该企业暂无岗位库，请联系企业管理员配置岗位'
   return ''

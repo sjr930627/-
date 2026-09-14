@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import TaskPublishFormBody, {
@@ -16,6 +16,7 @@ import {
   taskPublishStatusMap,
   workflowStatusMap,
 } from '@/constants/task'
+import { canManuallyEndTask, formatTaskClaimableQuantity } from '@/services/task'
 import type { Task } from '@/types'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
 import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
@@ -24,6 +25,13 @@ const store = useAppStore()
 const dialogVisible = ref(false)
 const formMode = ref<'create' | 'edit' | 'view'>('create')
 const editingId = ref<string | null>(null)
+const statusFilter = ref<'all' | 'pending' | 'active' | 'ended' | 'completed' | 'rejected'>('pending')
+const providerKeyword = ref('')
+const nameKeyword = ref('')
+
+onMounted(() => {
+  store.syncTaskLifecycleStatuses()
+})
 
 function createEmptyForm(): TaskPublishFormModel {
   return {
@@ -37,7 +45,6 @@ function createEmptyForm(): TaskPublishFormModel {
     addressDetail: '',
     metadataFields: [],
     fixedPrice: 50,
-    trainingCourseId: '',
     plannedTotal: 100,
     unlimitedQuantity: false,
     longTerm: false,
@@ -84,9 +91,28 @@ const providerOptions = computed(() => {
   return list.map((p) => ({ label: p.name, value: p.id }))
 })
 
+const enterpriseTasks = computed(() =>
+  store.tasks.filter((t) => t.enterpriseId === enterpriseId.value),
+)
+
+const statusCounts = computed(() => ({
+  pending: enterpriseTasks.value.filter((t) => t.status === 'pending').length,
+  active: enterpriseTasks.value.filter((t) => t.status === 'active').length,
+  ended: enterpriseTasks.value.filter((t) => t.status === 'ended').length,
+  completed: enterpriseTasks.value.filter((t) => t.status === 'completed').length,
+  rejected: enterpriseTasks.value.filter((t) => t.status === 'rejected').length,
+}))
+
 const tableData = computed(() =>
-  store.tasks
-    .filter((t) => t.enterpriseId === enterpriseId.value)
+  enterpriseTasks.value
+    .filter((t) => {
+      if (statusFilter.value !== 'all' && t.status !== statusFilter.value) return false
+      const providerKw = providerKeyword.value.trim()
+      if (providerKw && !(t.serviceProviderName ?? '').includes(providerKw)) return false
+      const nameKw = nameKeyword.value.trim()
+      if (nameKw && !(t.name ?? '').includes(nameKw)) return false
+      return true
+    })
     .map((t) => {
       const wf = store.taskWorkflows.find((w) => w.id === t.workflowId)
       const pricing = resolveTaskPricing(t, store.taskTypes)
@@ -101,6 +127,11 @@ const tableData = computed(() =>
         priceLabel: pricing ? formatTaskTypePrice({ ...pricing, pricingMode: 'fixed' }) : '-',
         statusLabel: taskPublishStatusMap[t.status],
         quantityLabel: formatTaskQuantity(t.unlimitedQuantity, t.plannedTotal),
+        claimableLabel: formatTaskClaimableQuantity(
+          t,
+          store.taskInstances,
+          store.taskWorkflows.find((w) => w.id === t.workflowId),
+        ),
         periodLabel: t.longTerm
           ? '长期'
           : `${t.startTime.slice(0, 10)} ~ ${t.endTime.slice(0, 10)}`,
@@ -113,6 +144,17 @@ const dialogTitle = computed(() => {
   if (formMode.value === 'view') return '任务详情'
   if (formMode.value === 'edit') return '编辑任务'
   return '创建任务'
+})
+
+const detailClaimableLabel = computed(() => {
+  if (!editingId.value) return undefined
+  const task = store.tasks.find((t) => t.id === editingId.value)
+  if (!task) return undefined
+  return formatTaskClaimableQuantity(
+    task,
+    store.taskInstances,
+    store.taskWorkflows.find((w) => w.id === task.workflowId),
+  )
 })
 
 function resetForm() {
@@ -143,7 +185,6 @@ function fillFormFromTask(row: Task) {
       value: m.value,
     })),
     fixedPrice: pricing?.fixedPrice ?? row.fixedPrice ?? 50,
-    trainingCourseId: row.trainingCourseId ?? '',
     plannedTotal: row.plannedTotal,
     unlimitedQuantity: row.unlimitedQuantity ?? row.plannedTotal == null,
     longTerm: row.longTerm ?? false,
@@ -204,7 +245,7 @@ function validate() {
     return false
   }
   if (!form.value.workflowId) {
-    ElMessage.warning('请选择流程模板')
+    ElMessage.warning('请选择任务流程')
     return false
   }
   if (form.value.publishScope === 'department' && !form.value.departmentIds.length) {
@@ -213,10 +254,6 @@ function validate() {
   }
   if (!form.value.description.trim()) {
     ElMessage.warning('请填写任务内容')
-    return false
-  }
-  if (!form.value.regionCodes?.length || form.value.regionCodes.length < 3) {
-    ElMessage.warning('请选择省市区')
     return false
   }
   if (!form.value.fixedPrice || form.value.fixedPrice < 1) {
@@ -280,7 +317,6 @@ function buildPayload(): Omit<
     scopeDepartmentIds: deptScope.scopeDepartmentIds,
     pricingMode: 'fixed',
     fixedPrice: form.value.fixedPrice,
-    trainingCourseId: form.value.trainingCourseId.trim() || undefined,
     unlimitedQuantity: form.value.unlimitedQuantity,
     plannedTotal: form.value.unlimitedQuantity ? undefined : form.value.plannedTotal,
     longTerm: form.value.longTerm,
@@ -293,23 +329,6 @@ function buildPayload(): Omit<
     region,
     description: form.value.description.trim(),
     metadataFields: form.value.metadataFields.filter((m) => m.label.trim()),
-  }
-}
-
-function saveDraft() {
-  if (!validate()) return
-  try {
-    const payload = buildPayload()
-    if (editingId.value) {
-      store.updateEnterpriseTask(editingId.value, payload)
-      ElMessage.success('已保存')
-    } else {
-      store.addEnterpriseTask(enterpriseId.value, payload)
-      ElMessage.success('已创建草稿')
-    }
-    dialogVisible.value = false
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
   }
 }
 
@@ -350,24 +369,25 @@ async function publishRow(row: Task) {
 }
 
 async function endRow(row: Task) {
+  if (!canManuallyEndTask(row)) {
+    ElMessage.warning('任务已过结束期限且数量已完成，将自动变为已完成')
+    store.syncTaskLifecycleStatuses()
+    return
+  }
   try {
-    await ElMessageBox.confirm(`确定提前结束任务「${row.name}」？`, '提示', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `确定结束任务「${row.name}」？结束后状态为已结束，进行中的子任务将同步结束。`,
+      '结束任务',
+      { type: 'warning' },
+    )
     store.endTask(row.id)
     ElMessage.success('任务已结束')
-  } catch {
-    // cancelled
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    if (e instanceof Error) ElMessage.error(e.message)
   }
 }
 
-async function cancelRow(row: Task) {
-  try {
-    await ElMessageBox.confirm(`确定取消任务「${row.name}」？`, '提示', { type: 'warning' })
-    store.cancelEnterpriseTask(row.id)
-    ElMessage.success('任务已取消')
-  } catch (e) {
-    if (e instanceof Error && e.message !== 'cancel') ElMessage.error(e.message)
-  }
-}
 </script>
 
 <template>
@@ -382,13 +402,47 @@ async function cancelRow(row: Task) {
       <el-button type="primary" @click="openCreate">创建任务</el-button>
     </div>
 
+    <div class="toolbar">
+      <el-input
+        v-model="providerKeyword"
+        placeholder="服务商模糊查询"
+        clearable
+        style="width: 220px"
+      />
+      <el-input
+        v-model="nameKeyword"
+        placeholder="任务名称模糊查询"
+        clearable
+        style="width: 200px"
+      />
+      <el-radio-group v-model="statusFilter">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="pending">
+          待审批 ({{ statusCounts.pending }})
+        </el-radio-button>
+        <el-radio-button value="active">
+          进行中 ({{ statusCounts.active }})
+        </el-radio-button>
+        <el-radio-button value="ended">
+          已结束 ({{ statusCounts.ended }})
+        </el-radio-button>
+        <el-radio-button value="completed">
+          已完成 ({{ statusCounts.completed }})
+        </el-radio-button>
+        <el-radio-button value="rejected">
+          已驳回 ({{ statusCounts.rejected }})
+        </el-radio-button>
+      </el-radio-group>
+    </div>
+
     <el-table :data="tableData" border stripe>
       <el-table-column prop="name" label="任务名称" min-width="160" />
       <el-table-column prop="providerLabel" label="服务商" min-width="140" show-overflow-tooltip />
       <el-table-column prop="scopeLabel" label="发布范围" min-width="130" show-overflow-tooltip />
-      <el-table-column prop="workflowName" label="流程模板" min-width="140" />
+      <el-table-column prop="workflowName" label="任务流程" min-width="140" />
       <el-table-column prop="priceLabel" label="单价" width="100" />
       <el-table-column prop="quantityLabel" label="任务数量" width="100" />
+      <el-table-column prop="claimableLabel" label="可领任务数" width="100" />
       <el-table-column prop="regionLabel" label="地点" min-width="140" show-overflow-tooltip />
       <el-table-column label="任务期限" min-width="180">
         <template #default="{ row }">{{ row.periodLabel }}</template>
@@ -403,7 +457,7 @@ async function cancelRow(row: Task) {
           <el-tag
             size="small"
             :type="
-              row.status === 'active'
+              row.status === 'active' || row.status === 'completed'
                 ? 'success'
                 : row.status === 'pending'
                   ? 'warning'
@@ -416,7 +470,7 @@ async function cancelRow(row: Task) {
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="280" fixed="right">
+      <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openDetail(row)">详情</el-button>
           <template v-if="row.status === 'draft' || row.status === 'rejected'">
@@ -427,8 +481,14 @@ async function cancelRow(row: Task) {
             <span class="text-muted">待平台审核</span>
           </template>
           <template v-if="row.status === 'active'">
-            <el-button link type="warning" @click="endRow(row)">结束</el-button>
-            <el-button link type="danger" @click="cancelRow(row)">取消</el-button>
+            <el-button
+              v-if="canManuallyEndTask(row)"
+              link
+              type="warning"
+              @click="endRow(row)"
+            >
+              结束
+            </el-button>
           </template>
           <span v-if="row.status === 'rejected' && row.reviewNote" class="text-muted reject-note">
             {{ row.reviewNote }}
@@ -449,15 +509,16 @@ async function cancelRow(row: Task) {
       <TaskPublishFormBody
         v-model="form"
         :readonly="formReadonly"
+        :require-location="false"
         :provider-options="providerOptions"
         :department-options="departmentOptions"
         :workflow-options="workflowOptions"
+        :claimable-label="detailClaimableLabel"
       />
     </el-form>
     <template #footer>
       <el-button @click="dialogVisible = false">{{ formReadonly ? '关闭' : '取消' }}</el-button>
       <template v-if="!formReadonly">
-        <el-button @click="saveDraft">暂存</el-button>
         <el-button type="primary" @click="saveAndPublish">提交审核</el-button>
       </template>
     </template>
@@ -465,6 +526,14 @@ async function cancelRow(row: Task) {
 </template>
 
 <style scoped>
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
 .reject-note {
   display: block;
   font-size: 12px;

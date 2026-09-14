@@ -214,8 +214,9 @@ function setActionTarget(action: WorkflowAction, targetNodeId: string | undefine
       </el-form-item>
 
       <el-form-item label="通知方式" label-width="80px">
-        <el-checkbox v-model="node.notifySms" :disabled="readonly">短信</el-checkbox>
-        <el-checkbox v-model="node.notifyMiniProgram" :disabled="readonly">小程序</el-checkbox>
+        <el-checkbox v-model="node.notifySms" :disabled="readonly">短信通知</el-checkbox>
+        <el-checkbox v-model="node.notifyServiceAccount" :disabled="readonly">服务号通知</el-checkbox>
+        <el-checkbox v-model="node.notifyMessage" :disabled="readonly">消息通知</el-checkbox>
       </el-form-item>
 
       <el-form-item label="通知角色" label-width="80px">

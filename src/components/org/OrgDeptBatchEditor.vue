@@ -8,6 +8,7 @@ import {
   isUnassignedDepartment,
   isEnterpriseRootDepartment,
   enterpriseUnassignedDepartmentId,
+  enterpriseRootDepartmentId,
 } from '@/constants/department'
 import {
   buildDepartmentTree,
@@ -95,15 +96,19 @@ function onSelect(id: string) {
 
 function onAddChild(parentId: string | null) {
   try {
-    const parent = parentId ? props.departments.find((d) => d.id === parentId) : null
+    const resolvedParentId =
+      parentId && !isUnassignedDepartment(parentId)
+        ? parentId
+        : enterpriseRootDepartmentId(props.enterpriseId)
+    const parent = props.departments.find((d) => d.id === resolvedParentId) ?? null
     if (parent?.nodeType === 'leaf') {
       ElMessage.warning('叶节点下不可创建子组织')
       return
     }
-    const siblings = props.departments.filter((d) => d.parentId === parentId)
+    const siblings = props.departments.filter((d) => d.parentId === resolvedParentId)
     const item = store.addDepartment({
       name: '新建组织',
-      parentId,
+      parentId: resolvedParentId,
       sort: siblings.length + 1,
       enterpriseId: props.enterpriseId,
       orgType: 'department',

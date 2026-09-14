@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
 import {
   billingRuleTypeMap,
   contractApprovalStatusMap,
@@ -29,12 +30,33 @@ import type { ServiceContractVersion } from '@/types'
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
+const { pathPrefix, isPlatform, isEnterprise } = usePortal()
+
+const fromPartnership = computed(() => route.query.from === 'partnership')
 
 const contract = computed(() => {
   const found = store.serviceContracts.find((c) => c.id === route.params.id as string)
   if (found) ensureContractVersions(found)
   return found
 })
+
+function goBack() {
+  if (fromPartnership.value) {
+    router.push(`${pathPrefix.value}/partnership`)
+    return
+  }
+  router.push(isEnterprise.value ? `${pathPrefix.value}/contracts` : '/contracts')
+}
+
+function goEdit() {
+  if (!contract.value) return
+  router.push(`/contracts/${contract.value.id}/edit`)
+}
+
+function goRenew() {
+  if (!contract.value) return
+  router.push(`/contracts/${contract.value.id}/renew`)
+}
 
 const enterprise = computed(() =>
   contract.value ? store.enterprises.find((e) => e.id === contract.value!.enterpriseId) : null,
@@ -158,27 +180,33 @@ function confirmReject() {
   <div v-if="contract" class="contract-detail-page">
     <div class="page-breadcrumb-row">
       <el-breadcrumb separator=">">
-        <el-breadcrumb-item>企业管理</el-breadcrumb-item>
-        <el-breadcrumb-item>合同管理</el-breadcrumb-item>
+        <template v-if="fromPartnership">
+          <el-breadcrumb-item>合作管理</el-breadcrumb-item>
+          <el-breadcrumb-item>服务商合作</el-breadcrumb-item>
+        </template>
+        <template v-else>
+          <el-breadcrumb-item>{{ isEnterprise ? '人员管理' : '企业管理' }}</el-breadcrumb-item>
+          <el-breadcrumb-item>合同管理</el-breadcrumb-item>
+        </template>
         <el-breadcrumb-item>合同详情</el-breadcrumb-item>
       </el-breadcrumb>
       <div class="header-actions">
-        <el-button @click="router.push('/contracts')">返回列表</el-button>
-        <template v-if="approvalStatus === 'pending'">
+        <el-button @click="goBack">返回{{ fromPartnership ? '服务商合作' : '列表' }}</el-button>
+        <template v-if="isPlatform && approvalStatus === 'pending'">
           <el-input v-model="approverName" style="width: 140px" placeholder="审批人" />
           <el-button type="danger" plain @click="openReject">驳回</el-button>
           <el-button type="primary" @click="approvePass">审批通过</el-button>
         </template>
         <el-button
-          v-if="displayStatus !== 'terminated' && approvalStatus !== 'pending'"
+          v-if="isPlatform && displayStatus !== 'terminated' && approvalStatus !== 'pending'"
           type="primary"
-          @click="router.push(`/contracts/${contract.id}/edit`)"
+          @click="goEdit"
         >
           改版编辑
         </el-button>
         <el-button
-          v-if="displayStatus !== 'terminated' && approvalStatus !== 'pending' && contract.currentVersion"
-          @click="router.push(`/contracts/${contract.id}/renew`)"
+          v-if="isPlatform && displayStatus !== 'terminated' && approvalStatus !== 'pending' && contract.currentVersion"
+          @click="goRenew"
         >
           续约
         </el-button>
@@ -222,7 +250,9 @@ function confirmReject() {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="changeNote" label="改版说明" min-width="180" show-overflow-tooltip />
+            <el-table-column label="发布说明" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.changeNote || '—' }}</template>
+            </el-table-column>
             <el-table-column label="生效 / 到期" width="200">
               <template #default="{ row }">
                 {{ row.effectiveDate }} ~ {{ formatContractExpiry(row.expiryDate, row.contractTerm) }}
@@ -359,7 +389,7 @@ function confirmReject() {
   </div>
 
   <el-empty v-else description="合同不存在" class="page-card">
-    <el-button type="primary" @click="router.push('/contracts')">返回列表</el-button>
+    <el-button type="primary" @click="goBack">返回</el-button>
   </el-empty>
 
   <el-dialog v-model="rejectVisible" title="驳回合同" width="480px" destroy-on-close>

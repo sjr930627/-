@@ -25,6 +25,8 @@ import {
 } from '@/services/grabShift'
 import type { GrabPublishScope } from '@/types'
 import { resolveEnterpriseIdByAttendanceGroupId, resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
+import { isEnterpriseRootDepartment, isLeafDepartment, isUnassignedDepartment } from '@/constants/department'
+import { getDepartmentPath } from '@/utils'
 
 const store = useAppStore()
 const router = useRouter()
@@ -52,14 +54,11 @@ const interviewDeptOptions = computed(() => {
   return (cfg.deptRules ?? [])
     .map((raw) => normalizeDeptInterviewRule(raw))
     .filter((r) => r.positions.length > 0)
-    .map((r) => {
-      const dept = store.departments.find((d) => d.id === r.departmentId)
-      return {
-        departmentId: r.departmentId,
-        departmentName: dept?.name || r.departmentId,
-        positions: r.positions,
-      }
-    })
+    .map((r) => ({
+      departmentId: r.departmentId,
+      departmentName: getDepartmentPath(store.departments, r.departmentId) || r.departmentId,
+      positions: r.positions,
+    }))
 })
 
 /** 发布范围部门：优先面试配置部门，否则企业业务部门 */
@@ -72,8 +71,16 @@ const publishDepartmentOptions = computed(() => {
   }
   return store
     .getDepartmentsByEnterprise(enterpriseId.value)
-    .filter((d) => d.orgType !== 'enterprise' && !d.id.includes('unassigned'))
-    .map((d) => ({ departmentId: d.id, departmentName: d.name }))
+    .filter(
+      (d) =>
+        !isEnterpriseRootDepartment(d) &&
+        !isUnassignedDepartment(d.id) &&
+        isLeafDepartment(d),
+    )
+    .map((d) => ({
+      departmentId: d.id,
+      departmentName: getDepartmentPath(store.departments, d.id),
+    }))
 })
 
 const publishForm = ref({
@@ -158,7 +165,7 @@ const storeDisplayName = computed(() => {
 
 const grabStatusMap: Record<string, string> = {
   open: '招募中',
-  partial: '部分满员',
+  partial: '招募中',
   full: '已满员',
   cancelled: '已取消',
 }
@@ -191,6 +198,7 @@ const slots = computed(() =>
         displayShiftName: resolveGrabSlotShiftName(slot),
         departmentDisplayName: resolveGrabSlotDepartmentName(slot, store.teams, store.departments),
         statusLabel: grabStatusMap[slot.status] ?? slot.status,
+        statusClass: slot.status === 'partial' ? 'open' : slot.status,
         publishLabel: publishMeta?.label ?? '已上架',
         pendingCount: pendingApps.length,
         approvedCount: approvedApps.length,
@@ -260,7 +268,7 @@ const whitelistTableData = computed(() =>
       return {
         ...entry,
         employeeName: emp?.name ?? '—',
-        employeeNo: emp?.employeeNo ?? '—',
+        phone: emp?.phone || '—',
         position: emp?.position ?? '—',
       }
     }),
@@ -303,7 +311,7 @@ function applyEnterprisePosition(positionId: string) {
   publishForm.value.positionId = pos.id
   publishForm.value.positionName = p.positionName || pos.name
   publishForm.value.jobType = p.jobType || ''
-  publishForm.value.positionRequirement = p.requirements?.trim() || ''
+  publishForm.value.positionRequirement = ''
   publishForm.value.description = p.description?.trim() || ''
   publishForm.value.ageMin = p.ageMin
   publishForm.value.ageMax = p.ageMax
@@ -396,7 +404,7 @@ function openPublish() {
     // 无面试部门时，用考勤组绑定部门作为发布范围选项回退
     const fallbackDepts = store
       .getDepartmentsByEnterprise(enterpriseId.value)
-      .filter((d) => d.orgType !== 'enterprise' && !d.id.includes('unassigned'))
+      .filter((d) => !isEnterpriseRootDepartment(d) && !isUnassignedDepartment(d.id))
     if (!fallbackDepts.length) {
       ElMessage.warning('请先配置部门或抢班面试部门')
       return
@@ -432,8 +440,8 @@ function publish() {
     ElMessage.warning('岗位名称不能为空')
     return
   }
-  if (!publishForm.value.positionRequirement.trim() && !publishForm.value.description.trim()) {
-    ElMessage.warning('请填写任职要求或岗位描述')
+  if (!publishForm.value.description.trim()) {
+    ElMessage.warning('请填写岗位描述')
     return
   }
   if (publishForm.value.requiredCount < 1) {
@@ -454,8 +462,7 @@ function publish() {
 
   const skills = parsePublishSkills()
   const positionName = publishForm.value.positionName.trim()
-  const positionRequirement =
-    publishForm.value.positionRequirement.trim() || publishForm.value.description.trim()
+  const description = publishForm.value.description.trim()
 
   try {
     store.createGrabShiftSlot(
@@ -482,14 +489,13 @@ function publish() {
           positionName,
           jobType: publishForm.value.jobType.trim() || undefined,
           skills,
-          requirements: publishForm.value.positionRequirement.trim() || undefined,
-          description: publishForm.value.description.trim() || undefined,
+          description: description || undefined,
           ageMin: optionalAge(publishForm.value.ageMin),
           ageMax: optionalAge(publishForm.value.ageMax),
           gender: publishForm.value.gender,
           experience: publishForm.value.experience.trim() || undefined,
         },
-        positionRequirement,
+        positionRequirement: description,
         requirements: skills,
         teams: store.teams,
         shifts: store.shifts,
@@ -703,7 +709,7 @@ const publishPreviewRate = computed(() => {
         <div class="card-top">
           <div>
             <strong>{{ w.employeeName }}</strong>
-            <p>{{ w.employeeNo }} · {{ w.position }}</p>
+            <p>{{ w.phone }} · {{ w.position }}</p>
             <p class="sub">{{ w.remark || '无备注' }} · {{ formatTime(w.createdAt) }}</p>
           </div>
           <button type="button" class="ghost" @click="removeWhitelist(w.id, w.employeeName)">
@@ -726,7 +732,7 @@ const publishPreviewRate = computed(() => {
           <h4>{{ selectedSlot.positionName || selectedSlot.displayShiftName }}</h4>
           <div class="tag-col inline-tags">
             <span class="status publish">{{ selectedSlot.publishLabel }}</span>
-            <span class="status" :class="selectedSlot.status">{{ selectedSlot.statusLabel }}</span>
+            <span class="status" :class="selectedSlot.statusClass">{{ selectedSlot.statusLabel }}</span>
           </div>
         </div>
 
@@ -756,14 +762,9 @@ const publishPreviewRate = computed(() => {
           </div>
         </dl>
 
-        <div v-if="selectedSlotProfile?.requirements || selectedSlot.positionRequirement" class="detail-section">
-          <strong>任职要求</strong>
-          <p>{{ selectedSlotProfile?.requirements || selectedSlot.positionRequirement }}</p>
-        </div>
-
-        <div v-if="selectedSlotProfile?.description" class="detail-section">
+        <div v-if="selectedSlotProfile?.description || selectedSlot.positionRequirement" class="detail-section">
           <strong>岗位描述</strong>
-          <p>{{ selectedSlotProfile.description }}</p>
+          <p>{{ selectedSlotProfile?.description || selectedSlot.positionRequirement }}</p>
         </div>
 
         <div v-if="(selectedSlotProfile?.skills || selectedSlot.requirements)?.length" class="detail-section">
@@ -851,9 +852,6 @@ const publishPreviewRate = computed(() => {
 
         <label>技能（顿号分隔）</label>
         <input v-model="publishForm.skillsText" placeholder="健康证、业务合规证">
-
-        <label>任职要求</label>
-        <textarea v-model="publishForm.positionRequirement" rows="3" placeholder="任职要求" />
 
         <label>岗位描述</label>
         <textarea v-model="publishForm.description" rows="2" placeholder="岗位职责与工作内容" />
@@ -1024,7 +1022,6 @@ const publishPreviewRate = computed(() => {
   height: fit-content;
 }
 .status.open { background: #fef2f2; color: #dc2626; }
-.status.partial { background: #fffbeb; color: #d97706; }
 .status.full { background: #ecfdf5; color: #059669; }
 .status.publish { background: #D5E9FF; color: #228BFF; }
 .apps {

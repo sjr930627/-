@@ -15,11 +15,13 @@ export function isTaskInstanceCancelled(
   instance: TaskInstance,
   workflow: TaskWorkflow | undefined,
 ): boolean {
-  if (instance.currentNodeName.includes('已取消')) return true
+  if (instance.currentNodeName.includes('已取消') || instance.currentNodeName.includes('已结束')) {
+    return true
+  }
   const node = workflow?.nodes.find((n) => n.id === instance.currentNodeId)
   return (
     node?.id === 'node_cancelled' ||
-    (node?.nodeType === 'end' && node.name.includes('取消'))
+    (node?.nodeType === 'end' && (node.name.includes('取消') || node.name.includes('已结束')))
   )
 }
 

@@ -233,6 +233,16 @@ function rowNumericValues(fieldValues: Record<string, string | number>): Record<
   if (numeric.service_fee_rate === 0) {
     numeric.service_fee_rate = DEFAULT_SERVICE_FEE_RATE
   }
+  // 服务费常用单价缺省（演示）
+  if (!numeric.recruit_service_rate) numeric.recruit_service_rate = 20
+  if (!numeric.manage_service_rate) numeric.manage_service_rate = 8
+  if (!numeric.grab_manage_rate) numeric.grab_manage_rate = 5
+  if (!numeric.task_service_rate) numeric.task_service_rate = 12
+  if (!numeric.hourly_rate) numeric.hourly_rate = 30
+  if (!numeric.overtime_rate) numeric.overtime_rate = 45
+  if (!numeric.task_unit_price) numeric.task_unit_price = 120
+  if (!numeric.schedule_hours) numeric.schedule_hours = numeric.work_hours || 120
+  if (!numeric.grab_hours) numeric.grab_hours = 40
   return numeric
 }
 

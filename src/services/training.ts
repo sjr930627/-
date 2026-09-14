@@ -33,6 +33,24 @@ export function getExamLinkedCourses(courses: TrainingCourse[], exam: TrainingEx
   return courses.filter((c) => c.examId === exam.id)
 }
 
+/** 课程关联的全部考核（支持一门课对应多考核） */
+export function getCourseLinkedExams(course: TrainingCourse, exams: TrainingExam[]) {
+  const byCourseId = exams.filter((e) => e.courseId === course.id)
+  if (byCourseId.length > 0) {
+    const ids = new Set(byCourseId.map((e) => e.id))
+    if (course.examId && !ids.has(course.examId)) {
+      const extra = exams.find((e) => e.id === course.examId)
+      if (extra) byCourseId.push(extra)
+    }
+    return byCourseId
+  }
+  if (course.examId) {
+    const one = exams.find((e) => e.id === course.examId)
+    return one ? [one] : []
+  }
+  return []
+}
+
 export function getExamLinkedCourseLabel(courses: TrainingCourse[], exam: TrainingExam) {
   const linked = getExamLinkedCourses(courses, exam)
   if (linked.length === 0) return '-'
@@ -61,6 +79,46 @@ export function getExamEligibilityLabel(
     return `未通过${examScore != null ? `：${examScore}分` : ''}${hist}`
   }
   return '待考核'
+}
+
+/** 学习进度明细：课程下各考核的状态文案（无考核返回空数组） */
+export function getCourseExamStatusItems(
+  employeeId: string,
+  course: TrainingCourse,
+  record: CourseLearningRecord,
+  exams: TrainingExam[],
+  attempts: ExamAttempt[],
+): { examId: string; examName: string; statusLabel: string }[] {
+  const linked = getCourseLinkedExams(course, exams)
+  const progress = getLearningProgress(record, course)
+  return linked.map((exam) => {
+    if (progress < 100) {
+      return {
+        examId: exam.id,
+        examName: exam.name,
+        statusLabel: `待解锁（学习 ${progress}%）`,
+      }
+    }
+    const empAttempts = attempts
+      .filter((a) => a.examId === exam.id && a.employeeId === employeeId)
+      .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt))
+    const latest = empAttempts[0]
+    if (!latest) {
+      return { examId: exam.id, examName: exam.name, statusLabel: '待考核' }
+    }
+    if (latest.passed) {
+      return {
+        examId: exam.id,
+        examName: exam.name,
+        statusLabel: `通过：${latest.score}分`,
+      }
+    }
+    return {
+      examId: exam.id,
+      examName: exam.name,
+      statusLabel: `未通过：${latest.score}分`,
+    }
+  })
 }
 
 /** 考核数据明细用状态文案 */
@@ -146,7 +204,7 @@ export function hasEmployeePassedCourseExam(
 
 export type CourseGateKind = 'schedule' | 'task'
 
-/** 返回阻止排班/接任务的已发布课程（需考核且未通过） */
+/** 返回阻止排班/接任务的已发布课程（关联考核开启门槛且未通过） */
 export function getBlockingCoursesForEmployee(
   employeeId: string,
   courses: TrainingCourse[],
@@ -154,12 +212,17 @@ export function getBlockingCoursesForEmployee(
   employees: Employee[],
   departments: Department[],
   gate: CourseGateKind,
+  exams: TrainingExam[] = [],
 ): TrainingCourse[] {
   return courses.filter((course) => {
     if (course.status !== 'published') return false
     if (!course.examId) return false
-    if (gate === 'schedule' && !course.requireExamPassForSchedule) return false
-    if (gate === 'task' && !course.requireExamPassForTask) return false
+    const exam = exams.find((e) => e.id === course.examId)
+    const requireSchedule =
+      exam?.requireExamPassForSchedule ?? course.requireExamPassForSchedule
+    const requireTask = exam?.requireExamPassForTask ?? course.requireExamPassForTask
+    if (gate === 'schedule' && !requireSchedule) return false
+    if (gate === 'task' && !requireTask) return false
     const assignees = resolveCourseAssignees(course, employees, departments)
     if (!assignees.some((e) => e.id === employeeId)) return false
     return !hasEmployeePassedCourseExam(employeeId, course, records)
@@ -245,6 +308,37 @@ export function getDepartmentCompletionRates(
     .sort((a, b) => b.rate - a.rate)
 }
 
+/** 部门学习进度排行：已学习人数、完成率 */
+export function getDepartmentLearningRanking(
+  course: TrainingCourse,
+  records: CourseLearningRecord[],
+  employees: Employee[],
+  departments: Department[],
+) {
+  const assignees = resolveCourseAssignees(course, employees, departments)
+  const byDept = new Map<
+    string,
+    { name: string; total: number; studied: number; completed: number }
+  >()
+  for (const emp of assignees) {
+    const deptId = emp.departmentId || '_none'
+    const name = departments.find((d) => d.id === emp.departmentId)?.name ?? '未分配'
+    const entry = byDept.get(deptId) ?? { name, total: 0, studied: 0, completed: 0 }
+    entry.total += 1
+    const rec = records.find((r) => r.courseId === course.id && r.employeeId === emp.id)
+    if (rec && rec.status !== 'not_started') entry.studied += 1
+    if (rec?.status === 'completed') entry.completed += 1
+    byDept.set(deptId, entry)
+  }
+  return [...byDept.values()]
+    .map((d) => ({
+      departmentName: d.name,
+      studied: d.studied,
+      completionRate: d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0,
+    }))
+    .sort((a, b) => b.completionRate - a.completionRate || b.studied - a.studied)
+}
+
 export function getExamStats(
   exam: TrainingExam,
   courses: TrainingCourse[],
@@ -288,6 +382,50 @@ export function getScoreDistribution(attempts: ExamAttempt[]) {
     if (bucket) bucket.count += 1
   }
   return buckets
+}
+
+/** 部门考核排行：考核人数、通过率（按每人最新一次成绩） */
+export function getExamDepartmentRanking(
+  exam: TrainingExam,
+  courses: TrainingCourse[],
+  attempts: ExamAttempt[],
+  employees: Employee[],
+  departments: Department[],
+) {
+  const linkedCourses = getExamLinkedCourses(courses, exam)
+  const assigneeMap = new Map<string, Employee>()
+  for (const c of linkedCourses) {
+    resolveCourseAssignees(c, employees, departments).forEach((e) => assigneeMap.set(e.id, e))
+  }
+
+  const latestByEmployee = new Map<string, ExamAttempt>()
+  for (const a of attempts.filter((x) => x.examId === exam.id)) {
+    const prev = latestByEmployee.get(a.employeeId)
+    if (!prev || a.submittedAt.localeCompare(prev.submittedAt) > 0) {
+      latestByEmployee.set(a.employeeId, a)
+    }
+  }
+
+  const byDept = new Map<string, { name: string; taken: number; passed: number }>()
+  for (const [employeeId, attempt] of latestByEmployee) {
+    const emp = assigneeMap.get(employeeId) || employees.find((e) => e.id === employeeId)
+    const deptId = emp?.departmentId ?? '_none'
+    const name = emp
+      ? departments.find((d) => d.id === emp.departmentId)?.name ?? '未分配'
+      : '未分配'
+    const entry = byDept.get(deptId) ?? { name, taken: 0, passed: 0 }
+    entry.taken += 1
+    if (attempt.passed) entry.passed += 1
+    byDept.set(deptId, entry)
+  }
+
+  return [...byDept.values()]
+    .map((d) => ({
+      departmentName: d.name,
+      taken: d.taken,
+      passRate: d.taken > 0 ? Math.round((d.passed / d.taken) * 100) : 0,
+    }))
+    .sort((a, b) => b.passRate - a.passRate || b.taken - a.taken)
 }
 
 const AI_TEMPLATES: Record<
@@ -418,13 +556,13 @@ export function getMaterialMinReadMinutes(course: TrainingCourse, materialType: 
   return Math.max(1, course.minStudyMinutes ?? 3)
 }
 
-/** 顺序学习模式下，是否可访问该资料 */
+/** 必修课程：须按资料顺序学完前置项后才能访问；非必修可自由访问 */
 export function canAccessMaterial(
   course: TrainingCourse,
   materialId: string,
   completedMaterialIds: string[],
 ) {
-  if (course.studyMode === 'free') return true
+  if (course.studyMode === 'optional') return true
   const idx = course.materialIds.indexOf(materialId)
   if (idx <= 0) return true
   for (let i = 0; i < idx; i++) {

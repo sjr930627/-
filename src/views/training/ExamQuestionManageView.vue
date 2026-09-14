@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ArrowLeft, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { CheckboxValueType } from 'element-plus'
+import type { CheckboxValueType, UploadFile, UploadProps } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useTrainingScope } from '@/composables/useTrainingScope'
-import { examQuestionTypeMap, examStatusMap, examStatusTagType } from '@/constants/training'
+import {
+  examQuestionTypeMap,
+  examStatusMap,
+  examStatusTagType,
+  getExamQuestionImageUrls,
+} from '@/constants/training'
 import { getExamQuestions, getExamTotalScore } from '@/services/training'
-import type { ExamQuestion, ExamQuestionType } from '@/types'
+import type { ExamQuestion, ExamQuestionOption, ExamQuestionType } from '@/types'
 
 const store = useAppStore()
 const route = useRoute()
@@ -34,27 +39,43 @@ const previewQuestion = ref<ExamQuestion | null>(null)
 const importText = ref('')
 const importFileName = ref('')
 
+function emptyOptions(): ExamQuestionOption[] {
+  return [
+    { key: 'A', text: '', imageUrl: '' },
+    { key: 'B', text: '', imageUrl: '' },
+    { key: 'C', text: '', imageUrl: '' },
+    { key: 'D', text: '', imageUrl: '' },
+  ]
+}
+
 const questionForm = ref({
   type: 'single' as ExamQuestionType,
   content: '',
-  options: [
-    { key: 'A', text: '' },
-    { key: 'B', text: '' },
-    { key: 'C', text: '' },
-    { key: 'D', text: '' },
-  ],
+  imageUrls: [] as string[],
+  options: emptyOptions(),
   correctAnswers: [] as string[],
   score: 10,
   partialScore: false,
   explanation: '',
 })
 
+const questionImageFileList = ref<UploadFile[]>([])
+
+function syncQuestionImageFileList(urls: string[]) {
+  questionImageFileList.value = urls.map((url, index) => ({
+    name: `题目图片${index + 1}`,
+    url,
+    uid: Date.now() + index,
+    status: 'success' as const,
+  }))
+}
+
 const questions = computed(() => {
   if (!examId.value) return []
   return getExamQuestions(examId.value, store.examQuestions).map((q) => ({
     ...q,
     typeLabel: examQuestionTypeMap[q.type],
-    sourceLabel: q.source === 'ai' ? 'AI生成' : '手动',
+    previewImages: getExamQuestionImageUrls(q),
   }))
 })
 
@@ -64,37 +85,98 @@ function goBack() {
   router.push(examListPath.value)
 }
 
+function readImageAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      reject(new Error('请上传图片文件'))
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      reject(new Error('单张图片不能超过 5MB'))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('图片读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+const onQuestionImageChange: UploadProps['onChange'] = async (uploadFile) => {
+  if (!uploadFile.raw || uploadFile.url) return
+  try {
+    uploadFile.url = await readImageAsDataUrl(uploadFile.raw)
+    uploadFile.status = 'success'
+    questionForm.value.imageUrls = questionImageFileList.value
+      .map((f) => f.url)
+      .filter((u): u is string => !!u)
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '图片上传失败')
+    questionImageFileList.value = questionImageFileList.value.filter((f) => f.uid !== uploadFile.uid)
+  }
+}
+
+const onQuestionImageRemove: UploadProps['onRemove'] = () => {
+  questionForm.value.imageUrls = questionImageFileList.value
+    .map((f) => f.url)
+    .filter((u): u is string => !!u)
+}
+
+async function onOptionImageChange(opt: ExamQuestionOption, uploadFile: UploadFile) {
+  if (!uploadFile.raw) return
+  try {
+    opt.imageUrl = await readImageAsDataUrl(uploadFile.raw)
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '图片上传失败')
+  }
+}
+
+function clearOptionImage(opt: ExamQuestionOption) {
+  opt.imageUrl = ''
+}
+
 function openCreateQuestion() {
   if (isPublished.value) return
   editingQuestionId.value = null
   questionForm.value = {
     type: 'single',
     content: '',
-    options: [
-      { key: 'A', text: '' },
-      { key: 'B', text: '' },
-      { key: 'C', text: '' },
-      { key: 'D', text: '' },
-    ],
+    imageUrls: [],
+    options: emptyOptions(),
     correctAnswers: [],
     score: 10,
     partialScore: false,
     explanation: '',
   }
+  syncQuestionImageFileList([])
   questionDialogVisible.value = true
 }
 
 function openEditQuestion(q: ExamQuestion) {
   editingQuestionId.value = q.id
+  const opts = emptyOptions().map((blank) => {
+    const found = q.options.find((o) => o.key === blank.key)
+    return found
+      ? { key: found.key, text: found.text, imageUrl: found.imageUrl ?? '' }
+      : blank
+  })
+  // 保留超出 A-D 的选项
+  for (const o of q.options) {
+    if (!opts.some((x) => x.key === o.key)) {
+      opts.push({ key: o.key, text: o.text, imageUrl: o.imageUrl ?? '' })
+    }
+  }
   questionForm.value = {
     type: q.type === 'judge' ? 'single' : q.type,
     content: q.content,
-    options: [...q.options],
+    imageUrls: [...getExamQuestionImageUrls(q)],
+    options: opts,
     correctAnswers: [...q.correctAnswers],
     score: q.score,
     partialScore: q.partialScore ?? false,
     explanation: q.explanation ?? '',
   }
+  syncQuestionImageFileList(questionForm.value.imageUrls)
   questionDialogVisible.value = true
 }
 
@@ -107,11 +189,25 @@ function submitQuestion() {
     ElMessage.warning('请设置正确答案')
     return
   }
+  const options = questionForm.value.options
+    .map((o) => ({
+      key: o.key,
+      text: o.text.trim(),
+      imageUrl: o.imageUrl?.trim() || undefined,
+    }))
+    .filter((o) => o.text || o.imageUrl)
+  if (options.length < 2) {
+    ElMessage.warning('请至少填写两个选项（文字或图片）')
+    return
+  }
+  const imageUrls = [...questionForm.value.imageUrls]
   const payload = {
     examId: examId.value,
     type: questionForm.value.type,
     content: questionForm.value.content.trim(),
-    options: questionForm.value.options.filter((o) => o.text.trim()),
+    imageUrls,
+    imageUrl: imageUrls[0],
+    options,
     correctAnswers: questionForm.value.correctAnswers,
     score: questionForm.value.score,
     partialScore: questionForm.value.partialScore,
@@ -146,6 +242,10 @@ function previewQuestionFn(q: ExamQuestion) {
   previewQuestion.value = q
   previewVisible.value = true
 }
+
+const previewImages = computed(() =>
+  previewQuestion.value ? getExamQuestionImageUrls(previewQuestion.value) : [],
+)
 
 function toggleCorrectAnswer(optKey: string, checked: boolean) {
   if (questionForm.value.type === 'single') {
@@ -277,8 +377,18 @@ onMounted(() => {
       <el-table-column label="题目" min-width="240">
         <template #default="{ row }">
           <div class="q-preview">
-            <img v-if="row.imageUrl" :src="row.imageUrl" class="q-thumb" alt="">
-            <span>{{ row.content.slice(0, 60) }}{{ row.content.length > 60 ? '…' : '' }}</span>
+            <img
+              v-if="row.previewImages[0]"
+              :src="row.previewImages[0]"
+              class="q-thumb"
+              alt=""
+            >
+            <span>
+              {{ row.content.slice(0, 60) }}{{ row.content.length > 60 ? '…' : '' }}
+              <el-tag v-if="row.previewImages.length > 1" size="small" type="info" style="margin-left: 6px">
+                {{ row.previewImages.length }} 图
+              </el-tag>
+            </span>
           </div>
         </template>
       </el-table-column>
@@ -286,7 +396,6 @@ onMounted(() => {
       <el-table-column label="分值" width="70" align="center">
         <template #default="{ row }">{{ row.score }}</template>
       </el-table-column>
-      <el-table-column prop="sourceLabel" label="来源" width="80" />
       <el-table-column label="创建时间" width="120">
         <template #default="{ row }">{{ row.createdAt.slice(0, 10) }}</template>
       </el-table-column>
@@ -302,7 +411,7 @@ onMounted(() => {
     </el-table>
   </div>
 
-  <el-dialog v-model="questionDialogVisible" :title="editingQuestionId ? '编辑题目' : '创建题目'" width="640px">
+  <el-dialog v-model="questionDialogVisible" :title="editingQuestionId ? '编辑题目' : '创建题目'" width="720px">
     <el-form label-width="90px">
       <el-form-item label="题型">
         <el-radio-group v-model="questionForm.type">
@@ -311,16 +420,54 @@ onMounted(() => {
         </el-radio-group>
       </el-form-item>
       <el-form-item label="题目" required>
-        <el-input v-model="questionForm.content" type="textarea" :rows="2" />
+        <el-input
+          v-model="questionForm.content"
+          type="textarea"
+          :rows="3"
+          placeholder="请输入题目内容"
+        />
+        <div class="image-upload-block">
+          <div class="field-hint">可上传多张配图（单张 ≤5MB）</div>
+          <el-upload
+            v-model:file-list="questionImageFileList"
+            list-type="picture-card"
+            :auto-upload="false"
+            accept="image/*"
+            multiple
+            :on-change="onQuestionImageChange"
+            :on-remove="onQuestionImageRemove"
+          >
+            <el-icon><Plus /></el-icon>
+          </el-upload>
+        </div>
       </el-form-item>
       <el-form-item label="选项">
-        <div v-for="opt in questionForm.options" :key="opt.key" class="opt-row">
-          <span class="opt-key">{{ opt.key }}</span>
-          <el-input v-model="opt.text" placeholder="选项内容" />
-          <el-checkbox
-            :model-value="questionForm.correctAnswers.includes(opt.key)"
-            @change="onOptionCorrectChange(opt.key, $event)"
-          >正确</el-checkbox>
+        <div v-for="opt in questionForm.options" :key="opt.key" class="opt-block">
+          <div class="opt-row">
+            <span class="opt-key">{{ opt.key }}</span>
+            <el-input v-model="opt.text" placeholder="选项内容" />
+            <el-checkbox
+              :model-value="questionForm.correctAnswers.includes(opt.key)"
+              @change="onOptionCorrectChange(opt.key, $event)"
+            >
+              正确
+            </el-checkbox>
+          </div>
+          <div class="opt-image-row">
+            <el-upload
+              v-if="!opt.imageUrl"
+              :auto-upload="false"
+              :show-file-list="false"
+              accept="image/*"
+              :on-change="(file) => onOptionImageChange(opt, file)"
+            >
+              <el-button size="small">上传图片</el-button>
+            </el-upload>
+            <div v-else class="opt-image-preview">
+              <img :src="opt.imageUrl" alt="">
+              <el-button link type="danger" size="small" @click="clearOptionImage(opt)">移除</el-button>
+            </div>
+          </div>
         </div>
       </el-form-item>
       <el-form-item label="分值">
@@ -373,17 +520,29 @@ onMounted(() => {
 
   <el-dialog v-model="previewVisible" title="题目预览" width="560px">
     <template v-if="previewQuestion">
-      <img
-        v-if="previewQuestion.imageUrl"
-        :src="previewQuestion.imageUrl"
-        style="width: 100%; border-radius: 8px; margin-bottom: 12px"
-        alt=""
-      >
+      <div v-if="previewImages.length" class="preview-images">
+        <img
+          v-for="(url, idx) in previewImages"
+          :key="idx"
+          :src="url"
+          class="preview-image"
+          alt=""
+        >
+      </div>
       <p><strong>{{ previewQuestion.content }}</strong></p>
-      <ul>
+      <ul class="preview-options">
         <li v-for="opt in previewQuestion.options" :key="opt.key">
-          {{ opt.key }}. {{ opt.text }}
-          <el-tag v-if="previewQuestion.correctAnswers.includes(opt.key)" size="small" type="success">正确</el-tag>
+          <div class="preview-opt-main">
+            {{ opt.key }}. {{ opt.text }}
+            <el-tag
+              v-if="previewQuestion.correctAnswers.includes(opt.key)"
+              size="small"
+              type="success"
+            >
+              正确
+            </el-tag>
+          </div>
+          <img v-if="opt.imageUrl" :src="opt.imageUrl" class="preview-opt-image" alt="">
         </li>
       </ul>
       <p v-if="previewQuestion.explanation" class="text-muted">解析：{{ previewQuestion.explanation }}</p>
@@ -413,15 +572,48 @@ onMounted(() => {
   object-fit: cover;
   border-radius: 4px;
 }
+.field-hint {
+  margin: 8px 0 6px;
+  font-size: 12px;
+  color: #909399;
+}
+.image-upload-block {
+  width: 100%;
+}
+.opt-block {
+  width: 100%;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #ebeef5;
+}
+.opt-block:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
 .opt-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
 }
 .opt-key {
   width: 24px;
   font-weight: 600;
+  flex-shrink: 0;
+}
+.opt-image-row {
+  margin: 8px 0 0 32px;
+}
+.opt-image-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.opt-image-preview img {
+  width: 72px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #ebeef5;
 }
 .import-hint {
   margin: 0 0 16px;
@@ -431,5 +623,29 @@ onMounted(() => {
   margin-left: 8px;
   font-size: 13px;
   color: #606266;
+}
+.preview-images {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.preview-image {
+  width: 100%;
+  border-radius: 8px;
+}
+.preview-options {
+  padding-left: 18px;
+}
+.preview-opt-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.preview-opt-image {
+  display: block;
+  margin-top: 6px;
+  max-width: 160px;
+  border-radius: 6px;
 }
 </style>

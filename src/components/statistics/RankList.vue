@@ -1,13 +1,22 @@
 <script setup lang="ts">
-defineProps<{
-  items: { name: string; value: number; percent: number; color?: string }[]
+const props = defineProps<{
+  items: { name: string; value: number; percent: number; color?: string; [key: string]: unknown }[]
   valueSuffix?: string
+  clickable?: boolean
 }>()
+
+const emit = defineEmits<{ select: [item: (typeof props.items)[number]] }>()
 </script>
 
 <template>
   <div class="rank-list">
-    <div v-for="(item, idx) in items" :key="item.name" class="rank-item">
+    <div
+      v-for="(item, idx) in items"
+      :key="item.name"
+      class="rank-item"
+      :class="{ clickable }"
+      @click="clickable ? emit('select', item) : undefined"
+    >
       <span class="rank-no" :class="{ top: idx < 3 }">{{ idx + 1 }}</span>
       <span class="rank-name">{{ item.name }}</span>
       <div class="rank-bar-wrap">
@@ -32,6 +41,17 @@ defineProps<{
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.rank-item.clickable {
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 4px 6px;
+  margin: 0 -6px;
+}
+
+.rank-item.clickable:hover {
+  background: #f5f7fa;
 }
 
 .rank-no {

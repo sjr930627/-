@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
@@ -10,22 +10,25 @@ import {
   attendanceGroupStatusMap,
   attendanceGroupTypeMap,
   formatDeptBindings,
-  formatMinMonthlyHours,
   formatShiftPeriod,
   formatVersionLabel,
   formatVersionTime,
   summarizeVersionSnapshot,
 } from '@/constants/attendanceGroup'
-import type { AttendanceGroup, AttendanceGroupVersion } from '@/types'
+import {
+  isUnassignedDepartment,
+} from '@/constants/department'
+import { buildDepartmentTree, getDepartmentDescendantIds } from '@/utils'
+import type { AttendanceGroup, AttendanceGroupVersion, DepartmentTreeNode } from '@/types'
 
 const store = useAppStore()
 const router = useRouter()
-const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
+const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl, activeEnterpriseId } =
   useEnterpriseScope('filter')
 
 const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
 const typeFilter = ref<'all' | 'shift' | 'free' | 'none'>('all')
-const deptFilter = ref('')
+const deptFilter = ref<string | undefined>()
 const page = ref(1)
 const pageSize = 5
 
@@ -34,6 +37,47 @@ const historyGroup = ref<AttendanceGroup | null>(null)
 const versionDetailVisible = ref(false)
 const selectedVersion = ref<AttendanceGroupVersion | null>(null)
 
+interface DeptCascaderOption {
+  value: string
+  label: string
+  children?: DeptCascaderOption[]
+}
+
+function toCascaderOptions(nodes: DepartmentTreeNode[]): DeptCascaderOption[] {
+  return nodes.map((node) => ({
+    value: node.id,
+    label: node.name,
+    children: node.children.length ? toCascaderOptions(node.children) : undefined,
+  }))
+}
+
+const scopedDepartments = computed(() => {
+  const list = activeEnterpriseId.value
+    ? store.getDepartmentsByEnterprise(activeEnterpriseId.value)
+    : store.departments
+  return list.filter((d) => !isUnassignedDepartment(d.id))
+})
+
+const deptCascaderOptions = computed(() =>
+  toCascaderOptions(buildDepartmentTree(scopedDepartments.value)),
+)
+
+const deptCascaderProps = {
+  checkStrictly: true,
+  emitPath: false,
+  expandTrigger: 'hover' as const,
+}
+
+watch(enterpriseFilter, () => {
+  deptFilter.value = undefined
+  page.value = 1
+})
+
+const matchedDeptIds = computed(() => {
+  if (!deptFilter.value) return null
+  return getDepartmentDescendantIds(store.departments, deptFilter.value)
+})
+
 const tableData = computed(() =>
   store.attendanceGroups
     .filter((g) => {
@@ -41,8 +85,9 @@ const tableData = computed(() =>
       if (!matchesEnterprise(enterpriseId)) return false
       if (statusFilter.value !== 'all' && g.status !== statusFilter.value) return false
       if (typeFilter.value !== 'all' && g.attendanceType !== typeFilter.value) return false
-      if (deptFilter.value && !g.departmentBindings.some((b) => b.departmentId === deptFilter.value)) {
-        return false
+      if (matchedDeptIds.value) {
+        const hit = g.departmentBindings.some((b) => matchedDeptIds.value!.has(b.departmentId))
+        if (!hit) return false
       }
       return true
     })
@@ -56,7 +101,6 @@ const tableData = computed(() =>
         typeLabel: attendanceGroupTypeMap[g.attendanceType],
         statusLabel: attendanceGroupStatusMap[g.status],
         shiftPeriod: formatShiftPeriod(g),
-        minMonthlyLabel: formatMinMonthlyHours(g.minMonthlyOnlineHours),
         areaLabel: g.attendanceArea ?? (g.punchLocations[0]?.name ?? '不限区域'),
         versionLabel: formatVersionLabel(g.currentVersion || 0),
         deptTags: depts.visible,
@@ -113,7 +157,7 @@ async function remove(id: string, name: string) {
 function resetFilters() {
   statusFilter.value = 'all'
   typeFilter.value = 'all'
-  deptFilter.value = ''
+  deptFilter.value = undefined
   page.value = 1
 }
 </script>
@@ -140,14 +184,15 @@ function resetFilters() {
         <el-option label="启用" value="enabled" />
         <el-option label="停用" value="disabled" />
       </el-select>
-      <el-select v-model="deptFilter" placeholder="全部部门" clearable style="width: 160px">
-        <el-option
-          v-for="d in store.departments"
-          :key="d.id"
-          :label="d.name"
-          :value="d.id"
-        />
-      </el-select>
+      <el-cascader
+        v-model="deptFilter"
+        :options="deptCascaderOptions"
+        :props="deptCascaderProps"
+        clearable
+        filterable
+        placeholder="全部部门"
+        style="width: 220px"
+      />
       <el-select v-model="typeFilter" placeholder="考勤类型" style="width: 130px">
         <el-option label="全部类型" value="all" />
         <el-option label="排班制" value="shift" />
@@ -196,7 +241,6 @@ function resetFilters() {
         </template>
       </el-table-column>
       <el-table-column prop="shiftPeriod" label="考勤时段" min-width="150" />
-      <el-table-column prop="minMonthlyLabel" label="月最低在线" width="110" align="center" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <span class="status-dot" :class="row.status" />

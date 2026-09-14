@@ -171,6 +171,9 @@ export interface WorkerIncomeDetailRow {
   calcType: 'hourly' | 'task'
   quantityLabel: string
   unitPriceLabel: string
+  enterpriseName?: string
+  departmentName?: string
+  status: WorkerIncomeStatus
 }
 
 function formatDetailQuantity(calcType: 'hourly' | 'task', quantity: number): string {
@@ -189,6 +192,9 @@ function toDetailRow(
   unitPrice: number,
   amount: number,
   calcType: 'hourly' | 'task',
+  status: WorkerIncomeStatus,
+  enterpriseName?: string,
+  departmentName?: string,
 ): WorkerIncomeDetailRow {
   return {
     id,
@@ -200,6 +206,9 @@ function toDetailRow(
     calcType,
     quantityLabel: formatDetailQuantity(calcType, quantity),
     unitPriceLabel: formatDetailUnitPrice(calcType, unitPrice),
+    enterpriseName,
+    departmentName,
+    status,
   }
 }
 
@@ -208,14 +217,18 @@ export function collectWorkerIncomeDetailRows(
   records: WorkerIncomeRecord[],
   employeeId: string,
   statuses: WorkerIncomeStatus[],
+  ctx?: { enterpriseName?: string; departmentName?: string },
 ): WorkerIncomeDetailRow[] {
   const statusSet = new Set(statuses)
   const matched = records.filter(
     (record) => record.employeeId === employeeId && statusSet.has(record.status),
   )
   const rows: WorkerIncomeDetailRow[] = []
+  const fallbackEnterprise = ctx?.enterpriseName
+  const departmentName = ctx?.departmentName
 
   for (const record of matched) {
+    const enterpriseName = record.enterpriseName?.trim() || fallbackEnterprise
     if (record.items?.length) {
       for (const item of record.items) {
         const calcType = item.calcType
@@ -232,6 +245,9 @@ export function collectWorkerIncomeDetailRows(
                 item.unitPrice,
                 item.unitPrice,
                 'task',
+                record.status,
+                enterpriseName,
+                departmentName,
               ),
             )
           }
@@ -246,6 +262,9 @@ export function collectWorkerIncomeDetailRows(
               item.unitPrice,
               item.amount,
               calcType,
+              record.status,
+              enterpriseName,
+              departmentName,
             ),
           )
         }
@@ -261,6 +280,9 @@ export function collectWorkerIncomeDetailRows(
           record.amount,
           record.amount,
           calcType,
+          record.status,
+          enterpriseName,
+          departmentName,
         ),
       )
     }

@@ -3,7 +3,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
 import type { ElTree } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import { buildDepartmentTree, getDepartmentName } from '@/utils'
+import { buildDepartmentTree, getDepartmentManagerIds, getDepartmentName, normalizeDepartmentManagers } from '@/utils'
+import { isUnassignedDepartment } from '@/constants/department'
 import { attendanceGroupTypeMap, formatShiftPeriod } from '@/constants/attendanceGroup'
 import type { DepartmentNodeType, DepartmentOrgType } from '@/types'
 
@@ -29,7 +30,7 @@ export interface DepartmentFormModel {
   sort: number
   nodeType: DepartmentNodeType
   description: string
-  managerEmployeeId: string | null
+  managerEmployeeIds: string[]
   attendanceGroupId: string | null
   imageUrl: string
   authorizedDepartmentIds: string[]
@@ -42,7 +43,7 @@ const emptyForm = (): DepartmentFormModel => ({
   sort: 1,
   nodeType: 'branch',
   description: '',
-  managerEmployeeId: null,
+  managerEmployeeIds: [],
   attendanceGroupId: null,
   imageUrl: '',
   authorizedDepartmentIds: [],
@@ -55,7 +56,7 @@ const authFilterKeyword = ref('')
 const isEdit = computed(() => !!props.editingId)
 
 const parentOptions = computed(() =>
-  store.departments.filter((d) => d.id !== props.editingId),
+  store.departments.filter((d) => d.id !== props.editingId && !isUnassignedDepartment(d.id)),
 )
 
 /** 授权树：与企业授权相同，选择平台组织部门 */
@@ -153,7 +154,7 @@ watch(
         sort: dept.sort,
         nodeType: dept.nodeType ?? 'branch',
         description: dept.description ?? '',
-        managerEmployeeId: dept.managerEmployeeId ?? null,
+        managerEmployeeIds: getDepartmentManagerIds(dept),
         attendanceGroupId: dept.attendanceGroupId ?? null,
         imageUrl: dept.imageUrl ?? '',
         authorizedDepartmentIds: [...(dept.authorizedDepartmentIds ?? [])],
@@ -214,22 +215,22 @@ function submit() {
     ElMessage.warning('请填写部门名称')
     return
   }
-  if (!form.value.parentId && form.value.orgType !== 'enterprise') {
+  if (!form.value.parentId) {
     ElMessage.warning('请选择父级部门')
     return
   }
-  if (!form.value.managerEmployeeId) {
+  if (!form.value.managerEmployeeIds.length) {
     ElMessage.warning('请选择负责人')
     return
   }
-  if (!form.value.attendanceGroupId) {
-    ElMessage.warning('请选择关联考勤组')
-    return
-  }
 
+  const managers = normalizeDepartmentManagers(form.value.managerEmployeeIds)
+  const parent = store.departments.find((d) => d.id === form.value.parentId)
   const payload = {
     ...form.value,
     name: form.value.name.trim(),
+    ...managers,
+    enterpriseId: parent?.enterpriseId,
     authorizedDepartmentIds: [...new Set(form.value.authorizedDepartmentIds)],
   }
 
@@ -374,11 +375,14 @@ defineExpose({ loadDraft })
       </div>
       <div class="section-card">
         <el-form label-position="top">
-          <el-form-item label="负责人姓名" required>
+          <el-form-item label="负责人" required>
             <el-select
-              v-model="form.managerEmployeeId"
+              v-model="form.managerEmployeeIds"
+              multiple
               filterable
-              placeholder="公司-部门-姓名"
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="可多选：公司-部门-姓名"
               style="width: 100%"
             >
               <el-option
@@ -400,10 +404,11 @@ defineExpose({ loadDraft })
       </div>
       <div class="section-card">
         <el-form label-position="top">
-          <el-form-item label="关联考勤组" required>
+          <el-form-item label="关联考勤组">
             <el-select
               v-model="form.attendanceGroupId"
-              placeholder="考勤组名称"
+              clearable
+              placeholder="考勤组名称（可选）"
               style="width: 100%"
             >
               <el-option

@@ -5,14 +5,19 @@ defineProps<{
   suffix?: string
   trend?: string
   trendUp?: boolean
+  /** 环比是否为正向（离职下降等场景可与箭头方向解耦） */
+  trendPositive?: boolean
   subText?: string
   color?: 'blue' | 'green' | 'orange' | 'red' | 'purple' | 'cyan' | 'pink'
   icon?: string
+  clickable?: boolean
 }>()
+
+defineEmits<{ click: [] }>()
 </script>
 
 <template>
-  <div class="kpi-card">
+  <div class="kpi-card" :class="{ clickable }" @click="clickable ? $emit('click') : undefined">
     <div class="kpi-top">
       <span class="kpi-label">{{ label }}</span>
       <div v-if="icon" class="kpi-icon" :class="color ?? 'blue'">
@@ -22,7 +27,11 @@ defineProps<{
     <div class="kpi-value">
       {{ value }}<span v-if="suffix" class="kpi-suffix">{{ suffix }}</span>
     </div>
-    <div v-if="trend" class="kpi-trend" :class="trendUp ? 'up' : 'down'">
+    <div
+      v-if="trend"
+      class="kpi-trend"
+      :class="(trendPositive ?? trendUp) ? 'up' : 'down'"
+    >
       {{ trendUp ? '↑' : '↓' }} {{ trend }}
     </div>
     <div v-if="subText" class="kpi-sub">{{ subText }}</div>
@@ -38,6 +47,16 @@ defineProps<{
   border: 1px solid var(--app-border);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   height: 100%;
+}
+
+.kpi-card.clickable {
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.kpi-card.clickable:hover {
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.12);
 }
 
 .kpi-top {

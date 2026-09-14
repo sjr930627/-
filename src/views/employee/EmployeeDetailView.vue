@@ -20,7 +20,7 @@ import {
   resolveInstanceWorkflowStatus,
 } from '@/services/task'
 import { synthesizeDetailedInstanceLogs } from '@/services/taskInstanceLifecycle'
-import { getDepartmentName } from '@/utils'
+import { calcAgeFromIdCard, getDepartmentPath } from '@/utils'
 import type { Employee, EmployeeSkillCertificate, EmployeeStatus, TaskInstance } from '@/types'
 
 const route = useRoute()
@@ -55,32 +55,45 @@ const statusLabelMap: Record<EmployeeStatus, string> = {
   resigned: '已离职',
 }
 
+const isGrabPersonnel = computed(
+  () => (employee.value?.personnelCategory ?? 'schedule') === 'grab',
+)
+
+const displayAge = computed(() => {
+  if (!employee.value) return undefined
+  return calcAgeFromIdCard(employee.value.idCardNo) ?? employee.value.age
+})
+
 const dataSource = computed(() =>
   employee.value
     ? resolveEmployeeDataSource(employee.value, store.workerJoinApplications)
     : 'manual',
 )
 
-const healthCertificate = computed(() => {
-  const certs = employee.value?.skillCertificates ?? []
-  const health = certs.find((c) => c.name.includes('健康'))
-  if (health) return health
-  const profileCert = workerProfile.value?.certificates[0]
-  if (profileCert) {
-    return {
-      name: profileCert.name,
-      certificateNo: '—',
-      issueDate: '',
-      expiryDate: profileCert.expireAt,
-    } satisfies Partial<EmployeeSkillCertificate>
-  }
-  return certs[0] ?? null
+const skillCertificates = computed(() => {
+  const fromEmployee = employee.value?.skillCertificates ?? []
+  if (fromEmployee.length) return fromEmployee
+  const profileCerts = workerProfile.value?.certificates ?? []
+  return profileCerts.map((c, idx) => ({
+    id: `profile_cert_${idx}`,
+    name: c.name,
+    certificateNo: '',
+    issueDate: '',
+    expiryDate: c.expireAt,
+    photoUrl: undefined,
+    photoName: undefined,
+  })) satisfies EmployeeSkillCertificate[]
 })
 
-const isHealthValid = computed(() => {
-  if (!healthCertificate.value?.expiryDate) return true
-  return healthCertificate.value.expiryDate >= new Date().toISOString().slice(0, 10)
-})
+function isCertValid(cert: EmployeeSkillCertificate) {
+  if (!cert.expiryDate) return true
+  return cert.expiryDate >= new Date().toISOString().slice(0, 10)
+}
+
+function skillIcon(cert: EmployeeSkillCertificate) {
+  const skill = store.skillLibrary.find((s) => s.id === cert.skillId || s.name === cert.name)
+  return skill?.icon || '📜'
+}
 
 const attendanceStats = computed(() => {
   const empId = employeeId.value
@@ -133,10 +146,11 @@ const taskStats = computed(() => {
   }
 })
 
-const employeeTaskStatusMap: Record<'running' | 'completed' | 'cancelled', string> = {
+const employeeTaskStatusMap: Record<'running' | 'completed' | 'cancelled' | 'ended', string> = {
   running: '进行中',
   completed: '已完成',
   cancelled: '已取消',
+  ended: '已结束',
 }
 
 function formatClock(value?: string) {
@@ -326,10 +340,6 @@ async function handleRemove() {
   ElMessage.success('已移除')
   goBack()
 }
-
-function handleBlacklist() {
-  ElMessage.info('已加入黑名单（演示）')
-}
 </script>
 
 <template>
@@ -340,10 +350,6 @@ function handleBlacklist() {
         <el-button @click="editVisible = true">
           <el-icon><Edit /></el-icon>
           编辑信息
-        </el-button>
-        <el-button @click="handleBlacklist">
-          <el-icon><CircleClose /></el-icon>
-          加入黑名单
         </el-button>
         <el-button type="danger" plain @click="handleRemove">
           <el-icon><Delete /></el-icon>
@@ -390,7 +396,7 @@ function handleBlacklist() {
         </div>
         <div class="info-item">
           <span class="info-label">年龄</span>
-          <span class="info-value">{{ employee.age ? `${employee.age}岁` : '—' }}</span>
+          <span class="info-value">{{ displayAge != null ? `${displayAge}岁` : '—' }}</span>
         </div>
         <div class="info-item">
           <span class="info-label">身份证号</span>
@@ -422,7 +428,7 @@ function handleBlacklist() {
         </div>
         <div class="info-item">
           <span class="info-label">所属部门</span>
-          <span class="info-value">{{ getDepartmentName(store.departments, employee.departmentId) }}</span>
+          <span class="info-value">{{ getDepartmentPath(store.departments, employee.departmentId) }}</span>
         </div>
         <div class="info-item">
           <span class="info-label">人员状态</span>
@@ -435,7 +441,7 @@ function handleBlacklist() {
             </el-tag>
           </span>
         </div>
-        <div class="info-item">
+        <div v-if="!isGrabPersonnel" class="info-item">
           <span class="info-label">数据来源</span>
           <span class="info-value">
             <el-tag size="small" :type="employeeDataSourceTagType[dataSource]">
@@ -447,24 +453,59 @@ function handleBlacklist() {
       </div>
     </div>
 
-    <div class="summary-row">
-      <div class="page-card summary-card">
-        <div class="summary-head">
-          <span class="summary-icon summary-icon--green"><el-icon><FirstAidKit /></el-icon></span>
-          <span>{{ healthCertificate?.name ?? '健康证' }}</span>
-          <el-tag v-if="healthCertificate" size="small" :type="isHealthValid ? 'success' : 'danger'">
-            {{ isHealthValid ? '正常' : '已过期' }}
-          </el-tag>
-          <el-tag v-else size="small" type="info">未上传</el-tag>
+    <div class="skill-section">
+      <h3 class="basic-section-title">技能证书</h3>
+      <div v-if="skillCertificates.length" class="skill-cards">
+        <div
+          v-for="cert in skillCertificates"
+          :key="cert.id"
+          class="page-card skill-card"
+        >
+          <div class="summary-head">
+            <span class="skill-emoji">{{ skillIcon(cert) }}</span>
+            <span class="skill-card-title">{{ cert.name || '未命名证书' }}</span>
+            <el-tag size="small" :type="isCertValid(cert) ? 'success' : 'danger'">
+              {{ isCertValid(cert) ? '有效' : '已过期' }}
+            </el-tag>
+          </div>
+          <div class="summary-body">
+            <div>
+              <span>证书名称</span>
+              <strong>{{ cert.name || '—' }}</strong>
+            </div>
+            <div>
+              <span>证书编号</span>
+              <strong>{{ cert.certificateNo || '—' }}</strong>
+            </div>
+            <div>
+              <span>发证日期</span>
+              <strong>{{ cert.issueDate || '—' }}</strong>
+            </div>
+            <div>
+              <span>有效期至</span>
+              <strong>{{ cert.expiryDate || '—' }}</strong>
+            </div>
+            <div v-if="cert.photoName || cert.photoUrl" class="cert-photo-row">
+              <span>证书照片</span>
+              <div class="cert-photo-wrap">
+                <img
+                  v-if="cert.photoUrl"
+                  :src="cert.photoUrl"
+                  class="cert-photo"
+                  alt="证书照片"
+                >
+                <strong v-else>{{ cert.photoName }}</strong>
+              </div>
+            </div>
+          </div>
         </div>
-        <div v-if="healthCertificate" class="summary-body">
-          <div><span>证书编号</span><strong>{{ healthCertificate.certificateNo || '—' }}</strong></div>
-          <div><span>发证日期</span><strong>{{ healthCertificate.issueDate || '—' }}</strong></div>
-          <div><span>有效期至</span><strong>{{ healthCertificate.expiryDate || '—' }}</strong></div>
-        </div>
-        <div v-else class="summary-empty">暂无证书信息</div>
       </div>
+      <div v-else class="page-card skill-empty-card">
+        <div class="summary-empty">暂无技能证书，可在编辑信息中上传证书名称及证书信息</div>
+      </div>
+    </div>
 
+    <div class="summary-row">
       <div class="page-card summary-card">
         <div class="summary-head">
           <span class="summary-icon summary-icon--blue"><el-icon><Clock /></el-icon></span>
@@ -679,8 +720,57 @@ function handleBlacklist() {
 
 .summary-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.skill-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skill-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.skill-card {
+  padding: 18px;
+}
+
+.skill-emoji {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.skill-card-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-empty-card {
+  padding: 24px 18px;
+}
+
+.cert-photo-row {
+  align-items: flex-start !important;
+}
+
+.cert-photo-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.cert-photo {
+  width: 120px;
+  height: 90px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
 }
 
 .summary-card {

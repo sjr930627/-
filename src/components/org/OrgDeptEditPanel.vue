@@ -6,9 +6,12 @@ import { useAppStore } from '@/stores/app'
 import {
   buildDepartmentTree,
   getDepartmentDescendantIds,
+  getDepartmentManagerIds,
   getDepartmentName,
+  normalizeDepartmentManagers,
 } from '@/utils'
 import { attendanceGroupTypeMap, formatShiftPeriod } from '@/constants/attendanceGroup'
+import { isUnassignedDepartment } from '@/constants/department'
 import type { Department, DepartmentNodeType, DepartmentOrgType, Employee } from '@/types'
 
 const props = defineProps<{
@@ -35,7 +38,7 @@ const form = ref({
   sort: 1,
   nodeType: 'branch' as DepartmentNodeType,
   description: '',
-  managerEmployeeId: null as string | null,
+  managerEmployeeIds: [] as string[],
   attendanceGroupId: null as string | null,
   imageUrl: '',
   authorizedDepartmentIds: [] as string[],
@@ -59,7 +62,7 @@ watch(
       sort: dept.sort,
       nodeType: dept.nodeType ?? 'branch',
       description: dept.description ?? '',
-      managerEmployeeId: dept.managerEmployeeId ?? null,
+      managerEmployeeIds: getDepartmentManagerIds(dept),
       attendanceGroupId: dept.attendanceGroupId ?? null,
       imageUrl: dept.imageUrl ?? '',
       authorizedDepartmentIds: [...(dept.authorizedDepartmentIds ?? [])],
@@ -70,10 +73,15 @@ watch(
 )
 
 const parentOptions = computed(() => {
-  if (!props.department) return props.departments
+  if (!props.department) {
+    return props.departments.filter((d) => !isUnassignedDepartment(d.id))
+  }
   const blocked = getDepartmentDescendantIds(props.departments, props.department.id)
   return props.departments.filter(
-    (d) => d.id !== props.department!.id && !blocked.has(d.id),
+    (d) =>
+      d.id !== props.department!.id &&
+      !blocked.has(d.id) &&
+      !isUnassignedDepartment(d.id),
   )
 })
 
@@ -170,16 +178,12 @@ function submit() {
     ElMessage.warning('请填写部门名称')
     return
   }
-  if (!form.value.parentId && form.value.orgType !== 'enterprise') {
+  if (!form.value.parentId) {
     ElMessage.warning('请选择父级部门')
     return
   }
-  if (!form.value.managerEmployeeId) {
+  if (!form.value.managerEmployeeIds.length) {
     ElMessage.warning('请选择负责人')
-    return
-  }
-  if (!form.value.attendanceGroupId) {
-    ElMessage.warning('请选择关联考勤组')
     return
   }
 
@@ -192,7 +196,7 @@ function submit() {
       sort: form.value.sort,
       nodeType: form.value.nodeType,
       description: form.value.description.trim() || undefined,
-      managerEmployeeId: form.value.managerEmployeeId,
+      ...normalizeDepartmentManagers(form.value.managerEmployeeIds),
       attendanceGroupId: form.value.attendanceGroupId,
       imageUrl: form.value.imageUrl || undefined,
       authorizedDepartmentIds: [...new Set(form.value.authorizedDepartmentIds)],
@@ -320,11 +324,14 @@ function submit() {
         </div>
         <div class="section-card">
           <el-form label-position="top" :disabled="locked">
-            <el-form-item label="负责人姓名" required>
+            <el-form-item label="负责人" required>
               <el-select
-                v-model="form.managerEmployeeId"
+                v-model="form.managerEmployeeIds"
+                multiple
                 filterable
-                placeholder="部门-姓名"
+                collapse-tags
+                collapse-tags-tooltip
+                placeholder="可多选：部门-姓名"
                 style="width: 100%"
               >
                 <el-option
@@ -346,10 +353,11 @@ function submit() {
         </div>
         <div class="section-card">
           <el-form label-position="top" :disabled="locked">
-            <el-form-item label="关联考勤组" required>
+            <el-form-item label="关联考勤组">
               <el-select
                 v-model="form.attendanceGroupId"
-                placeholder="考勤组名称"
+                clearable
+                placeholder="考勤组名称（可选）"
                 style="width: 100%"
               >
                 <el-option

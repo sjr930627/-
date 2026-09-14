@@ -9,8 +9,9 @@ import {
   buildDepartmentTree,
   countDepartmentAccounts,
   getDepartmentDescendantIds,
-  getDepartmentName,
+  getDepartmentPath,
 } from '@/utils'
+import DepartmentLeafCascader from '@/components/employee/DepartmentLeafCascader.vue'
 import type { DepartmentTreeNode, SystemAccount } from '@/types'
 
 const props = withDefaults(
@@ -129,7 +130,7 @@ const tableData = computed(() => {
     .map((a) => ({
       ...a,
       roleName: formatAccountRoleNames(a, availableRoles.value),
-      departmentName: getDepartmentName(scopedDepartments.value, a.departmentId),
+      departmentName: getDepartmentPath(scopedDepartments.value, a.departmentId),
       statusLabel: a.status === 'enabled' ? '正常' : '停用',
     }))
 })
@@ -333,9 +334,12 @@ async function removeAccount(row: SystemAccount) {
         <p v-if="form.roleIds.length > 1" class="role-hint text-muted">多角色时，操作权限取各角色并集</p>
       </el-form-item>
       <el-form-item label="所属部门" required>
-        <el-select v-model="form.departmentId" style="width: 100%">
-          <el-option v-for="d in scopedDepartments" :key="d.id" :label="d.name" :value="d.id" />
-        </el-select>
+        <DepartmentLeafCascader
+          v-model="form.departmentId"
+          :departments="scopedDepartments"
+          :allow-ids="form.departmentId ? [form.departmentId] : []"
+          :exclude-system="false"
+        />
       </el-form-item>
       <el-form-item label="手机"><el-input v-model="form.phone" /></el-form-item>
       <el-form-item label="邮箱"><el-input v-model="form.email" /></el-form-item>

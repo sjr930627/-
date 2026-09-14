@@ -28,9 +28,9 @@ export interface TaskInstanceLifecycleRecord {
 function isTerminalStatus(
   instance: TaskInstance,
   workflow: TaskWorkflow | undefined,
-): 'completed' | 'cancelled' | null {
+): 'completed' | 'cancelled' | 'ended' | null {
   const status = resolveInstanceWorkflowStatus(instance, workflow)
-  if (status === 'completed' || status === 'cancelled') return status
+  if (status === 'completed' || status === 'cancelled' || status === 'ended') return status
   return null
 }
 
@@ -63,7 +63,7 @@ function resolveTraversalPath(
   const mainPath = nodes.filter((n) => !isCancelEndNode(n))
   const terminal = isTerminalStatus(instance, workflow)
 
-  if (terminal === 'cancelled') {
+  if (terminal === 'cancelled' || terminal === 'ended') {
     const start = mainPath[0]
     const cancel =
       cancelEnds.find((n) => n.id === instance.currentNodeId) ?? cancelEnds[0]
@@ -289,7 +289,7 @@ export function buildTaskInstanceLifecycleRecords(
   const needSynthesize =
     Boolean(workflow) &&
     (rawLogs.length < 2 ||
-      (terminal === 'cancelled' && rawLogs.length < 3) ||
+      ((terminal === 'cancelled' || terminal === 'ended') && rawLogs.length < 3) ||
       (terminal === 'completed' && rawLogs.length < 3))
 
   let source: TaskInstanceLog[] =

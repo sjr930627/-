@@ -8,6 +8,7 @@ import {
   buildGrabShiftHistoryRecords,
   resolveGrabSlotDepartmentId,
 } from '@/services/grabShift'
+import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
 
 const store = useAppStore()
 const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
@@ -17,7 +18,9 @@ const keyword = ref('')
 const deptFilter = ref<'all' | string>('all')
 
 const departmentOptions = computed(() => {
-  const depts = store.departments.filter((d) => d.orgType !== 'enterprise')
+  const depts = store.departments.filter(
+    (d) => !isEnterpriseRootDepartment(d) && !isUnassignedDepartment(d.id),
+  )
   return [
     { value: 'all', label: '全部部门' },
     ...depts.map((d) => ({ value: d.id, label: d.name })),

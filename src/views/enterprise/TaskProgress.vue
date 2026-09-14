@@ -43,6 +43,9 @@ function enrichInstance(i: TaskInstance) {
   const hasEnterpriseFields = getWorkflowFieldsForNode(workflow, i.currentNodeId).length > 0
   return {
     ...i,
+    taskNo: task?.taskNo || '—',
+    providerLabel: task?.serviceProviderName || '—',
+    workflowName: workflow?.name ?? i.taskTypeName ?? '—',
     workflow,
     workflowStatus,
     statusLabel: statusMeta.label,
@@ -127,7 +130,7 @@ function handleEnterpriseAction(
     </div>
     <div class="stat-card green">
       <div class="stat-value">{{ summary.active }}</div>
-      <div class="stat-label">进行中</div>
+      <div class="stat-label">执行中</div>
     </div>
     <div class="stat-card blue">
       <div class="stat-value">{{ summary.accepted }}</div>
@@ -150,7 +153,7 @@ function handleEnterpriseAction(
   <div class="page-card">
     <div class="page-header">
       <div>
-        <h2 class="page-title">任务进度</h2>
+        <h2 class="page-title">任务管理</h2>
         <p class="text-muted">
           按任务流节点跟踪认领明细；流程到达企业操作节点时可审核、驳回或结束任务
         </p>
@@ -186,8 +189,10 @@ function handleEnterpriseAction(
     </div>
 
     <el-table :data="detailData" border stripe>
+      <el-table-column prop="taskNo" label="任务ID" width="130" show-overflow-tooltip />
       <el-table-column prop="taskName" label="任务名称" min-width="160" />
-      <el-table-column prop="taskTypeName" label="类型" width="120" />
+      <el-table-column prop="providerLabel" label="服务商" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="workflowName" label="任务流程" min-width="120" show-overflow-tooltip />
       <el-table-column prop="workerName" label="灵工" width="100" />
       <el-table-column label="执行状态" width="100">
         <template #default="{ row }">

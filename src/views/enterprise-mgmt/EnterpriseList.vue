@@ -23,6 +23,11 @@ const page = ref(1)
 const pageSize = ref(8)
 const selectedIds = ref<string[]>([])
 
+/** 点击「查询」后才生效的条件 */
+const appliedKeyword = ref('')
+const appliedOwnerIds = ref<string[]>([])
+const appliedDateRange = ref<[string, string] | null>(null)
+
 const avatarColors = ['#5b4fdb', '#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399']
 
 function avatarColor(name: string) {
@@ -34,16 +39,16 @@ const filteredData = computed(() =>
     .filter((e) => {
       if (statusFilter.value === 'cooperating' && e.status === 'terminated') return false
       if (statusFilter.value === 'terminated' && e.status !== 'terminated') return false
-      if (keywordName.value.trim()) {
-        const kw = keywordName.value.trim()
+      if (appliedKeyword.value.trim()) {
+        const kw = appliedKeyword.value.trim()
         if (!e.name.includes(kw) && !e.shortName.includes(kw)) return false
       }
-      if (ownerFilterIds.value.length) {
+      if (appliedOwnerIds.value.length) {
         const owners = getEnterpriseOwnerIds(e)
-        if (!ownerFilterIds.value.some((id) => owners.includes(id))) return false
+        if (!appliedOwnerIds.value.some((id) => owners.includes(id))) return false
       }
-      if (dateRange.value) {
-        const [from, to] = dateRange.value
+      if (appliedDateRange.value) {
+        const [from, to] = appliedDateRange.value
         if (e.createdAt < from || e.createdAt > to) return false
       }
       return true
@@ -63,11 +68,21 @@ const pagedData = computed(() => {
 
 const totalCount = computed(() => filteredData.value.length)
 
+function runQuery() {
+  appliedKeyword.value = keywordName.value
+  appliedOwnerIds.value = [...ownerFilterIds.value]
+  appliedDateRange.value = dateRange.value ? [...dateRange.value] : null
+  page.value = 1
+}
+
 function resetFilters() {
   keywordName.value = ''
   ownerFilterIds.value = []
   dateRange.value = null
   statusFilter.value = 'all'
+  appliedKeyword.value = ''
+  appliedOwnerIds.value = []
+  appliedDateRange.value = null
   page.value = 1
 }
 
@@ -148,7 +163,7 @@ function batchExport() {
           style="width: 100%"
         />
         <div class="filter-actions">
-          <el-button type="primary" @click="page = 1">查询</el-button>
+          <el-button type="primary" @click="runQuery">查询</el-button>
           <el-button text @click="resetFilters">
             <el-icon><RefreshLeft /></el-icon>
             重置筛选
@@ -167,7 +182,7 @@ function batchExport() {
       <div class="table-toolbar">
         <div class="table-title">
           企业列表
-          <el-tag size="small" round>{{ store.enterprises.length }}</el-tag>
+          <el-tag size="small" round>{{ totalCount }}</el-tag>
         </div>
         <span class="selection-tip">已选择 {{ selectedIds.length }} 项</span>
       </div>
@@ -185,11 +200,19 @@ function batchExport() {
               <span class="name-avatar" :style="{ background: avatarColor(row.name) }">
                 {{ row.name.charAt(0) }}
               </span>
-              <span>{{ row.name }}</span>
+              <el-button link type="primary" class="name-link" @click="openDetail(row)">
+                {{ row.name }}
+              </el-button>
             </div>
           </template>
         </el-table-column>
         <el-table-column prop="shortName" label="企业简称" width="120" />
+        <el-table-column
+          prop="creditCode"
+          label="统一信用代码"
+          min-width="180"
+          show-overflow-tooltip
+        />
         <el-table-column prop="ownersLabel" label="企业负责人" min-width="140" show-overflow-tooltip />
         <el-table-column label="企业联系人" width="110">
           <template #default="{ row }">
@@ -264,7 +287,7 @@ function batchExport() {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 1.1fr) minmax(260px, 1.4fr) minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1.1fr) minmax(240px, 1.3fr) minmax(220px, 1fr) auto;
   gap: 12px;
   align-items: center;
 }
@@ -322,6 +345,12 @@ function batchExport() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+}
+
+.name-link {
+  padding: 0;
+  height: auto;
+  font-weight: 500;
 }
 
 .contact-person {

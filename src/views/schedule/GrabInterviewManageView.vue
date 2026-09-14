@@ -5,6 +5,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseScope } from '@/composables/useEnterpriseScope'
 import EnterpriseScopeSelect from '@/components/platform/EnterpriseScopeSelect.vue'
+import PositionManageDialog from '@/components/employee/PositionManageDialog.vue'
+import SkillLibraryManageDialog from '@/components/skill/SkillLibraryManageDialog.vue'
 import {
   buildExactInterviewTimes,
   cloneSchedule,
@@ -13,40 +15,35 @@ import {
   findDeptPosition,
   formatInterviewScheduleDisplay,
   formatRegistrationTime,
+  formatSchedulePreviewText,
   formatSeatRuleLabel,
   grabInterviewRegStatusMap,
-  grabInterviewScheduleModeOptions,
-  grabInterviewSeatUnitOptions,
-  grabInterviewWeekdayMap,
-  grabInterviewWeekdayOptions,
   normalizeDeptInterviewRule,
-  normalizeGrabInterviewScheduleRule,
   profileFromTemplate,
   resolveInterviewSlotsForSchedule,
   resolvePositionSchedule,
+  validateInterviewSchedule,
   weekdayFromDate,
+  deptRequiresInterview,
 } from '@/constants/grabInterview'
+import GrabInterviewScheduleEditor from '@/components/schedule/GrabInterviewScheduleEditor.vue'
 import { JOB_TYPE_OPTIONS } from '@/constants/recruitment'
-import { grabShiftPositionOptions } from '@/services/grabShift'
 import { generateId, getDepartmentName } from '@/utils'
 import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
 import type {
   GrabInterviewDeptPosition,
   GrabInterviewDeptRule,
-  GrabInterviewPositionProfile,
-  GrabInterviewPositionTemplate,
   GrabInterviewRegStatus,
   GrabInterviewRegistration,
-  GrabInterviewScheduleMode,
   GrabInterviewScheduleRule,
   GrabInterviewSeatUnitMinutes,
   GrabInterviewTimeSlot,
-  GrabInterviewWeekday,
 } from '@/types'
 
 const store = useAppStore()
 const route = useRoute()
-const skillOptions = computed(() => store.skillLibraryNames)
+const skillOptions = computed(() => store.skillLibraryOptions)
+const skillLibVisible = ref(false)
 const { enterpriseFilter, activeEnterpriseId, showEnterpriseControl } =
   useEnterpriseScope('switch')
 
@@ -79,14 +76,6 @@ watch(
   { immediate: true },
 )
 
-const requireInterview = computed({
-  get: () => config.value.requireInterview,
-  set: (v: boolean) => {
-    store.updateGrabInterviewConfig(resolvedEnterpriseId.value, { requireInterview: v })
-    config.value = store.ensureGrabInterviewConfig(resolvedEnterpriseId.value)
-  },
-})
-
 watch(
   () => store.grabInterviewConfigs,
   () => {
@@ -95,7 +84,7 @@ watch(
   { deep: true },
 )
 
-const positionTemplates = computed(() =>
+const positionCatalog = computed(() =>
   store.getEnterprisePositions(resolvedEnterpriseId.value),
 )
 
@@ -118,6 +107,7 @@ function emptyPosition(): GrabInterviewDeptPosition {
   return {
     id: generateId('gip'),
     templateId: null,
+    scheduleTemplateId: null,
     profile: emptyPositionProfile(),
     ruleScope: 'position',
     schedule: emptyScheduleRule(),
@@ -127,416 +117,221 @@ function emptyPosition(): GrabInterviewDeptPosition {
 function emptyDeptRule(departmentId: string): GrabInterviewDeptRule {
   return {
     departmentId,
-    publishScope: 'global',
+    requireInterview: false,
     positions: [],
-    departmentSchedule: emptyScheduleRule(),
   }
 }
 
 const ruleForm = reactive<GrabInterviewDeptRule>(emptyDeptRule(''))
-const selectedPositionId = ref('')
-const activeDayTab = ref<GrabInterviewWeekday>(1)
-/** 当前编辑的时间规则：部门统一 / 当前岗位独立 */
-const scheduleEditTarget = ref<'department' | 'position'>('department')
+const editDialogVisible = ref(false)
+const editingPosition = ref<GrabInterviewDeptPosition | null>(null)
+const editingIsNew = ref(false)
 
-const activePosition = computed(() =>
-  ruleForm.positions.find((p) => p.id === selectedPositionId.value) ?? null,
+const scheduleTemplates = computed(() =>
+  store.getGrabInterviewScheduleTemplates(resolvedEnterpriseId.value),
 )
-
-const editingSchedule = computed(() => {
-  if (scheduleEditTarget.value === 'department') {
-    if (!ruleForm.departmentSchedule) ruleForm.departmentSchedule = emptyScheduleRule()
-    return ruleForm.departmentSchedule
-  }
-  const pos = activePosition.value
-  if (!pos) return ruleForm.departmentSchedule ?? emptyScheduleRule()
-  if (!pos.schedule) pos.schedule = emptyScheduleRule()
-  return pos.schedule
-})
 
 watch(
   [selectedDeptId, () => config.value.deptRules],
   () => {
+    if (editDialogVisible.value) return
     const existing = config.value.deptRules.find((r) => r.departmentId === selectedDeptId.value)
     const next = normalizeDeptInterviewRule(
       existing
         ? JSON.parse(JSON.stringify(existing))
         : emptyDeptRule(selectedDeptId.value),
+      { fallbackRequireInterview: config.value.requireInterview },
     )
     Object.assign(ruleForm, {
       departmentId: next.departmentId,
-      publishScope: next.publishScope ?? 'global',
+      requireInterview: next.requireInterview ?? false,
       positions: next.positions,
-      departmentSchedule: next.departmentSchedule ?? emptyScheduleRule(),
     })
-    selectedPositionId.value = ruleForm.positions[0]?.id ?? ''
-    scheduleEditTarget.value = 'department'
-    syncActiveDayTab()
   },
   { immediate: true },
 )
 
-watch(selectedPositionId, () => {
-  const pos = activePosition.value
-  if (pos?.ruleScope === 'position') scheduleEditTarget.value = 'position'
-  else scheduleEditTarget.value = 'department'
-  syncActiveDayTab()
-})
-
-function syncActiveDayTab() {
-  const schedule = editingSchedule.value
-  activeDayTab.value = (schedule.weekdays[0] as GrabInterviewWeekday) || 1
-}
-
-function onScheduleModeChange(mode: string | number | boolean) {
-  const schedule = editingSchedule.value
-  const next = (mode === 'by_day' ? 'by_day' : 'unified') as GrabInterviewScheduleMode
-  schedule.scheduleMode = next
-  if (next === 'by_day') {
-    if (!schedule.dayTimeSlots) schedule.dayTimeSlots = {}
-    schedule.weekdays.forEach((d) => {
-      if (!schedule.dayTimeSlots![d]?.length) {
-        schedule.dayTimeSlots![d] = schedule.timeSlots.length
-          ? schedule.timeSlots.map((s) => ({ ...s, id: generateId('slot') }))
-          : [{ id: generateId('slot'), start: '09:00', end: '10:00' }]
-      }
-    })
-    activeDayTab.value = (schedule.weekdays[0] as GrabInterviewWeekday) || 1
-  } else if (!schedule.timeSlots.length) {
-    const firstDay = schedule.weekdays[0] as GrabInterviewWeekday | undefined
-    const fromDay = firstDay ? schedule.dayTimeSlots?.[firstDay] : undefined
-    schedule.timeSlots = fromDay?.length
-      ? fromDay.map((s) => ({ ...s, id: generateId('slot') }))
-      : [{ id: generateId('slot'), start: '09:00', end: '10:00' }]
-  }
-}
-
-function onWeekdaysChange(days: GrabInterviewWeekday[] | string | number | boolean) {
-  const schedule = editingSchedule.value
-  const list = (Array.isArray(days) ? days : []) as GrabInterviewWeekday[]
-  schedule.weekdays = list
-  if (schedule.scheduleMode !== 'by_day') return
-  if (!schedule.dayTimeSlots) schedule.dayTimeSlots = {}
-  list.forEach((d) => {
-    if (!schedule.dayTimeSlots![d]?.length) {
-      schedule.dayTimeSlots![d] = [{ id: generateId('slot'), start: '09:00', end: '10:00' }]
-    }
-  })
-  Object.keys(schedule.dayTimeSlots).forEach((key) => {
-    const d = Number(key) as GrabInterviewWeekday
-    if (!list.includes(d)) delete schedule.dayTimeSlots![d]
-  })
-  if (!list.includes(activeDayTab.value)) {
-    activeDayTab.value = list[0] || 1
-  }
-}
-
-function slotsOfDay(day: GrabInterviewWeekday) {
-  const schedule = editingSchedule.value
-  if (!schedule.dayTimeSlots) schedule.dayTimeSlots = {}
-  if (!schedule.dayTimeSlots[day]) schedule.dayTimeSlots[day] = []
-  return schedule.dayTimeSlots[day]!
-}
-
-function addTimeSlot(day?: GrabInterviewWeekday) {
-  const schedule = editingSchedule.value
-  const slot: GrabInterviewTimeSlot = {
-    id: generateId('slot'),
-    start: '14:00',
-    end: '15:00',
-  }
-  if (schedule.scheduleMode === 'by_day' && day != null) {
-    slotsOfDay(day).push(slot)
-  } else {
-    schedule.timeSlots.push(slot)
-  }
-}
-
-function removeTimeSlot(idx: number, day?: GrabInterviewWeekday) {
-  const schedule = editingSchedule.value
-  if (schedule.scheduleMode === 'by_day' && day != null) {
-    const list = slotsOfDay(day)
-    if (list.length <= 1) {
-      ElMessage.warning('该日至少保留一个时间段')
-      return
-    }
-    list.splice(idx, 1)
-    return
-  }
-  if (schedule.timeSlots.length <= 1) {
-    ElMessage.warning('至少保留一个时间段')
-    return
-  }
-  schedule.timeSlots.splice(idx, 1)
-}
-
 function validateSchedule(schedule: GrabInterviewScheduleRule, label: string) {
-  const normalized = normalizeGrabInterviewScheduleRule(schedule)
-  if (!normalized.weekdays.length) {
-    ElMessage.warning(`${label}：请选择可面试的星期`)
-    return false
-  }
-  const mode = normalized.scheduleMode ?? 'unified'
-  if (mode === 'unified') {
-    if (!normalized.timeSlots.length || !normalized.timeSlots.every((s) => s.start && s.end && s.start < s.end)) {
-      ElMessage.warning(`${label}：请完善统一时间段（开始须早于结束）`)
-      return false
-    }
-  } else {
-    for (const d of normalized.weekdays) {
-      const list = normalized.dayTimeSlots?.[d] ?? []
-      if (!list.length || !list.every((s) => s.start && s.end && s.start < s.end)) {
-        ElMessage.warning(`${label}：请完善${grabInterviewWeekdayMap[d]}的时间段`)
-        return false
-      }
-    }
-  }
-  if (!normalized.seatsPerUnit || normalized.seatsPerUnit < 1) {
-    ElMessage.warning(`${label}：请填写面试席位人数`)
+  const result = validateInterviewSchedule(schedule)
+  if (!result.ok) {
+    ElMessage.warning(`${label}：${result.message}`)
     return false
   }
   return true
 }
 
-function addPosition() {
-  const pos = emptyPosition()
-  ruleForm.positions.push(pos)
-  selectedPositionId.value = pos.id
-  scheduleEditTarget.value = 'position'
-  ElMessage.success('已添加岗位，请完善信息后保存')
+function clonePosition(pos: GrabInterviewDeptPosition): GrabInterviewDeptPosition {
+  return JSON.parse(JSON.stringify(pos))
 }
 
-function removePosition(pos: GrabInterviewDeptPosition) {
-  const idx = ruleForm.positions.findIndex((p) => p.id === pos.id)
-  if (idx < 0) return
-  ruleForm.positions.splice(idx, 1)
-  if (selectedPositionId.value === pos.id) {
-    selectedPositionId.value = ruleForm.positions[0]?.id ?? ''
-  }
+function persistDeptRule(message?: string) {
+  if (!selectedDeptId.value) return
+  store.upsertGrabInterviewDeptRule(resolvedEnterpriseId.value, {
+    departmentId: selectedDeptId.value,
+    requireInterview: ruleForm.requireInterview,
+    positions: JSON.parse(JSON.stringify(ruleForm.positions)),
+  })
+  if (message) ElMessage.success(message)
 }
 
-function onRuleScopeChange(scope: 'position' | 'department') {
-  const pos = activePosition.value
-  if (!pos) return
-  pos.ruleScope = scope
-  if (scope === 'position') {
-    if (!pos.schedule) pos.schedule = cloneSchedule(ruleForm.departmentSchedule ?? emptyScheduleRule())
-    scheduleEditTarget.value = 'position'
-  } else {
-    scheduleEditTarget.value = 'department'
+function onRequireInterviewChange(val: boolean) {
+  if (!val) {
+    persistDeptRule('已保存：本部门不需要面试')
+    return
   }
-  syncActiveDayTab()
+  persistDeptRule('已开启本部门面试')
+}
+
+function openAddPosition() {
+  if (!ruleForm.requireInterview) {
+    ElMessage.warning('请先开启「本部门是否需要面试」')
+    return
+  }
+  editingIsNew.value = true
+  editingPosition.value = emptyPosition()
+  editDialogVisible.value = true
+}
+
+function openEditPosition(pos: GrabInterviewDeptPosition) {
+  editingIsNew.value = false
+  const draft = clonePosition(pos)
+  if (!draft.schedule) draft.schedule = emptyScheduleRule()
+  editingPosition.value = draft
+  editDialogVisible.value = true
+}
+
+function closeEditDialog() {
+  editDialogVisible.value = false
+  editingPosition.value = null
+  editingIsNew.value = false
 }
 
 function applyTemplateToPosition(templateId: string) {
-  const pos = activePosition.value
-  const tpl = positionTemplates.value.find((t) => t.id === templateId)
+  const pos = editingPosition.value
+  const tpl = positionCatalog.value.find((t) => t.id === templateId)
   if (!pos || !tpl) return
   pos.templateId = tpl.id
   pos.profile = profileFromTemplate(tpl)
-  if (tpl.schedule && pos.ruleScope === 'position') {
+  if (tpl.schedule) {
     pos.schedule = cloneSchedule(tpl.schedule)
+    pos.scheduleTemplateId = null
   }
-  ElMessage.success(`已应用模板「${tpl.name}」`)
 }
 
-function saveDeptRule() {
-  if (!selectedDeptId.value) return
-  if (!ruleForm.positions.length) {
-    ElMessage.warning('请至少添加一个岗位')
+function applyScheduleTemplate(templateId: string) {
+  const pos = editingPosition.value
+  const tpl = scheduleTemplates.value.find((t) => t.id === templateId)
+  if (!pos || !tpl) return
+  pos.schedule = cloneSchedule(tpl.schedule)
+  pos.scheduleTemplateId = tpl.id
+  ElMessage.success(`已套用面试时间模版「${tpl.name}」`)
+}
+
+async function saveCurrentAsScheduleTemplate() {
+  const pos = editingPosition.value
+  if (!pos?.schedule) {
+    ElMessage.warning('请先配置面试时间')
     return
   }
-  if (!validateSchedule(ruleForm.departmentSchedule ?? emptyScheduleRule(), '部门统一面试规则')) {
-    return
-  }
-  for (const pos of ruleForm.positions) {
-    if (!pos.profile.positionName?.trim()) {
-      ElMessage.warning('请填写每个岗位的名称')
+  if (!validateSchedule(pos.schedule, '当前面试时间')) return
+  try {
+    const { value } = await ElMessageBox.prompt('请输入模版名称', '保存为面试时间模版', {
+      inputValue: `${pos.profile.positionName || '面试'}时间`,
+      inputPlaceholder: '例如：工作日上午场',
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+    })
+    const name = (value || '').trim()
+    if (!name) {
+      ElMessage.warning('请填写模版名称')
       return
     }
-    if (pos.ruleScope === 'position') {
-      if (!validateSchedule(pos.schedule ?? emptyScheduleRule(), `岗位「${pos.profile.positionName}」`)) {
-        return
-      }
-    }
+    const saved = store.upsertGrabInterviewScheduleTemplate(resolvedEnterpriseId.value, {
+      id: generateId('gist'),
+      name,
+      schedule: cloneSchedule(pos.schedule),
+    })
+    pos.scheduleTemplateId = saved.id
+    ElMessage.success('面试时间模版已保存')
+  } catch {
+    /* cancel */
   }
-  const names = ruleForm.positions.map((p) => p.profile.positionName.trim())
-  if (new Set(names).size !== names.length) {
+}
+
+function validatePosition(pos: GrabInterviewDeptPosition) {
+  if (!pos.templateId || !pos.profile.positionName?.trim()) {
+    ElMessage.warning('请从岗位管理库选择岗位')
+    return false
+  }
+  if (!pos.profile.description?.trim()) {
+    ElMessage.warning('请填写岗位描述')
+    return false
+  }
+  if (!pos.schedule) pos.schedule = emptyScheduleRule()
+  if (!validateSchedule(pos.schedule, `岗位「${pos.profile.positionName}」面试时间`)) {
+    return false
+  }
+  return true
+}
+
+function savePosition() {
+  const pos = editingPosition.value
+  if (!pos || !selectedDeptId.value) return
+  if (!ruleForm.requireInterview) {
+    ElMessage.warning('请先开启「本部门是否需要面试」')
+    return
+  }
+  if (!validatePosition(pos)) return
+
+  const name = pos.profile.positionName.trim()
+  const duplicated = ruleForm.positions.some(
+    (p) => p.id !== pos.id && p.profile.positionName.trim() === name,
+  )
+  if (duplicated) {
     ElMessage.warning('同一部门下岗位名称不可重复')
     return
   }
-  store.upsertGrabInterviewDeptRule(resolvedEnterpriseId.value, {
-    departmentId: selectedDeptId.value,
-    publishScope: ruleForm.publishScope === 'department' ? 'department' : 'global',
-    positions: JSON.parse(JSON.stringify(ruleForm.positions)),
-    departmentSchedule: JSON.parse(
-      JSON.stringify(ruleForm.departmentSchedule ?? emptyScheduleRule()),
-    ),
-  })
-  ElMessage.success('部门面试配置已保存')
+
+  const saved = clonePosition(pos)
+  const idx = ruleForm.positions.findIndex((p) => p.id === saved.id)
+  if (idx >= 0) ruleForm.positions[idx] = saved
+  else ruleForm.positions.push(saved)
+
+  persistDeptRule(editingIsNew.value ? '岗位已添加' : '岗位已保存')
+  closeEditDialog()
 }
 
-async function clearDeptRule() {
-  if (!selectedDeptId.value) return
+async function removePosition(pos: GrabInterviewDeptPosition) {
   try {
-    await ElMessageBox.confirm('确定清除该部门的全部岗位与面试规则？', '提示', { type: 'warning' })
-    store.removeGrabInterviewDeptRule(resolvedEnterpriseId.value, selectedDeptId.value)
-    Object.assign(ruleForm, emptyDeptRule(selectedDeptId.value))
-    selectedPositionId.value = ''
-    ElMessage.success('已清除')
+    await ElMessageBox.confirm(
+      `确定删除岗位「${pos.profile.positionName || '未命名岗位'}」？`,
+      '提示',
+      { type: 'warning' },
+    )
+    const idx = ruleForm.positions.findIndex((p) => p.id === pos.id)
+    if (idx < 0) return
+    ruleForm.positions.splice(idx, 1)
+    if (editingPosition.value?.id === pos.id) closeEditDialog()
+    persistDeptRule('岗位已删除')
   } catch {
     /* cancel */
   }
 }
 
-function weekdayLabels(days: GrabInterviewWeekday[]) {
-  return days.map((d) => grabInterviewWeekdayMap[d]).join('、') || '—'
+function schedulePreviewText(schedule?: GrabInterviewScheduleRule | null) {
+  if (!schedule) return '—'
+  return formatSchedulePreviewText(schedule)
 }
 
-function schedulePreviewText(schedule: GrabInterviewScheduleRule) {
-  const normalized = normalizeGrabInterviewScheduleRule(schedule)
-  const mode = normalized.scheduleMode ?? 'unified'
-  const seat = formatSeatRuleLabel(
-    (normalized.seatUnitMinutes ?? 30) as GrabInterviewSeatUnitMinutes,
-    normalized.seatsPerUnit ?? 1,
-  )
-  if (mode === 'unified') {
-    const slots = normalized.timeSlots.map((s) => `${s.start}-${s.end}`).join('、') || '—'
-    return `${weekdayLabels(normalized.weekdays)} · ${slots} · ${seat}`
-  }
-  const parts = normalized.weekdays.map((d) => {
-    const slots = (normalized.dayTimeSlots?.[d] ?? [])
-      .map((s) => `${s.start}-${s.end}`)
-      .join('/')
-    return `${grabInterviewWeekdayMap[d]} ${slots || '—'}`
-  })
-  return `${parts.join('；')} · ${seat}`
+function positionCardPreview(pos: GrabInterviewDeptPosition) {
+  return schedulePreviewText(pos.schedule)
 }
 
-const departmentSchedulePreview = computed(() =>
-  schedulePreviewText(ruleForm.departmentSchedule ?? emptyScheduleRule()),
-)
+/* —— 企业岗位库（与人员管理共用） —— */
+const positionManageVisible = ref(false)
 
-const positionSchedulePreview = computed(() => {
-  const pos = activePosition.value
-  if (!pos) return '—'
-  if (pos.ruleScope === 'department') {
-    return `应用全部门 · ${departmentSchedulePreview.value}`
-  }
-  return schedulePreviewText(pos.schedule ?? emptyScheduleRule())
-})
-
-/* —— 岗位模板库 —— */
-const templateDialogVisible = ref(false)
-const templateFormVisible = ref(false)
-const templateForm = reactive({
-  id: '',
-  name: '',
-  profile: emptyPositionProfile() as GrabInterviewPositionProfile,
-  includeSchedule: false,
-  schedule: emptyScheduleRule() as GrabInterviewScheduleRule,
-})
-const templateScheduleDayTab = ref<GrabInterviewWeekday>(1)
-
-function openTemplateLibrary() {
-  templateDialogVisible.value = true
-}
-
-function openCreateTemplate() {
-  templateForm.id = ''
-  templateForm.name = ''
-  templateForm.profile = emptyPositionProfile()
-  templateForm.includeSchedule = false
-  templateForm.schedule = emptyScheduleRule()
-  templateScheduleDayTab.value = 1
-  templateFormVisible.value = true
-}
-
-function openEditTemplate(tpl: GrabInterviewPositionTemplate) {
-  templateForm.id = tpl.id
-  templateForm.name = tpl.name
-  templateForm.profile = JSON.parse(JSON.stringify(tpl.profile))
-  templateForm.includeSchedule = !!tpl.schedule
-  templateForm.schedule = tpl.schedule
-    ? cloneSchedule(tpl.schedule)
-    : emptyScheduleRule()
-  templateScheduleDayTab.value = (templateForm.schedule.weekdays[0] as GrabInterviewWeekday) || 1
-  templateFormVisible.value = true
-}
-
-function saveTemplate() {
-  if (!templateForm.name.trim()) {
-    ElMessage.warning('请填写模板名称')
-    return
-  }
-  if (!templateForm.profile.positionName?.trim()) {
-    ElMessage.warning('请填写岗位名称')
-    return
-  }
-  if (templateForm.includeSchedule) {
-    if (!validateSchedule(templateForm.schedule, '模板面试规则')) return
-  }
-  store.upsertGrabInterviewPositionTemplate(resolvedEnterpriseId.value, {
-    id: templateForm.id || generateId('gitpl'),
-    name: templateForm.name.trim(),
-    profile: JSON.parse(JSON.stringify(templateForm.profile)),
-    schedule: templateForm.includeSchedule
-      ? JSON.parse(JSON.stringify(templateForm.schedule))
-      : undefined,
-  })
-  ElMessage.success(templateForm.id ? '模板已更新' : '模板已创建')
-  templateFormVisible.value = false
-}
-
-async function removeTemplate(tpl: GrabInterviewPositionTemplate) {
-  try {
-    await ElMessageBox.confirm(`确定删除模板「${tpl.name}」？`, '提示', { type: 'warning' })
-    store.removeGrabInterviewPositionTemplate(resolvedEnterpriseId.value, tpl.id)
-    ElMessage.success('已删除')
-  } catch {
-    /* cancel */
-  }
-}
-
-/* 模板表单内简易时段编辑（复用同一套逻辑结构） */
-function tplSlotsOfDay(day: GrabInterviewWeekday) {
-  if (!templateForm.schedule.dayTimeSlots) templateForm.schedule.dayTimeSlots = {}
-  if (!templateForm.schedule.dayTimeSlots[day]) templateForm.schedule.dayTimeSlots[day] = []
-  return templateForm.schedule.dayTimeSlots[day]!
-}
-
-function onTplScheduleModeChange(mode: string | number | boolean) {
-  const schedule = templateForm.schedule
-  const next = (mode === 'by_day' ? 'by_day' : 'unified') as GrabInterviewScheduleMode
-  schedule.scheduleMode = next
-  if (next === 'by_day') {
-    if (!schedule.dayTimeSlots) schedule.dayTimeSlots = {}
-    schedule.weekdays.forEach((d) => {
-      if (!schedule.dayTimeSlots![d]?.length) {
-        schedule.dayTimeSlots![d] = [{ id: generateId('slot'), start: '09:00', end: '10:00' }]
-      }
-    })
-  }
-}
-
-function addTplTimeSlot(day?: GrabInterviewWeekday) {
-  const slot: GrabInterviewTimeSlot = { id: generateId('slot'), start: '14:00', end: '15:00' }
-  if (templateForm.schedule.scheduleMode === 'by_day' && day != null) {
-    tplSlotsOfDay(day).push(slot)
-  } else {
-    templateForm.schedule.timeSlots.push(slot)
-  }
-}
-
-function removeTplTimeSlot(idx: number, day?: GrabInterviewWeekday) {
-  if (templateForm.schedule.scheduleMode === 'by_day' && day != null) {
-    const list = tplSlotsOfDay(day)
-    if (list.length <= 1) return
-    list.splice(idx, 1)
-    return
-  }
-  if (templateForm.schedule.timeSlots.length <= 1) return
-  templateForm.schedule.timeSlots.splice(idx, 1)
+function openPositionManage() {
+  positionManageVisible.value = true
 }
 
 /* —— 报名管理 —— */
@@ -598,14 +393,14 @@ const editingDeptRule = computed(() => {
   return raw ? normalizeDeptInterviewRule(raw) : null
 })
 
-const editingPosition = computed(() => {
+const editingRegPosition = computed(() => {
   if (!editingReg.value || !editingDeptRule.value) return null
   return findDeptPosition(editingDeptRule.value, editingReg.value.position) ?? null
 })
 
 const editingResolvedSchedule = computed(() => {
   if (!editingDeptRule.value) return emptyScheduleRule()
-  return resolvePositionSchedule(editingDeptRule.value, editingPosition.value)
+  return resolvePositionSchedule(editingDeptRule.value, editingRegPosition.value)
 })
 
 const editingRuleSlots = computed((): GrabInterviewTimeSlot[] => {
@@ -716,7 +511,14 @@ function markNoShow(row: GrabInterviewRegistration) {
 function configuredPositionCount(departmentId: string) {
   const rule = config.value.deptRules.find((r) => r.departmentId === departmentId)
   if (!rule) return 0
-  return normalizeDeptInterviewRule(rule).positions.length
+  return normalizeDeptInterviewRule(rule, {
+    fallbackRequireInterview: config.value.requireInterview,
+  }).positions.length
+}
+
+function deptNeedsInterview(departmentId: string) {
+  const rule = config.value.deptRules.find((r) => r.departmentId === departmentId)
+  return deptRequiresInterview(rule, config.value.requireInterview)
 }
 </script>
 
@@ -741,16 +543,15 @@ function configuredPositionCount(departmentId: string) {
       <el-tab-pane label="面试配置" name="config">
         <div class="config-top">
           <div class="switch-row">
-            <span class="switch-label">抢班是否需要面试</span>
-            <el-switch v-model="requireInterview" active-text="需要" inactive-text="不需要" />
-            <el-button class="tpl-btn" @click="openTemplateLibrary">岗位模板库</el-button>
+            <span class="switch-label">按部门配置是否需要面试与岗位面试时间</span>
+            <el-button class="tpl-btn" @click="openPositionManage">岗位管理</el-button>
           </div>
           <p class="text-muted tip">
-            每个部门可配置多个岗位；岗位可套用模板，面试规则可按岗位独立配置，或应用全部门统一规则。
+            选择部门后开启「是否需要面试」；岗位以卡片管理，可分别编辑、保存、删除。
           </p>
         </div>
 
-        <div class="config-layout" :class="{ disabled: !requireInterview }">
+        <div class="config-layout">
           <div class="dept-list">
             <div class="list-title">选择部门</div>
             <button
@@ -762,13 +563,21 @@ function configuredPositionCount(departmentId: string) {
               @click="selectedDeptId = d.id"
             >
               <span>{{ d.name }}</span>
-              <el-tag
-                v-if="configuredPositionCount(d.id)"
-                size="small"
-                type="success"
-              >
-                {{ configuredPositionCount(d.id) }} 岗
-              </el-tag>
+              <span class="dept-tags">
+                <el-tag
+                  size="small"
+                  :type="deptNeedsInterview(d.id) ? 'warning' : 'info'"
+                >
+                  {{ deptNeedsInterview(d.id) ? '需面试' : '免面试' }}
+                </el-tag>
+                <el-tag
+                  v-if="configuredPositionCount(d.id)"
+                  size="small"
+                  type="success"
+                >
+                  {{ configuredPositionCount(d.id) }} 岗
+                </el-tag>
+              </span>
             </button>
             <el-empty v-if="!scopedDepartments.length" description="暂无部门" :image-size="56" />
           </div>
@@ -784,474 +593,54 @@ function configuredPositionCount(departmentId: string) {
                 }}
                 · 面试配置
               </h3>
-              <div class="rule-actions">
-                <el-button @click="clearDeptRule">清除配置</el-button>
-                <el-button type="primary" @click="saveDeptRule">保存配置</el-button>
-              </div>
             </div>
 
             <section class="section-block">
               <div class="section-head">
-                <h4>发布范围</h4>
+                <h4>本部门是否需要面试</h4>
+                <el-switch
+                  v-model="ruleForm.requireInterview"
+                  active-text="需要"
+                  inactive-text="不需要"
+                  @change="onRequireInterviewChange"
+                />
               </div>
-              <el-radio-group v-model="ruleForm.publishScope">
-                <el-radio-button value="global">全局</el-radio-button>
-                <el-radio-button value="department">部门</el-radio-button>
-              </el-radio-group>
               <p class="text-muted section-desc">
-                全局：企业下抢班池人员可见；部门：仅该部门抢班池可见
+                仅对本部门生效；关闭后该部门抢班直面不会对灵工开放
               </p>
             </section>
 
-            <!-- 部门统一规则 -->
-            <section class="section-block">
-              <div class="section-head">
-                <h4>部门统一面试规则</h4>
-                <el-button
-                  size="small"
-                  :type="scheduleEditTarget === 'department' ? 'primary' : 'default'"
-                  @click="scheduleEditTarget = 'department'; syncActiveDayTab()"
-                >
-                  编辑时段
-                </el-button>
-              </div>
-              <p class="text-muted section-desc">
-                岗位选择「应用全部门」时使用此规则。预览：{{ departmentSchedulePreview }}
-              </p>
-              <div v-if="scheduleEditTarget === 'department'" class="schedule-editor">
-                <el-form label-width="100px">
-                  <el-form-item label="配置方式" required>
-                    <el-radio-group
-                      v-model="editingSchedule.scheduleMode"
-                      @change="onScheduleModeChange"
-                    >
-                      <el-radio
-                        v-for="opt in grabInterviewScheduleModeOptions"
-                        :key="opt.value"
-                        :value="opt.value"
-                      >
-                        {{ opt.label }}
-                      </el-radio>
-                    </el-radio-group>
-                  </el-form-item>
-                  <el-form-item label="星期" required>
-                    <el-checkbox-group
-                      v-model="editingSchedule.weekdays"
-                      @change="onWeekdaysChange"
-                    >
-                      <el-checkbox
-                        v-for="opt in grabInterviewWeekdayOptions"
-                        :key="opt.value"
-                        :label="opt.value"
-                        :value="opt.value"
-                      >
-                        {{ opt.label }}
-                      </el-checkbox>
-                    </el-checkbox-group>
-                  </el-form-item>
-                  <el-form-item
-                    v-if="(editingSchedule.scheduleMode ?? 'unified') === 'unified'"
-                    label="时间段"
-                    required
-                  >
-                    <div class="slots">
-                      <div
-                        v-for="(slot, idx) in editingSchedule.timeSlots"
-                        :key="slot.id"
-                        class="slot-row"
-                      >
-                        <el-time-select
-                          v-model="slot.start"
-                          start="06:00"
-                          step="00:30"
-                          end="22:00"
-                          placeholder="开始"
-                        />
-                        <span class="range-sep">—</span>
-                        <el-time-select
-                          v-model="slot.end"
-                          start="06:00"
-                          step="00:30"
-                          end="23:00"
-                          placeholder="结束"
-                        />
-                        <el-button link type="danger" @click="removeTimeSlot(idx)">删除</el-button>
-                      </div>
-                      <el-button @click="addTimeSlot()">+ 添加时间段</el-button>
-                    </div>
-                  </el-form-item>
-                  <el-form-item v-else label="按日时段" required>
-                    <div class="day-slots">
-                      <el-radio-group v-model="activeDayTab" size="small" class="day-tabs">
-                        <el-radio-button
-                          v-for="d in editingSchedule.weekdays"
-                          :key="d"
-                          :value="d"
-                        >
-                          {{ grabInterviewWeekdayMap[d] }}
-                        </el-radio-button>
-                      </el-radio-group>
-                      <div v-if="editingSchedule.weekdays.includes(activeDayTab)" class="slots">
-                        <div
-                          v-for="(slot, idx) in slotsOfDay(activeDayTab)"
-                          :key="slot.id"
-                          class="slot-row"
-                        >
-                          <el-time-select
-                            v-model="slot.start"
-                            start="06:00"
-                            step="00:30"
-                            end="22:00"
-                            placeholder="开始"
-                          />
-                          <span class="range-sep">—</span>
-                          <el-time-select
-                            v-model="slot.end"
-                            start="06:00"
-                            step="00:30"
-                            end="23:00"
-                            placeholder="结束"
-                          />
-                          <el-button
-                            link
-                            type="danger"
-                            @click="removeTimeSlot(idx, activeDayTab)"
-                          >
-                            删除
-                          </el-button>
-                        </div>
-                        <el-button @click="addTimeSlot(activeDayTab)">+ 添加时间段</el-button>
-                      </div>
-                    </div>
-                  </el-form-item>
-                  <el-form-item label="席位规则" required>
-                    <div class="seat-row">
-                      <el-select v-model="editingSchedule.seatUnitMinutes" style="width: 140px">
-                        <el-option
-                          v-for="opt in grabInterviewSeatUnitOptions"
-                          :key="opt.value"
-                          :label="opt.label"
-                          :value="opt.value"
-                        />
-                      </el-select>
-                      <span>可面试</span>
-                      <el-input-number
-                        v-model="editingSchedule.seatsPerUnit"
-                        :min="1"
-                        :max="50"
-                        controls-position="right"
-                      />
-                      <span>人</span>
-                    </div>
-                  </el-form-item>
-                </el-form>
-              </div>
-            </section>
-
+            <div :class="{ disabled: !ruleForm.requireInterview }">
             <!-- 岗位列表 -->
             <section class="section-block">
               <div class="section-head">
                 <h4>岗位配置（{{ ruleForm.positions.length }}）</h4>
-                <el-button type="primary" size="small" @click="addPosition">+ 添加岗位</el-button>
+                <el-button type="primary" size="small" @click="openAddPosition">+ 添加岗位</el-button>
               </div>
 
-              <div v-if="ruleForm.positions.length" class="pos-layout">
-                <div class="pos-list">
-                  <button
-                    v-for="p in ruleForm.positions"
-                    :key="p.id"
-                    type="button"
-                    class="pos-item"
-                    :class="{ active: selectedPositionId === p.id }"
-                    @click="selectedPositionId = p.id"
-                  >
-                    <span class="pos-name">{{ p.profile.positionName || '未命名岗位' }}</span>
-                    <el-tag size="small" :type="p.ruleScope === 'department' ? 'info' : 'warning'">
-                      {{ p.ruleScope === 'department' ? '全部门' : '独立规则' }}
-                    </el-tag>
-                  </button>
-                </div>
-
-                <div v-if="activePosition" class="pos-detail">
-                  <div class="pos-detail-head">
-                    <el-select
-                      :model-value="activePosition.templateId || ''"
-                      clearable
-                      placeholder="从模板填充"
-                      style="width: 220px"
-                      @change="(v: string) => v && applyTemplateToPosition(v)"
-                      @clear="activePosition.templateId = null"
-                    >
-                      <el-option
-                        v-for="t in positionTemplates"
-                        :key="t.id"
-                        :label="t.name"
-                        :value="t.id"
-                      />
-                    </el-select>
-                    <el-button link type="danger" @click="removePosition(activePosition)">
-                      删除岗位
-                    </el-button>
-                  </div>
-
-                  <el-form label-width="100px" class="rule-fields">
-                    <el-divider content-position="left">岗位要求</el-divider>
-                    <el-form-item label="岗位名称" required>
-                      <el-select
-                        v-model="activePosition.profile.positionName"
-                        filterable
-                        allow-create
-                        placeholder="选择或输入岗位"
-                        style="width: 280px"
-                      >
-                        <el-option
-                          v-for="p in grabShiftPositionOptions"
-                          :key="p"
-                          :label="p"
-                          :value="p"
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="岗位类型">
-                      <el-select
-                        v-model="activePosition.profile.jobType"
-                        clearable
-                        placeholder="选择类型"
-                        style="width: 200px"
-                      >
-                        <el-option
-                          v-for="t in JOB_TYPE_OPTIONS"
-                          :key="t"
-                          :label="t"
-                          :value="t"
-                        />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item label="技能要求">
-                      <el-checkbox-group v-model="activePosition.profile.skills">
-                        <el-checkbox
-                          v-for="s in skillOptions"
-                          :key="s"
-                          :label="s"
-                          :value="s"
-                        >
-                          {{ s }}
-                        </el-checkbox>
-                      </el-checkbox-group>
-                    </el-form-item>
-                    <el-form-item label="年龄">
-                      <el-input-number
-                        v-model="activePosition.profile.ageMin"
-                        :min="16"
-                        :max="70"
-                        controls-position="right"
-                      />
-                      <span class="range-sep">—</span>
-                      <el-input-number
-                        v-model="activePosition.profile.ageMax"
-                        :min="16"
-                        :max="70"
-                        controls-position="right"
-                      />
-                    </el-form-item>
-                    <el-form-item label="性别">
-                      <el-radio-group v-model="activePosition.profile.gender">
-                        <el-radio value="any">不限</el-radio>
-                        <el-radio value="male">男</el-radio>
-                        <el-radio value="female">女</el-radio>
-                      </el-radio-group>
-                    </el-form-item>
-                    <el-form-item label="经验要求">
-                      <el-input
-                        v-model="activePosition.profile.experience"
-                        placeholder="如：不限 / 1年以上"
-                        style="width: 280px"
-                      />
-                    </el-form-item>
-                    <el-form-item label="岗位描述">
-                      <el-input
-                        v-model="activePosition.profile.description"
-                        type="textarea"
-                        :rows="2"
-                        maxlength="300"
-                        show-word-limit
-                      />
-                    </el-form-item>
-                    <el-form-item label="任职要求">
-                      <el-input
-                        v-model="activePosition.profile.requirements"
-                        type="textarea"
-                        :rows="2"
-                        maxlength="500"
-                        show-word-limit
-                      />
-                    </el-form-item>
-
-                    <el-divider content-position="left">面试规则</el-divider>
-                    <el-form-item label="规则来源" required>
-                      <el-radio-group
-                        :model-value="activePosition.ruleScope"
-                        @change="(v: string | number | boolean | undefined) => onRuleScopeChange(v === 'department' ? 'department' : 'position')"
-                      >
-                        <el-radio value="position">配置本岗位面试规则</el-radio>
-                        <el-radio value="department">应用全部门面试规则</el-radio>
-                      </el-radio-group>
-                    </el-form-item>
-
-                    <template v-if="activePosition.ruleScope === 'position'">
-                      <el-form-item>
-                        <el-button
-                          size="small"
-                          :type="scheduleEditTarget === 'position' ? 'primary' : 'default'"
-                          @click="scheduleEditTarget = 'position'; syncActiveDayTab()"
-                        >
-                          编辑本岗位时段
-                        </el-button>
-                      </el-form-item>
-                      <div v-if="scheduleEditTarget === 'position'" class="schedule-editor nested">
-                        <el-form-item label="配置方式" required>
-                          <el-radio-group
-                            v-model="editingSchedule.scheduleMode"
-                            @change="onScheduleModeChange"
-                          >
-                            <el-radio
-                              v-for="opt in grabInterviewScheduleModeOptions"
-                              :key="opt.value"
-                              :value="opt.value"
-                            >
-                              {{ opt.label }}
-                            </el-radio>
-                          </el-radio-group>
-                        </el-form-item>
-                        <el-form-item label="星期" required>
-                          <el-checkbox-group
-                            v-model="editingSchedule.weekdays"
-                            @change="onWeekdaysChange"
-                          >
-                            <el-checkbox
-                              v-for="opt in grabInterviewWeekdayOptions"
-                              :key="opt.value"
-                              :label="opt.value"
-                              :value="opt.value"
-                            >
-                              {{ opt.label }}
-                            </el-checkbox>
-                          </el-checkbox-group>
-                        </el-form-item>
-                        <el-form-item
-                          v-if="(editingSchedule.scheduleMode ?? 'unified') === 'unified'"
-                          label="时间段"
-                          required
-                        >
-                          <div class="slots">
-                            <div
-                              v-for="(slot, idx) in editingSchedule.timeSlots"
-                              :key="slot.id"
-                              class="slot-row"
-                            >
-                              <el-time-select
-                                v-model="slot.start"
-                                start="06:00"
-                                step="00:30"
-                                end="22:00"
-                                placeholder="开始"
-                              />
-                              <span class="range-sep">—</span>
-                              <el-time-select
-                                v-model="slot.end"
-                                start="06:00"
-                                step="00:30"
-                                end="23:00"
-                                placeholder="结束"
-                              />
-                              <el-button link type="danger" @click="removeTimeSlot(idx)">
-                                删除
-                              </el-button>
-                            </div>
-                            <el-button @click="addTimeSlot()">+ 添加时间段</el-button>
-                          </div>
-                        </el-form-item>
-                        <el-form-item v-else label="按日时段" required>
-                          <div class="day-slots">
-                            <el-radio-group v-model="activeDayTab" size="small" class="day-tabs">
-                              <el-radio-button
-                                v-for="d in editingSchedule.weekdays"
-                                :key="d"
-                                :value="d"
-                              >
-                                {{ grabInterviewWeekdayMap[d] }}
-                              </el-radio-button>
-                            </el-radio-group>
-                            <div
-                              v-if="editingSchedule.weekdays.includes(activeDayTab)"
-                              class="slots"
-                            >
-                              <div
-                                v-for="(slot, idx) in slotsOfDay(activeDayTab)"
-                                :key="slot.id"
-                                class="slot-row"
-                              >
-                                <el-time-select
-                                  v-model="slot.start"
-                                  start="06:00"
-                                  step="00:30"
-                                  end="22:00"
-                                  placeholder="开始"
-                                />
-                                <span class="range-sep">—</span>
-                                <el-time-select
-                                  v-model="slot.end"
-                                  start="06:00"
-                                  step="00:30"
-                                  end="23:00"
-                                  placeholder="结束"
-                                />
-                                <el-button
-                                  link
-                                  type="danger"
-                                  @click="removeTimeSlot(idx, activeDayTab)"
-                                >
-                                  删除
-                                </el-button>
-                              </div>
-                              <el-button @click="addTimeSlot(activeDayTab)">+ 添加时间段</el-button>
-                            </div>
-                          </div>
-                        </el-form-item>
-                        <el-form-item label="席位规则" required>
-                          <div class="seat-row">
-                            <el-select
-                              v-model="editingSchedule.seatUnitMinutes"
-                              style="width: 140px"
-                            >
-                              <el-option
-                                v-for="opt in grabInterviewSeatUnitOptions"
-                                :key="opt.value"
-                                :label="opt.label"
-                                :value="opt.value"
-                              />
-                            </el-select>
-                            <span>可面试</span>
-                            <el-input-number
-                              v-model="editingSchedule.seatsPerUnit"
-                              :min="1"
-                              :max="50"
-                              controls-position="right"
-                            />
-                            <span>人</span>
-                          </div>
-                        </el-form-item>
-                      </div>
-                    </template>
-                    <p v-else class="preview text-muted">
-                      本岗位将使用部门统一面试规则。
+              <div v-if="ruleForm.positions.length" class="pos-card-grid">
+                <article v-for="p in ruleForm.positions" :key="p.id" class="pos-card">
+                  <div class="pos-card-body">
+                    <strong class="pos-card-name">{{ p.profile.positionName || '未命名岗位' }}</strong>
+                    <p class="pos-card-meta">
+                      {{ p.profile.jobType || '未设类型' }}
+                      ·
+                      {{ p.profile.skills?.length ? p.profile.skills.join('、') : '无技能要求' }}
                     </p>
-                    <p class="preview text-muted">预览：{{ positionSchedulePreview }}</p>
-                  </el-form>
-                </div>
+                    <p class="pos-card-desc text-muted">
+                      {{ p.profile.description || '暂无岗位描述' }}
+                    </p>
+                    <p class="pos-card-schedule text-muted">{{ positionCardPreview(p) }}</p>
+                  </div>
+                  <div class="pos-card-actions">
+                    <el-button link type="primary" @click="openEditPosition(p)">编辑</el-button>
+                    <el-button link type="danger" @click="removePosition(p)">删除</el-button>
+                  </div>
+                </article>
               </div>
               <el-empty v-else description="暂无岗位，请点击「添加岗位」" :image-size="64" />
             </section>
+            </div>
           </div>
         </div>
       </el-tab-pane>
@@ -1333,192 +722,142 @@ function configuredPositionCount(departmentId: string) {
       </el-tab-pane>
     </el-tabs>
 
-    <!-- 模板库 -->
-    <el-dialog v-model="templateDialogVisible" title="岗位模板库" width="720px" destroy-on-close>
-      <div class="tpl-toolbar">
-        <el-button type="primary" @click="openCreateTemplate">新建模板</el-button>
-      </div>
-      <el-table :data="positionTemplates" border>
-        <el-table-column prop="name" label="模板名称" min-width="140" />
-        <el-table-column label="岗位" min-width="120">
-          <template #default="{ row }">{{ row.profile.positionName }}</template>
-        </el-table-column>
-        <el-table-column label="类型" width="100">
-          <template #default="{ row }">{{ row.profile.jobType || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="默认面试规则" width="120">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.schedule ? 'success' : 'info'">
-              {{ row.schedule ? '含规则' : '仅岗位' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openEditTemplate(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeTemplate(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="!positionTemplates.length" description="暂无模板，可新建后应用到各部门岗位" />
-    </el-dialog>
-
     <el-dialog
-      v-model="templateFormVisible"
-      :title="templateForm.id ? '编辑岗位模板' : '新建岗位模板'"
-      width="640px"
+      v-model="editDialogVisible"
+      :title="editingIsNew ? '添加岗位' : '编辑岗位'"
+      width="720px"
       destroy-on-close
-      append-to-body
+      @closed="closeEditDialog"
     >
-      <el-form label-width="100px">
-        <el-form-item label="模板名称" required>
-          <el-input v-model="templateForm.name" placeholder="如：营业厅营业员模板" />
-        </el-form-item>
+      <el-form v-if="editingPosition" label-width="100px" class="rule-fields">
+        <el-divider content-position="left">岗位要求</el-divider>
         <el-form-item label="岗位名称" required>
           <el-select
-            v-model="templateForm.profile.positionName"
+            :model-value="editingPosition.templateId || ''"
             filterable
-            allow-create
-            placeholder="选择或输入岗位"
+            placeholder="从岗位管理库选择"
             style="width: 100%"
+            @change="(v: string) => v && applyTemplateToPosition(v)"
           >
-            <el-option v-for="p in grabShiftPositionOptions" :key="p" :label="p" :value="p" />
+            <el-option
+              v-for="t in positionCatalog"
+              :key="t.id"
+              :label="t.profile.positionName || t.name"
+              :value="t.id"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="岗位类型">
-          <el-select v-model="templateForm.profile.jobType" clearable style="width: 200px">
+          <el-select
+            v-model="editingPosition.profile.jobType"
+            clearable
+            placeholder="选择类型"
+            style="width: 200px"
+          >
             <el-option v-for="t in JOB_TYPE_OPTIONS" :key="t" :label="t" :value="t" />
           </el-select>
         </el-form-item>
         <el-form-item label="技能要求">
-          <el-checkbox-group v-model="templateForm.profile.skills">
-            <el-checkbox v-for="s in skillOptions" :key="s" :label="s" :value="s">
-              {{ s }}
-            </el-checkbox>
-          </el-checkbox-group>
-        </el-form-item>
-        <el-form-item label="任职要求">
-          <el-input v-model="templateForm.profile.requirements" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="岗位描述">
-          <el-input v-model="templateForm.profile.description" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="附带面试规则">
-          <el-switch v-model="templateForm.includeSchedule" />
-          <span class="field-tip text-muted">开启后，应用到岗位时可一并填充独立面试规则</span>
-        </el-form-item>
-        <template v-if="templateForm.includeSchedule">
-          <el-form-item label="配置方式">
-            <el-radio-group
-              v-model="templateForm.schedule.scheduleMode"
-              @change="onTplScheduleModeChange"
+          <div class="skill-field">
+            <el-select
+              v-model="editingPosition.profile.skills"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="请从技能库选择"
+              style="flex: 1"
             >
-              <el-radio
-                v-for="opt in grabInterviewScheduleModeOptions"
-                :key="opt.value"
-                :value="opt.value"
-              >
-                {{ opt.label }}
-              </el-radio>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item label="星期">
-            <el-checkbox-group v-model="templateForm.schedule.weekdays">
-              <el-checkbox
-                v-for="opt in grabInterviewWeekdayOptions"
-                :key="opt.value"
-                :label="opt.value"
-                :value="opt.value"
-              >
-                {{ opt.label }}
-              </el-checkbox>
-            </el-checkbox-group>
-          </el-form-item>
-          <el-form-item
-            v-if="(templateForm.schedule.scheduleMode ?? 'unified') === 'unified'"
-            label="时间段"
-          >
-            <div class="slots">
-              <div
-                v-for="(slot, idx) in templateForm.schedule.timeSlots"
-                :key="slot.id"
-                class="slot-row"
-              >
-                <el-time-select
-                  v-model="slot.start"
-                  start="06:00"
-                  step="00:30"
-                  end="22:00"
-                />
-                <span class="range-sep">—</span>
-                <el-time-select v-model="slot.end" start="06:00" step="00:30" end="23:00" />
-                <el-button link type="danger" @click="removeTplTimeSlot(idx)">删除</el-button>
-              </div>
-              <el-button @click="addTplTimeSlot()">+ 添加</el-button>
-            </div>
-          </el-form-item>
-          <el-form-item v-else label="按日时段">
-            <el-radio-group v-model="templateScheduleDayTab" size="small">
-              <el-radio-button
-                v-for="d in templateForm.schedule.weekdays"
-                :key="d"
-                :value="d"
-              >
-                {{ grabInterviewWeekdayMap[d] }}
-              </el-radio-button>
-            </el-radio-group>
-            <div class="slots" style="margin-top: 8px">
-              <div
-                v-for="(slot, idx) in tplSlotsOfDay(templateScheduleDayTab)"
-                :key="slot.id"
-                class="slot-row"
-              >
-                <el-time-select
-                  v-model="slot.start"
-                  start="06:00"
-                  step="00:30"
-                  end="22:00"
-                />
-                <span class="range-sep">—</span>
-                <el-time-select v-model="slot.end" start="06:00" step="00:30" end="23:00" />
-                <el-button
-                  link
-                  type="danger"
-                  @click="removeTplTimeSlot(idx, templateScheduleDayTab)"
-                >
-                  删除
-                </el-button>
-              </div>
-              <el-button @click="addTplTimeSlot(templateScheduleDayTab)">+ 添加</el-button>
-            </div>
-          </el-form-item>
-          <el-form-item label="席位">
-            <div class="seat-row">
-              <el-select v-model="templateForm.schedule.seatUnitMinutes" style="width: 140px">
-                <el-option
-                  v-for="opt in grabInterviewSeatUnitOptions"
-                  :key="opt.value"
-                  :label="opt.label"
-                  :value="opt.value"
-                />
-              </el-select>
-              <span>可面试</span>
-              <el-input-number
-                v-model="templateForm.schedule.seatsPerUnit"
-                :min="1"
-                :max="50"
-                controls-position="right"
+              <el-option
+                v-for="s in skillOptions"
+                :key="s.id"
+                :label="s.name"
+                :value="s.name"
               />
-              <span>人</span>
-            </div>
-          </el-form-item>
-        </template>
+            </el-select>
+            <el-button link type="primary" @click="skillLibVisible = true">维护技能库</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="岗位描述" required>
+          <el-input
+            v-model="editingPosition.profile.description"
+            type="textarea"
+            :rows="2"
+            placeholder="岗位说明"
+          />
+        </el-form-item>
+        <el-form-item label="年龄范围">
+          <div class="inline-age">
+            <el-input-number
+              v-model="editingPosition.profile.ageMin"
+              :min="16"
+              :max="70"
+              controls-position="right"
+            />
+            <span>—</span>
+            <el-input-number
+              v-model="editingPosition.profile.ageMax"
+              :min="16"
+              :max="70"
+              controls-position="right"
+            />
+          </div>
+        </el-form-item>
+        <el-form-item label="性别要求">
+          <el-radio-group v-model="editingPosition.profile.gender">
+            <el-radio value="any">不限</el-radio>
+            <el-radio value="male">男</el-radio>
+            <el-radio value="female">女</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="经验要求">
+          <el-input
+            v-model="editingPosition.profile.experience"
+            placeholder="如：不限 / 1年以上"
+          />
+        </el-form-item>
+
+        <el-divider content-position="left">面试时间</el-divider>
+        <el-form-item label="时间模版">
+          <div class="schedule-tpl-row">
+            <el-select
+              :model-value="editingPosition.scheduleTemplateId || ''"
+              clearable
+              placeholder="套用面试时间模版"
+              style="width: 240px"
+              @change="(v: string) => v && applyScheduleTemplate(v)"
+              @clear="editingPosition.scheduleTemplateId = null"
+            >
+              <el-option
+                v-for="t in scheduleTemplates"
+                :key="t.id"
+                :label="t.name"
+                :value="t.id"
+              />
+            </el-select>
+            <el-button @click="saveCurrentAsScheduleTemplate">保存为模版</el-button>
+          </div>
+        </el-form-item>
+        <div class="schedule-editor nested">
+          <GrabInterviewScheduleEditor
+            v-if="editingPosition.schedule"
+            v-model="editingPosition.schedule"
+          />
+        </div>
+        <p class="preview text-muted">预览：{{ schedulePreviewText(editingPosition.schedule) }}</p>
       </el-form>
       <template #footer>
-        <el-button @click="templateFormVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveTemplate">保存模板</el-button>
+        <el-button @click="closeEditDialog">取消</el-button>
+        <el-button type="primary" @click="savePosition">保存</el-button>
       </template>
     </el-dialog>
+
+    <PositionManageDialog
+      v-model:visible="positionManageVisible"
+      :enterprise-id="resolvedEnterpriseId"
+    />
+
+    <SkillLibraryManageDialog v-model:visible="skillLibVisible" />
 
     <el-dialog v-model="timeDialogVisible" title="配置准确面试时间" width="480px" destroy-on-close>
       <el-form label-width="110px">
@@ -1572,11 +911,7 @@ function configuredPositionCount(departmentId: string) {
                 editingResolvedSchedule.seatsPerUnit ?? 1,
               )
             }}{{
-              editingPosition?.ruleScope === 'department'
-                ? ' · 应用全部门'
-                : editingPosition
-                  ? ' · 岗位独立'
-                  : ''
+              editingRegPosition ? ' · 岗位面试时间' : ''
             }}）
           </p>
         </el-form-item>
@@ -1675,7 +1010,8 @@ function configuredPositionCount(departmentId: string) {
   align-items: start;
 }
 
-.config-layout.disabled {
+.config-layout.disabled,
+.rule-form .disabled {
   opacity: 0.55;
   pointer-events: none;
 }
@@ -1693,6 +1029,13 @@ function configuredPositionCount(departmentId: string) {
   font-weight: 600;
   margin-bottom: 8px;
   color: #334155;
+}
+
+.dept-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .dept-item {
@@ -1739,11 +1082,6 @@ function configuredPositionCount(departmentId: string) {
   font-size: 15px;
 }
 
-.rule-actions {
-  display: flex;
-  gap: 8px;
-}
-
 .section-block {
   margin-bottom: 20px;
   padding-bottom: 12px;
@@ -1780,63 +1118,81 @@ function configuredPositionCount(departmentId: string) {
 
 .schedule-editor.nested {
   margin-top: 4px;
-}
-
-.pos-layout {
-  display: grid;
-  grid-template-columns: 180px minmax(0, 1fr);
-  gap: 12px;
-  margin-top: 8px;
-}
-
-.pos-list {
+  padding: 12px;
   border: 1px solid #e8edf5;
-  border-radius: 8px;
-  padding: 6px;
-  max-height: 480px;
-  overflow: auto;
-}
-
-.pos-item {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  border: none;
-  background: transparent;
-  padding: 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  text-align: left;
-  font-size: 13px;
-}
-
-.pos-item:hover {
+  border-radius: 10px;
   background: #f8fafc;
 }
 
-.pos-item.active {
-  background: #eff6ff;
-}
-
-.pos-name {
-  font-weight: 600;
-  color: #1e293b;
-}
-
-.pos-detail {
-  border: 1px solid #e8edf5;
-  border-radius: 8px;
-  padding: 12px;
-}
-
-.pos-detail-head {
+.schedule-tpl-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.inline-age {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.pos-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.pos-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid #e8edf5;
+  border-radius: 10px;
+  padding: 14px;
+  background: #fff;
+}
+
+.pos-card-body {
+  min-width: 0;
+}
+
+.pos-card-name {
+  display: block;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.pos-card-meta,
+.pos-card-desc,
+.pos-card-schedule {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.pos-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-top: 1px dashed #e8edf5;
+  padding-top: 8px;
+}
+
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .range-sep {
@@ -1894,8 +1250,7 @@ function configuredPositionCount(departmentId: string) {
 }
 
 @media (max-width: 960px) {
-  .config-layout,
-  .pos-layout {
+  .config-layout {
     grid-template-columns: 1fr;
   }
 }

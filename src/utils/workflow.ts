@@ -1,7 +1,6 @@
 import {
   workflowActionMap,
   workflowEntryConditionTypeMap,
-  workflowEntryListenTargetMap,
   workflowEntryTimeoutActionMap,
   workflowEventNameOptions,
   workflowEventSourceMap,
@@ -13,6 +12,7 @@ import {
   workflowPunchTimeSourceMap,
 } from '@/constants/task'
 import type {
+  PunchMethod,
   WorkflowAction,
   WorkflowActionConfig,
   WorkflowEntryConditionGroup,
@@ -225,7 +225,11 @@ export function normalizeWorkflowNode(node: WorkflowNode, allNodes: WorkflowNode
   }))
 
   const notifySms = node.notifySms ?? node.actions.some((a) => a.notifySms)
-  const notifyMiniProgram = node.notifyMiniProgram ?? node.actions.some((a) => a.notifyMiniProgram)
+  const notifyServiceAccount =
+    node.notifyServiceAccount ??
+    node.notifyMiniProgram ??
+    node.actions.some((a) => a.notifyMiniProgram)
+  const notifyMessage = node.notifyMessage ?? false
   const timeoutEnabled = node.timeoutEnabled ?? (node.timeoutHours != null && node.timeoutHours > 0)
 
   const normalized: WorkflowNode = {
@@ -236,7 +240,8 @@ export function normalizeWorkflowNode(node: WorkflowNode, allNodes: WorkflowNode
     prerequisites: [...prerequisites],
     entryConditionGroups: node.entryConditionGroups?.map((g) => migrateEntryConditionGroup(g)),
     notifySms,
-    notifyMiniProgram,
+    notifyServiceAccount,
+    notifyMessage,
     notifyRoles: node.notifyRoles ?? [],
     timeoutEnabled,
   }
@@ -276,6 +281,7 @@ export function prepareWorkflowNodesForSave(nodes: WorkflowNode[]): WorkflowNode
               generatePunchRecord: migrated.generatePunchRecord,
               punchNavigateMode: migrated.punchNavigateMode,
               listenTarget: migrated.listenTarget,
+              pendingPunchPrompt: migrated.pendingPunchPrompt?.trim() || undefined,
               incompletePrompt: migrated.incompletePrompt?.trim() || undefined,
               punchCountMode: migrated.punchCountMode,
               allowedPunchMethods: migrated.allowedPunchMethods?.length
@@ -534,18 +540,33 @@ export function migrateEntryConditionGroup(
       generatePunchRecord: group.generatePunchRecord ?? true,
       punchNavigateMode: group.punchNavigateMode ?? 'jump_to_punch_page',
       listenTarget: group.listenTarget ?? 'task_executor',
-      punchCountMode: group.punchCountMode ?? 'clock_in_out',
-      allowedPunchMethods: group.allowedPunchMethods?.length
-        ? [...group.allowedPunchMethods]
-        : ['gps'],
+      pendingPunchPrompt:
+        group.pendingPunchPrompt?.trim() ||
+        '进入本节点时，系统自动为执行人生成待打卡记录。',
+      incompletePrompt: group.incompletePrompt?.trim() || '请先完成打卡',
+      punchCountMode:
+        group.punchCountMode === 'clock_in_only' ? 'clock_in_only' : 'clock_in_out',
+      allowedPunchMethods: (group.allowedPunchMethods?.length
+        ? group.allowedPunchMethods.filter((m) => m === 'gps' || m === 'wifi' || m === 'qrcode')
+        : ['gps']) as PunchMethod[],
       locationSource: group.locationSource ?? 'task_region',
       locationFieldId: group.locationFieldId,
-      serviceTimeSource: group.serviceTimeSource ?? 'task_schedule',
-      serviceTimeFieldId: group.serviceTimeFieldId,
-      serviceStartTime: group.serviceStartTime,
-      serviceEndTime: group.serviceEndTime,
+      serviceTimeSource: 'task_schedule',
+      serviceTimeFieldId: undefined,
       defaultWorkHours: group.defaultWorkHours,
       requireWithinServiceWindow: group.requireWithinServiceWindow ?? true,
+      timeoutDays: group.timeoutDays,
+      timeoutAction: group.timeoutAction ?? 'auto_cancel',
+      timeoutTargetNodeId: group.timeoutTargetNodeId,
+    }
+  }
+  if (group.type === 'time_condition') {
+    return {
+      ...group,
+      incompletePrompt: group.incompletePrompt?.trim() || '请等待时间条件满足',
+      timeoutDays: group.timeoutDays ?? 3,
+      timeoutAction: group.timeoutAction ?? 'notify_only',
+      timeoutTargetNodeId: group.timeoutTargetNodeId,
     }
   }
   return { ...group }
@@ -590,6 +611,7 @@ export function createDefaultEntryConditionGroup(): WorkflowEntryConditionGroup 
     generatePunchRecord: true,
     punchNavigateMode: 'jump_to_punch_page',
     listenTarget: 'task_executor',
+    pendingPunchPrompt: '进入本节点时，系统自动为执行人生成待打卡记录。',
     incompletePrompt: '请先完成打卡',
     punchCountMode: 'clock_in_out',
     allowedPunchMethods: ['gps'],
@@ -631,18 +653,21 @@ export function formatEntryConditionSummary(
     return lines
   }
   if (migrated.type === 'punch_record') {
+    lines.push({
+      key: 'type',
+      text: `条件类型：${workflowEntryConditionTypeMap.punch_record}`,
+    })
+    if (migrated.pendingPunchPrompt) {
+      lines.push({ key: 'pending', text: `待打卡提示：${migrated.pendingPunchPrompt}` })
+    }
     if (migrated.generatePunchRecord !== false) {
-      lines.push({ key: 'generate', text: '进入时：自动生成待打卡记录' })
+      lines.push({ key: 'generate', text: '进入时：按打卡规则生成待打卡记录' })
     }
     const mode =
       migrated.punchNavigateMode === 'in_task'
         ? workflowPunchNavigateModeMap.in_task
         : workflowPunchNavigateModeMap.jump_to_punch_page
-    lines.push({ key: 'navigate', text: `完成方式：${mode}` })
-    const target = migrated.listenTarget
-      ? workflowEntryListenTargetMap[migrated.listenTarget]
-      : '任务执行人'
-    lines.push({ key: 'target', text: `打卡对象：${target}` })
+    lines.push({ key: 'navigate', text: `打卡入口：${mode}` })
     if (migrated.punchCountMode) {
       lines.push({
         key: 'count',
@@ -652,19 +677,17 @@ export function formatEntryConditionSummary(
     lines.push({ key: 'methods', text: `打卡方式：${formatPunchMethods(migrated.allowedPunchMethods)}` })
     lines.push({
       key: 'location',
-      text: `地点：${formatPunchLocationSource(migrated, workflowFields)}`,
+      text: `打卡地点：${formatPunchLocationSource(migrated, workflowFields)}`,
     })
     lines.push({
       key: 'time',
-      text: `服务时段：${formatPunchTimeSource(migrated, workflowFields)}`,
+      text: `打卡时间段：${formatPunchTimeSource(migrated, workflowFields)}`,
     })
-    if (migrated.requireWithinServiceWindow) {
-      lines.push({ key: 'window', text: '须在服务时段内打卡' })
-    }
-    if (migrated.punchCountMode === 'clock_in_only' && migrated.defaultWorkHours) {
-      lines.push({ key: 'hours', text: `默认工时：${migrated.defaultWorkHours} 小时` })
-    }
-    lines.push({ key: 'done', text: '完成条件：打卡记录已提交' })
+  } else if (migrated.type === 'time_condition') {
+    lines.push({
+      key: 'type',
+      text: `条件类型：${workflowEntryConditionTypeMap.time_condition}`,
+    })
   } else if (migrated.type === 'external_event') {
     const source = migrated.eventSource ? workflowEventSourceMap[migrated.eventSource] : '—'
     const event = resolveEventNameLabel(migrated.eventSource, migrated.eventName)
@@ -672,14 +695,24 @@ export function formatEntryConditionSummary(
   } else {
     lines.push({ key: 'type', text: workflowEntryConditionTypeMap[migrated.type] })
   }
-  if (migrated.timeoutDays && migrated.timeoutAction) {
+  if (migrated.incompletePrompt) {
+    lines.push({ key: 'prompt', text: `未完成提示：${migrated.incompletePrompt}` })
+  }
+  if (migrated.timeoutDays != null && migrated.timeoutAction) {
     const action = workflowEntryTimeoutActionMap[migrated.timeoutAction]
     const target =
-      migrated.timeoutTargetNodeId && allNodes.length
+      migrated.timeoutAction === 'auto_advance' &&
+      migrated.timeoutTargetNodeId &&
+      allNodes.length
         ? allNodes.find((n) => n.id === migrated.timeoutTargetNodeId)?.name
         : undefined
     const suffix = target ? ` → ${target}` : ''
-    lines.push({ key: 'timeout', text: `超时处理：${migrated.timeoutDays}天${action}${suffix}` })
+    lines.push({
+      key: 'timeout',
+      text: `超时：${migrated.timeoutDays}天 · ${action}${suffix}`,
+    })
+  } else if (!migrated.timeoutDays) {
+    lines.push({ key: 'timeout', text: '超时：未配置（仅可强制取消）' })
   }
   return lines
 }

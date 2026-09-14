@@ -13,7 +13,7 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
       {
         id: 'gitpl_cashier',
         enterpriseId: 'ent_stars_telecom',
-        name: '营业厅营业员模板',
+        name: '营业厅营业员',
         updatedAt: '2026-08-10T09:00:00.000Z',
         profile: {
           positionName: '营业厅营业员',
@@ -41,7 +41,7 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
       {
         id: 'gitpl_picker',
         enterpriseId: 'ent_stars_telecom',
-        name: '理货员模板',
+        name: '理货员',
         updatedAt: '2026-08-10T09:10:00.000Z',
         profile: {
           positionName: '理货员',
@@ -56,9 +56,51 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
         },
       },
     ],
+    scheduleTemplates: [
+      {
+        id: 'gist_weekday_am',
+        enterpriseId: 'ent_stars_telecom',
+        name: '工作日上下午场',
+        updatedAt: '2026-08-10T09:30:00.000Z',
+        schedule: {
+          scheduleMode: 'unified',
+          weekdays: [1, 2, 3, 4, 5],
+          timeSlots: [
+            { id: 'slot_tpl_am', start: '09:00', end: '10:00' },
+            { id: 'slot_tpl_pm', start: '14:00', end: '15:00' },
+          ],
+          dayTimeSlots: {},
+          seatUnitMinutes: 30,
+          seatsPerUnit: 2,
+        },
+      },
+      {
+        id: 'gist_logistics_by_day',
+        enterpriseId: 'ent_stars_telecom',
+        name: '仓储分日场次',
+        updatedAt: '2026-08-10T09:40:00.000Z',
+        schedule: {
+          scheduleMode: 'by_day',
+          weekdays: [1, 3, 5],
+          timeSlots: [],
+          dayTimeSlots: {
+            1: [{ id: 'slot_lg_1', start: '10:00', end: '11:30' }],
+            3: [
+              { id: 'slot_lg_3a', start: '09:00', end: '10:00' },
+              { id: 'slot_lg_3b', start: '15:00', end: '16:00' },
+            ],
+            5: [{ id: 'slot_lg_5', start: '10:00', end: '12:00' }],
+          },
+          seatUnitMinutes: 60,
+          seatsPerUnit: 1,
+        },
+      },
+    ],
+    
     deptRules: [
       {
         departmentId: 'dept_prod_a',
+        requireInterview: true,
         departmentSchedule: {
           scheduleMode: 'unified',
           weekdays: [1, 2, 3, 4, 5],
@@ -74,6 +116,7 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
           {
             id: 'gip_prod_cashier',
             templateId: 'gitpl_cashier',
+            scheduleTemplateId: 'gist_weekday_am',
             ruleScope: 'position',
             profile: {
               positionName: '营业厅营业员',
@@ -101,7 +144,8 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
           {
             id: 'gip_prod_cleaner',
             templateId: null,
-            ruleScope: 'department',
+            scheduleTemplateId: 'gist_weekday_am',
+            ruleScope: 'position',
             profile: {
               positionName: '保洁员',
               jobType: '后勤',
@@ -113,11 +157,23 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
               gender: 'any',
               experience: '不限',
             },
+            schedule: {
+              scheduleMode: 'unified',
+              weekdays: [1, 2, 3, 4, 5],
+              timeSlots: [
+                { id: 'slot_tpl_am', start: '09:00', end: '10:00' },
+                { id: 'slot_tpl_pm', start: '14:00', end: '15:00' },
+              ],
+              dayTimeSlots: {},
+              seatUnitMinutes: 30,
+              seatsPerUnit: 2,
+            },
           },
         ],
       },
       {
         departmentId: 'dept_logistics',
+        requireInterview: true,
         departmentSchedule: {
           scheduleMode: 'by_day',
           weekdays: [1, 3, 5],
@@ -137,7 +193,8 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
           {
             id: 'gip_lg_picker',
             templateId: 'gitpl_picker',
-            ruleScope: 'department',
+            scheduleTemplateId: 'gist_logistics_by_day',
+            ruleScope: 'position',
             profile: {
               positionName: '理货员',
               jobType: '仓储',
@@ -148,6 +205,21 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
               ageMax: 50,
               gender: 'any',
               experience: '有仓储经验优先',
+            },
+            schedule: {
+              scheduleMode: 'by_day',
+              weekdays: [1, 3, 5],
+              timeSlots: [],
+              dayTimeSlots: {
+                1: [{ id: 'slot_lg_1', start: '10:00', end: '11:30' }],
+                3: [
+                  { id: 'slot_lg_3a', start: '09:00', end: '10:00' },
+                  { id: 'slot_lg_3b', start: '15:00', end: '16:00' },
+                ],
+                5: [{ id: 'slot_lg_5', start: '10:00', end: '12:00' }],
+              },
+              seatUnitMinutes: 60,
+              seatsPerUnit: 1,
             },
           },
           {
@@ -187,7 +259,7 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
       {
         id: 'gitpl_cm_cashier',
         enterpriseId: 'ent_china_mobile_agent',
-        name: '营业厅营业员模板',
+        name: '营业厅营业员',
         updatedAt: '2026-08-11T08:20:00.000Z',
         profile: {
           positionName: '营业厅营业员',
@@ -215,7 +287,7 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
       {
         id: 'gitpl_cm_promo',
         enterpriseId: 'ent_china_mobile_agent',
-        name: '推广专员模板',
+        name: '推广专员',
         updatedAt: '2026-08-11T08:30:00.000Z',
         profile: {
           positionName: '推广专员',
@@ -241,9 +313,30 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
         },
       },
     ],
+    scheduleTemplates: [
+      {
+        id: 'gist_cm_daily',
+        enterpriseId: 'ent_china_mobile_agent',
+        name: '营业厅日常场',
+        updatedAt: '2026-08-11T08:40:00.000Z',
+        schedule: {
+          scheduleMode: 'unified',
+          weekdays: [1, 2, 3, 4, 5, 6, 7],
+          timeSlots: [
+            { id: 'slot_cm_cy_am', start: '09:00', end: '10:00' },
+            { id: 'slot_cm_cy_pm', start: '14:00', end: '15:00' },
+          ],
+          dayTimeSlots: {},
+          seatUnitMinutes: 30,
+          seatsPerUnit: 2,
+        },
+      },
+    ],
+    
     deptRules: [
       {
         departmentId: 'dept_prod_a',
+        requireInterview: true,
         departmentSchedule: {
           scheduleMode: 'unified',
           weekdays: [1, 2, 3, 4, 5, 6, 7],
@@ -286,7 +379,8 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
           {
             id: 'gip_cm_store',
             templateId: null,
-            ruleScope: 'department',
+            scheduleTemplateId: 'gist_cm_daily',
+            ruleScope: 'position',
             profile: {
               positionName: '终端销售员',
               jobType: '零售服务',
@@ -298,11 +392,23 @@ export const seedGrabInterviewConfigs: GrabInterviewConfig[] = [
               gender: 'any',
               experience: '不限',
             },
+            schedule: {
+              scheduleMode: 'unified',
+              weekdays: [1, 2, 3, 4, 5, 6, 7],
+              timeSlots: [
+                { id: 'slot_cm_cy_am', start: '09:00', end: '10:00' },
+                { id: 'slot_cm_cy_pm', start: '14:00', end: '15:00' },
+              ],
+              dayTimeSlots: {},
+              seatUnitMinutes: 30,
+              seatsPerUnit: 2,
+            },
           },
         ],
       },
       {
         departmentId: 'dept_cm_field',
+        requireInterview: true,
         departmentSchedule: {
           scheduleMode: 'unified',
           weekdays: [2, 4, 6],

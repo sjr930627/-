@@ -22,6 +22,7 @@ export interface GrabShiftCalendarSlot {
   endTime: string
   status?: string
   statusLabel: string
+  statusClass?: string
   publishLabel: string
   pendingCount: number
   approvedCount: number
@@ -304,7 +305,7 @@ const selectedDateLabel = computed(() => {
       >
         <div class="slot-card-top">
           <strong>{{ s.positionName || s.displayShiftName }}</strong>
-          <span class="status" :class="s.status">{{ s.statusLabel }}</span>
+          <span class="status" :class="s.statusClass || (s.status === 'partial' ? 'open' : s.status)">{{ s.statusLabel }}</span>
         </div>
         <p>{{ s.displayShiftName }} · {{ s.startTime }}-{{ s.endTime }}</p>
         <p class="slot-card-sub">{{ s.departmentDisplayName }} · {{ s.teamName }}</p>
@@ -654,11 +655,6 @@ const selectedDateLabel = computed(() => {
 .slot-card-top .status.open {
   background: #fef2f2;
   color: #dc2626;
-}
-
-.slot-card-top .status.partial {
-  background: #fffbeb;
-  color: #d97706;
 }
 
 .slot-card-top .status.full {

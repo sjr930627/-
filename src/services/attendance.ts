@@ -14,7 +14,7 @@ import type {
   Shift,
 } from '@/types'
 import { calcShiftHours, getMonthDays } from '@/utils'
-import { calcGrabShiftWorkHours, resolveGrabSlotShiftName } from '@/services/grabShift'
+import { resolveGrabSlotShiftName } from '@/services/grabShift'
 import {
   calcScheduleSegmentsBreakMinutes,
   FREE_PUNCH_SHIFT_ID,
@@ -67,6 +67,22 @@ export function assignmentMatchesSource(
 ): boolean {
   if (!assignment) return false
   return source === 'grab' ? isGrabAssignment(assignment) : !isGrabAssignment(assignment)
+}
+
+/** 取消班次记录是否属于排班 / 抢班来源 */
+export function cancelShiftMatchesSource(
+  row: {
+    source?: 'schedule' | 'grab'
+    grabSlotId?: string
+    employeeId?: string
+    date?: string
+  },
+  source: AttendanceAssignmentSource,
+  assignment?: ScheduleAssignment | null,
+): boolean {
+  if (row.source) return row.source === source
+  if (row.grabSlotId) return source === 'grab'
+  return assignmentMatchesSource(assignment, source)
 }
 
 const STATUS_LABELS: Record<AttendanceStatus, string> = {
@@ -193,7 +209,7 @@ export function formatGrabAttendanceShiftText(input: {
   return hoursText ? `${name} ${hoursText}h` : name
 }
 
-/** 解析日考勤行的班次/排班展示文案与列名 */
+/** 解析日考勤行的班次展示文案 */
 export function resolveAttendanceShiftColumn(options: {
   source: AttendanceAssignmentSource
   shift?: Pick<Shift, 'id' | 'name' | 'code' | 'startTime' | 'endTime' | 'breakMinutes'> | null
@@ -204,10 +220,7 @@ export function resolveAttendanceShiftColumn(options: {
     options.shift?.id === FREE_PUNCH_SHIFT_ID ||
     options.shift?.code === 'FREE'
   ) {
-    return {
-      label: '类型',
-      text: '自由打卡',
-    }
+    return { label: '班次', text: '自由打卡' }
   }
   if (options.source === 'grab') {
     const slot = options.slot
@@ -215,19 +228,22 @@ export function resolveAttendanceShiftColumn(options: {
     const name = slot ? resolveGrabSlotShiftName(slot) : shift?.name || '—'
     const startTime = slot?.startTime ?? shift?.startTime
     const endTime = slot?.endTime ?? shift?.endTime
-    const workHours =
-      slot?.workHours ??
-      (slot
-        ? calcGrabShiftWorkHours(slot.startTime, slot.endTime, slot.breakMinutes)
-        : options.scheduledHours)
+    const start = startTime?.slice(0, 5)
+    const end = endTime?.slice(0, 5)
     return {
       label: '班次',
-      text: formatGrabAttendanceShiftText({ name, startTime, endTime, workHours }),
+      text: start && end ? `${name}（${start}-${end}）` : name,
     }
   }
+  const shift = options.shift
+  if (!shift || shift.code === 'REST') {
+    return { label: '班次', text: '—' }
+  }
+  const start = shift.startTime.slice(0, 5)
+  const end = shift.endTime.slice(0, 5)
   return {
-    label: '排班',
-    text: options.shift?.name || '—',
+    label: '班次',
+    text: `${shift.name}（${start}-${end}）`,
   }
 }
 
@@ -681,4 +697,135 @@ export function filterEmployees(
     }
     return true
   })
+}
+
+function escapeCsvCell(value: string | number | undefined | null): string {
+  const text = value == null ? '' : String(value)
+  if (/[",\n\r]/.test(text)) return `"${text.replace(/"/g, '""')}"`
+  return text
+}
+
+function toCsvRow(cells: Array<string | number | undefined | null>): string {
+  return cells.map(escapeCsvCell).join(',')
+}
+
+export type DailyAttendanceExportRow = {
+  enterpriseName: string
+  departmentName: string
+  employeeName: string
+  phone: string
+  date: string
+  shiftName: string
+  clockIn?: string
+  clockOut?: string
+  actualPunchHoursText: string
+  workHoursText: string
+  statusLabel: string
+  hoursConfirmed?: boolean
+  hoursConfirmedBy?: string
+  hoursConfirmedAt?: string
+  workHoursCorrected?: boolean
+  hoursCorrectedBy?: string
+  hoursCorrectedAt?: string
+  manualNote?: string
+}
+
+/** 日考勤 CSV（UTF-8 BOM，便于 Excel 打开） */
+export function buildDailyAttendanceCsv(rows: DailyAttendanceExportRow[]): string {
+  const headers = [
+    '日期',
+    '企业',
+    '部门',
+    '姓名',
+    '手机号',
+    '班次',
+    '上班',
+    '下班',
+    '实际工时(h)',
+    '工时(h)',
+    '状态',
+    '工时确认',
+    '确认人',
+    '确认时间',
+    '是否矫正',
+    '矫正人',
+    '矫正时间',
+    '矫正原因',
+  ]
+  const body = rows.map((r) =>
+    toCsvRow([
+      r.date,
+      r.enterpriseName,
+      r.departmentName,
+      r.employeeName,
+      r.phone,
+      r.shiftName,
+      r.clockIn ?? '—',
+      r.clockOut ?? '—',
+      r.actualPunchHoursText,
+      r.workHoursText,
+      r.statusLabel,
+      r.hoursConfirmed ? '已确认' : '待确认',
+      r.hoursConfirmedBy ?? '—',
+      r.hoursConfirmedAt ?? '—',
+      r.workHoursCorrected ? '是' : '否',
+      r.hoursCorrectedBy ?? '—',
+      r.hoursCorrectedAt ?? '—',
+      r.manualNote ?? '—',
+    ]),
+  )
+  return `\uFEFF${[toCsvRow(headers), ...body].join('\n')}`
+}
+
+export type MonthlyAttendanceExportRow = {
+  enterpriseName: string
+  departmentName: string
+  name: string
+  phone: string
+  scheduledDays: number
+  actualDays: number
+  lateCount: number
+  earlyLeaveCount: number
+  missingPunchCount: number
+  absentCount: number
+  leaveDays: number
+  overtimeHours: number
+  totalWorkHours: number
+}
+
+/** 月考勤汇总 CSV（UTF-8 BOM） */
+export function buildMonthlyAttendanceCsv(rows: MonthlyAttendanceExportRow[]): string {
+  const headers = [
+    '企业',
+    '部门',
+    '姓名',
+    '手机号',
+    '应出勤',
+    '实际出勤',
+    '迟到',
+    '早退',
+    '缺卡',
+    '旷工',
+    '请假',
+    '加班(h)',
+    '总工时(h)',
+  ]
+  const body = rows.map((r) =>
+    toCsvRow([
+      r.enterpriseName,
+      r.departmentName,
+      r.name,
+      r.phone,
+      r.scheduledDays,
+      r.actualDays,
+      r.lateCount,
+      r.earlyLeaveCount,
+      r.missingPunchCount,
+      r.absentCount,
+      r.leaveDays,
+      r.overtimeHours,
+      r.totalWorkHours,
+    ]),
+  )
+  return `\uFEFF${[toCsvRow(headers), ...body].join('\n')}`
 }

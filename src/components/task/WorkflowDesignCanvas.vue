@@ -26,15 +26,13 @@ const props = withDefaults(
     nodes: WorkflowNode[]
     workflowFields?: WorkflowFieldConfig[]
     selectedNodeId?: string
-    mode?: 'config' | 'preview' | 'trial'
+    mode?: 'config' | 'preview'
     previewRole?: WorkflowRole
     readonly?: boolean
-    trialStatus?: Record<string, 'running' | 'success' | 'waiting' | 'error'>
   }>(),
   {
     mode: 'config',
     previewRole: 'enterprise',
-    trialStatus: () => ({}),
   },
 )
 
@@ -479,11 +477,6 @@ function openAddMenuFromEdge(fromId: string, labelX: number, labelY: number) {
 }
 
 function nodeStatusClass(node: WorkflowNode) {
-  const trial = props.trialStatus[node.id]
-  if (trial === 'running') return 'trial-running'
-  if (trial === 'success') return 'trial-success'
-  if (trial === 'waiting') return 'trial-waiting'
-  if (trial === 'error') return 'trial-error'
   if (isSelected(node.id)) return 'selected'
   if (!node.name.trim()) return 'state-error'
   if (node.nodeType !== 'end' && !node.actions.length && !node.defaultNextNodeId) return 'state-warn'
@@ -792,10 +785,6 @@ onBeforeUnmount(() => {
         @mousedown="onNodeMouseDown(node, $event)"
         @click.stop="selectNode(node.id)"
       >
-        <span v-if="trialStatus[node.id] === 'success'" class="trial-badge ok">✓</span>
-        <span v-else-if="trialStatus[node.id] === 'error'" class="trial-badge err">✕</span>
-        <span v-else-if="trialStatus[node.id] === 'waiting'" class="trial-badge wait">⏳</span>
-
         <div class="card-header">
           <span class="header-icon">{{ nodeHeaderIcon(node) }}</span>
           <span class="header-title">{{ node.name || '未命名' }}</span>

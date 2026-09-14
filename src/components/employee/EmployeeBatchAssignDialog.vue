@@ -2,11 +2,9 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import {
-  DEFAULT_WORKFORCE_ENTERPRISE_ID,
-  isUnassignedDepartment,
-} from '@/constants/department'
-import { getDepartmentName } from '@/utils'
+import { DEFAULT_WORKFORCE_ENTERPRISE_ID } from '@/constants/department'
+import { getDepartmentPath } from '@/utils'
+import DepartmentLeafCascader from '@/components/employee/DepartmentLeafCascader.vue'
 
 const props = defineProps<{
   visible: boolean
@@ -26,10 +24,6 @@ const store = useAppStore()
 const departmentId = ref('')
 const positionId = ref('')
 const employeeNo = ref('')
-
-const assignableDepartments = computed(() =>
-  store.departments.filter((d) => !isUnassignedDepartment(d.id) && d.orgType !== 'enterprise'),
-)
 
 const selectedEmployees = computed(() =>
   props.employeeIds
@@ -93,35 +87,16 @@ function submit() {
     return
   }
   if (props.requireEmployeeNo && props.employeeIds.length > 1) {
-    ElMessage.warning('审批入驻请逐个分配人员 ID')
+    ElMessage.warning('审批入驻请逐个分配')
     return
   }
 
   try {
-    const options = {
+    store.batchAssignEmployees(props.employeeIds, departmentId.value, selectedPositionName.value, {
       employeeNo: employeeNo.value.trim() || undefined,
       positionId: positionId.value,
-    }
-    if (props.requireEmployeeNo && props.employeeIds.length === 1) {
-      store.assignPendingOnboardEmployee(props.employeeIds[0], {
-        departmentId: departmentId.value,
-        position: selectedPositionName.value,
-        employeeNo: employeeNo.value,
-        positionId: positionId.value,
-      })
-    } else {
-      store.batchAssignEmployees(
-        props.employeeIds,
-        departmentId.value,
-        selectedPositionName.value,
-        options,
-      )
-    }
-    ElMessage.success(
-      props.requireEmployeeNo
-        ? '已审批入驻并分配岗位'
-        : `已为 ${props.employeeIds.length} 名人员分配部门和岗位`,
-    )
+    })
+    ElMessage.success(`已为 ${props.employeeIds.length} 名人员分配部门和岗位`)
     emit('assigned', props.employeeIds.length)
     close()
   } catch (e) {
@@ -133,7 +108,7 @@ function submit() {
 <template>
   <el-dialog
     :model-value="visible"
-    :title="title || '批量分配部门及岗位'"
+    :title="title || '分配岗位'"
     width="480px"
     destroy-on-close
     @update:model-value="emit('update:visible', $event)"
@@ -145,19 +120,17 @@ function submit() {
       </template>
     </p>
     <p v-if="preferredDepartmentId" class="dialog-tip preferred">
-      申请部门：{{ getDepartmentName(store.departments, preferredDepartmentId) }}
+      申请部门：{{ getDepartmentPath(store.departments, preferredDepartmentId) }}
     </p>
 
     <el-form label-position="top">
       <el-form-item label="分配部门" required>
-        <el-select v-model="departmentId" placeholder="请选择部门" filterable style="width: 100%">
-          <el-option
-            v-for="d in assignableDepartments"
-            :key="d.id"
-            :label="d.name"
-            :value="d.id"
-          />
-        </el-select>
+        <DepartmentLeafCascader
+          v-model="departmentId"
+          :departments="store.departments"
+          :allow-ids="departmentId ? [departmentId] : []"
+          placeholder="请按级联选择叶子部门"
+        />
       </el-form-item>
       <el-form-item label="分配岗位" required>
         <el-select
@@ -174,7 +147,7 @@ function submit() {
           />
         </el-select>
       </el-form-item>
-      <el-form-item v-if="requireEmployeeNo || employeeIds.length === 1" label="人员 ID" :required="requireEmployeeNo">
+      <el-form-item v-if="requireEmployeeNo" label="人员 ID" required>
         <el-input v-model="employeeNo" placeholder="可编辑的人员 ID" maxlength="32" />
       </el-form-item>
     </el-form>

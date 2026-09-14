@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  Calendar,
+  ArrowDown,
   ChatDotRound,
   Document,
   Notebook,
@@ -12,6 +12,11 @@ import {
   User,
 } from '@element-plus/icons-vue'
 import EntMiniPageHeader from '@/components/enterprise-miniapp/EntMiniPageHeader.vue'
+import {
+  isEnterpriseRootDepartment,
+  isLeafDepartment,
+  isUnassignedDepartment,
+} from '@/constants/department'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import {
@@ -19,17 +24,89 @@ import {
   canConfirmWorkHours,
   isDailyAttendanceVisible,
 } from '@/services/attendance'
+import { getDepartmentDescendantIds, getDepartmentPath } from '@/utils'
 
 const router = useRouter()
 const store = useAppStore()
 const { enterpriseId } = useEnterpriseMiniAuth()
 
+const DEPT_STORAGE_PREFIX = 'ent-mini-attendance-dept:'
+
 const enterpriseName = computed(
   () => store.enterprises.find((e) => e.id === enterpriseId.value)?.name || '本企业',
 )
 
+const departments = computed(() => store.getDepartmentsByEnterprise(enterpriseId.value))
+
+const departmentOptions = computed(() =>
+  departments.value
+    .filter(
+      (d) =>
+        !isUnassignedDepartment(d.id) &&
+        !isEnterpriseRootDepartment(d) &&
+        isLeafDepartment(d),
+    )
+    .map((d) => ({
+      id: d.id,
+      label: getDepartmentPath(departments.value, d.id),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')),
+)
+
+const selectedDeptId = ref('')
+const deptPickerOpen = ref(false)
+
+watch(
+  [enterpriseId, departmentOptions],
+  () => {
+    const options = departmentOptions.value
+    if (!options.length) {
+      selectedDeptId.value = ''
+      return
+    }
+    const saved = localStorage.getItem(`${DEPT_STORAGE_PREFIX}${enterpriseId.value}`)
+    if (saved && options.some((d) => d.id === saved)) {
+      selectedDeptId.value = saved
+      return
+    }
+    if (!options.some((d) => d.id === selectedDeptId.value)) {
+      selectedDeptId.value = options[0].id
+    }
+  },
+  { immediate: true },
+)
+
+watch(selectedDeptId, (id) => {
+  if (!id || !enterpriseId.value) return
+  localStorage.setItem(`${DEPT_STORAGE_PREFIX}${enterpriseId.value}`, id)
+})
+
+const selectedDeptLabel = computed(() => {
+  if (!selectedDeptId.value) return '未配置部门'
+  return (
+    departmentOptions.value.find((d) => d.id === selectedDeptId.value)?.label ||
+    getDepartmentPath(departments.value, selectedDeptId.value)
+  )
+})
+
+const storeTitle = computed(() =>
+  selectedDeptId.value
+    ? `${enterpriseName.value} - ${selectedDeptLabel.value}`
+    : enterpriseName.value,
+)
+
+const scopedDeptIds = computed(() => {
+  if (!selectedDeptId.value) return new Set<string>()
+  return getDepartmentDescendantIds(departments.value, selectedDeptId.value)
+})
+
 const employees = computed(() =>
-  store.employees.filter((e) => e.status === 'active' && e.enterpriseId === enterpriseId.value),
+  store.employees.filter(
+    (e) =>
+      e.status === 'active' &&
+      e.enterpriseId === enterpriseId.value &&
+      (!selectedDeptId.value || (e.departmentId && scopedDeptIds.value.has(e.departmentId))),
+  ),
 )
 
 const today = '2026-07-27'
@@ -42,10 +119,6 @@ const todayAllAssignments = computed(() =>
 
 const todayAssignments = computed(() =>
   todayAllAssignments.value.filter((a) => a.shiftId !== 'shift_rest'),
-)
-
-const todayRestCount = computed(
-  () => todayAllAssignments.value.filter((a) => a.shiftId === 'shift_rest').length,
 )
 
 const todayPresentCount = computed(() => {
@@ -114,18 +187,24 @@ const onboardPending = computed(
 
 const avatarNames = computed(() => employees.value.slice(0, 6).map((e) => e.name.slice(0, 1)))
 
+function selectDepartment(id: string) {
+  selectedDeptId.value = id
+  deptPickerOpen.value = false
+}
+
+function goTodaySchedule() {
+  router.push({
+    path: '/enterprise-miniapp/today-schedule',
+    query: selectedDeptId.value ? { dept: selectedDeptId.value } : undefined,
+  })
+}
+
 const tools = computed(() => [
   {
-    title: '补卡申请',
+    title: '考勤审批',
     icon: Stamp,
-    path: '/enterprise-miniapp/exceptions?tab=makeup',
-    badge: pendingMakeup.value,
-  },
-  {
-    title: '取消班次申请',
-    icon: Calendar,
-    path: '/enterprise-miniapp/exceptions?tab=cancel',
-    badge: pendingCancelShift.value,
+    path: '/enterprise-miniapp/exceptions',
+    badge: pendingMakeup.value + pendingCancelShift.value,
   },
   {
     title: '工时确认记录',
@@ -173,19 +252,25 @@ const tools = computed(() => [
 
     <div class="body">
       <section class="hero-card">
-        <div class="store">{{ enterpriseName }}</div>
+        <button
+          type="button"
+          class="store"
+          :disabled="!departmentOptions.length"
+          @click="deptPickerOpen = true"
+        >
+          <span class="store-text">{{ storeTitle }}</span>
+          <el-icon v-if="departmentOptions.length" :size="14" class="store-arrow">
+            <ArrowDown />
+          </el-icon>
+        </button>
         <div class="stats">
-          <button type="button" class="stat-btn" @click="router.push('/enterprise-miniapp/today-schedule')">
+          <button type="button" class="stat-btn" @click="goTodaySchedule">
             <strong>{{ todayAssignments.length }}</strong>
             <span>今日班次</span>
           </button>
-          <button type="button" class="stat-btn" @click="router.push('/enterprise-miniapp/punch-records')">
+          <button type="button" class="stat-btn" @click="goTodaySchedule">
             <strong>{{ todayPresentCount }}</strong>
             <span>今日出勤</span>
-          </button>
-          <button type="button" class="stat-btn" @click="router.push('/enterprise-miniapp/today-schedule')">
-            <strong>{{ todayRestCount }}</strong>
-            <span>休息人次</span>
           </button>
           <div class="warn">
             <strong>{{ todayExceptions.length }}</strong>
@@ -194,7 +279,7 @@ const tools = computed(() => [
         </div>
         <div class="avatars">
           <span v-for="(n, i) in avatarNames" :key="i" class="av">{{ n }}</span>
-          <button type="button" class="view-link" @click="router.push('/enterprise-miniapp/punch-records')">
+          <button type="button" class="view-link" @click="goTodaySchedule">
             查看出勤 ›
           </button>
         </div>
@@ -246,6 +331,27 @@ const tools = computed(() => [
         </button>
       </section>
     </div>
+
+    <div v-if="deptPickerOpen" class="sheet-mask" @click.self="deptPickerOpen = false">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h3>切换部门</h3>
+          <button type="button" class="close" @click="deptPickerOpen = false">×</button>
+        </div>
+        <p class="sheet-sub">{{ enterpriseName }}</p>
+        <button
+          v-for="d in departmentOptions"
+          :key="d.id"
+          type="button"
+          class="dept-option"
+          :class="{ active: d.id === selectedDeptId }"
+          @click="selectDepartment(d.id)"
+        >
+          <span>{{ d.label }}</span>
+          <em v-if="d.id === selectedDeptId">当前</em>
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -264,13 +370,34 @@ const tools = computed(() => [
   box-shadow: 0 2px 12px rgba(15, 23, 42, 0.05);
 }
 .store {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.store:disabled {
+  cursor: default;
+}
+.store-text {
   font-size: 15px;
   font-weight: 700;
   color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.store-arrow {
+  flex-shrink: 0;
+  color: #9ca3af;
 }
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   margin-top: 14px;
   text-align: center;
 }
@@ -434,5 +561,73 @@ const tools = computed(() => [
   align-items: center;
   justify-content: center;
   padding: 0 4px;
+}
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.sheet {
+  width: 100%;
+  max-width: 430px;
+  max-height: 70vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sheet-head h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #111827;
+}
+.close {
+  border: none;
+  background: none;
+  font-size: 22px;
+  color: #9ca3af;
+  line-height: 1;
+}
+.sheet-sub {
+  margin: 6px 0 12px;
+  font-size: 12px;
+  color: #6b7280;
+}
+.dept-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  text-align: left;
+  font-size: 14px;
+  color: #111827;
+}
+.dept-option.active {
+  border-color: #228BFF;
+  background: #EBF4FF;
+  color: #228BFF;
+  font-weight: 600;
+}
+.dept-option em {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 12px;
+  color: #228BFF;
 }
 </style>

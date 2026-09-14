@@ -6,6 +6,8 @@ import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { usePortal } from '@/composables/usePortal'
 import { formatMoney } from '@/constants/payrollBill'
+import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
+import { getDepartmentName } from '@/utils'
 import {
   clearPayrollImportDraft,
   loadPayrollImportDraft,
@@ -27,12 +29,25 @@ const addVisible = ref(false)
 const addForm = reactive({
   phone: '',
   employeeName: '',
+  departmentName: '',
   amount: undefined as number | undefined,
 })
 
 const summary = computed(() =>
   draft.value ? summarizePayrollImportLines(draft.value.lines) : { workerCount: 0, totalAmount: 0 },
 )
+
+const departmentOptions = computed(() => {
+  if (!draft.value) return []
+  return store.departments
+    .filter(
+      (d) =>
+        d.enterpriseId === draft.value!.enterpriseId &&
+        !isUnassignedDepartment(d.id) &&
+        !isEnterpriseRootDepartment(d),
+    )
+    .map((d) => ({ label: d.name, value: d.name }))
+})
 
 onMounted(() => {
   draft.value = loadPayrollImportDraft()
@@ -59,6 +74,7 @@ function removeLine(id: string) {
 function openAdd() {
   addForm.phone = ''
   addForm.employeeName = ''
+  addForm.departmentName = ''
   addForm.amount = undefined
   addVisible.value = true
 }
@@ -66,8 +82,12 @@ function openAdd() {
 function onPhoneBlur() {
   if (!draft.value || !addForm.phone.trim()) return
   const matched = matchEmployeeByPhone(store.employees, addForm.phone, draft.value.enterpriseId)
-  if (matched && !addForm.employeeName.trim()) {
+  if (!matched) return
+  if (!addForm.employeeName.trim()) {
     addForm.employeeName = matched.name
+  }
+  if (!addForm.departmentName.trim()) {
+    addForm.departmentName = getDepartmentName(store.departments, matched.departmentId)
   }
 }
 
@@ -93,6 +113,10 @@ function submitAdd() {
     amount: Math.round(addForm.amount * 100) / 100,
     employeeId: matched?.id,
     employeeNo: matched?.employeeNo,
+    departmentName:
+      addForm.departmentName.trim() ||
+      (matched ? getDepartmentName(store.departments, matched.departmentId) : undefined),
+    realNameVerified: matched?.realNameVerified ?? false,
   }
   draft.value.lines.push(line)
   persistDraft()
@@ -109,8 +133,18 @@ function onAmountChange(row: PayrollImportDraftLine) {
   persistDraft()
 }
 
+function isRealNameVerified(row: PayrollImportDraftLine) {
+  if (row.realNameVerified != null) return row.realNameVerified
+  if (!row.employeeId) return false
+  return store.employees.find((e) => e.id === row.employeeId)?.realNameVerified ?? false
+}
+
 async function confirmPayroll() {
   if (!draft.value) return
+  if (!draft.value.serviceProviderId) {
+    ElMessage.warning('缺少服务商信息，请返回重新选择')
+    return
+  }
   if (!draft.value.lines.length) {
     ElMessage.warning('请至少保留一条发薪明细')
     return
@@ -120,6 +154,8 @@ async function confirmPayroll() {
     const slip = store.createImportPayrollSlip({
       enterpriseId: draft.value.enterpriseId,
       enterpriseName: draft.value.enterpriseName,
+      serviceProviderId: draft.value.serviceProviderId,
+      serviceProviderName: draft.value.serviceProviderName,
       lines: draft.value.lines,
     })
     clearPayrollImportDraft()
@@ -142,6 +178,7 @@ async function confirmPayroll() {
           <h2 class="page-title">确认导入发薪</h2>
           <p class="text-muted">
             {{ draft.enterpriseName }}
+            <template v-if="draft.serviceProviderName"> · {{ draft.serviceProviderName }}</template>
             <template v-if="draft.fileName"> · {{ draft.fileName }}</template>
           </p>
         </div>
@@ -167,8 +204,8 @@ async function confirmPayroll() {
     <el-table :data="draft.lines" border stripe>
       <el-table-column prop="phone" label="手机号" min-width="140" />
       <el-table-column prop="employeeName" label="姓名" min-width="120" />
-      <el-table-column prop="employeeNo" label="工号" width="120">
-        <template #default="{ row }">{{ row.employeeNo || '—' }}</template>
+      <el-table-column label="部门" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.departmentName || '—' }}</template>
       </el-table-column>
       <el-table-column label="发薪金额" width="180" align="right">
         <template #default="{ row }">
@@ -180,6 +217,13 @@ async function confirmPayroll() {
             style="width: 140px"
             @change="onAmountChange(row)"
           />
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="110" align="center">
+        <template #default="{ row }">
+          <el-tag size="small" :type="isRealNameVerified(row) ? 'success' : 'warning'">
+            {{ isRealNameVerified(row) ? '已实名' : '未实名' }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
@@ -200,6 +244,24 @@ async function confirmPayroll() {
         </el-form-item>
         <el-form-item label="姓名" required>
           <el-input v-model="addForm.employeeName" placeholder="请输入姓名" />
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-select
+            v-model="addForm.departmentName"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            placeholder="请选择或输入部门"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="opt in departmentOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="发薪金额" required>
           <el-input-number

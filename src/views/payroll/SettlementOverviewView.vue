@@ -5,19 +5,19 @@ import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseScope } from '@/composables/useEnterpriseScope'
 import { usePortal } from '@/composables/usePortal'
-import EnterpriseScopeSelect from '@/components/platform/EnterpriseScopeSelect.vue'
 import { formatMoney } from '@/constants/payrollBill'
 import {
   collectPendingLines,
   formatSettlementQuantity,
   formatSettlementUnitPrice,
-  groupPendingByEnterprise,
+  groupPendingByEnterpriseAndProvider,
   parseSettlementLineKey,
   pendingSettlementTypes,
   settlementManageStatusMap,
   settlementManageTypeMap,
   slipEnterpriseLabel,
-  type PendingEnterpriseGroup,
+  slipProviderLabel,
+  type PendingSettleGroup,
   type PendingSettlementLineRow,
 } from '@/constants/settlementManage'
 import type { SettlementManageType } from '@/types'
@@ -26,17 +26,23 @@ const store = useAppStore()
 const route = useRoute()
 const router = useRouter()
 const { pathPrefix } = usePortal()
-const { isPlatform, enterpriseFilter, matchesEnterprise } = useEnterpriseScope('filter')
+const { isPlatform, matchesEnterprise } = useEnterpriseScope('filter')
 
 const statusTab = ref<'pending_settlement' | 'settled'>('pending_settlement')
 const typeTab = ref<Exclude<SettlementManageType, 'import'>>('hourly')
 const periodRange = ref<[string, string] | null>(null)
+const enterpriseKeyword = ref('')
+const providerKeyword = ref('')
+const departmentKeyword = ref('')
 const keyword = ref('')
 const selectedKeys = ref<Set<string>>(new Set())
 
-watch([typeTab, statusTab, periodRange, enterpriseFilter, keyword], () => {
-  selectedKeys.value = new Set()
-})
+watch(
+  [typeTab, statusTab, periodRange, enterpriseKeyword, providerKeyword, departmentKeyword, keyword],
+  () => {
+    selectedKeys.value = new Set()
+  },
+)
 
 watch(
   () => route.query.keyword,
@@ -46,10 +52,30 @@ watch(
   { immediate: true },
 )
 
+function matchesEnterpriseKeyword(name?: string) {
+  const kw = enterpriseKeyword.value.trim().toLowerCase()
+  if (!kw) return true
+  return (name ?? '').toLowerCase().includes(kw)
+}
+
+function matchesProviderKeyword(name?: string) {
+  const kw = providerKeyword.value.trim().toLowerCase()
+  if (!kw) return true
+  return (name ?? '').toLowerCase().includes(kw)
+}
+
+function matchesDepartmentKeyword(name?: string) {
+  const kw = departmentKeyword.value.trim().toLowerCase()
+  if (!kw) return true
+  return (name ?? '').toLowerCase().includes(kw)
+}
+
 const filteredOrders = computed(() =>
   store.settlementManageOrders.filter((order) => {
     if (order.type !== typeTab.value) return false
     if (!matchesEnterprise(order.enterpriseId)) return false
+    if (isPlatform.value && !matchesEnterpriseKeyword(order.enterpriseName)) return false
+    if (!matchesProviderKeyword(order.serviceProviderName)) return false
     if (periodRange.value) {
       const [start, end] = periodRange.value
       if (order.periodEnd < start || order.periodStart > end) return false
@@ -57,7 +83,6 @@ const filteredOrders = computed(() =>
     if (keyword.value.trim()) {
       const kw = keyword.value.trim().toLowerCase()
       const haystack = [
-        order.enterpriseName,
         order.orderNo,
         order.orderName,
         ...order.workerLines.flatMap((line) => [
@@ -73,12 +98,18 @@ const filteredOrders = computed(() =>
   }),
 )
 
-const pendingLines = computed(() => collectPendingLines(filteredOrders.value, typeTab.value))
+const pendingLines = computed(() => {
+  const rows = collectPendingLines(filteredOrders.value, typeTab.value).map((line) => ({
+    ...line,
+    phone: store.employees.find((e) => e.id === line.employeeId)?.phone,
+  }))
+  return rows.filter((line) => matchesDepartmentKeyword(line.departmentName))
+})
 
-const enterpriseGroups = computed(() => groupPendingByEnterprise(pendingLines.value))
+const settleGroups = computed(() => groupPendingByEnterpriseAndProvider(pendingLines.value))
 
 const pendingSummary = computed(() => ({
-  enterpriseCount: enterpriseGroups.value.length,
+  enterpriseCount: new Set(settleGroups.value.map((g) => g.enterpriseId)).size,
   workerCount: new Set(pendingLines.value.map((line) => line.employeeId)).size,
   totalAmount: pendingLines.value.reduce((sum, line) => sum + line.amount, 0),
 }))
@@ -92,13 +123,28 @@ const filteredSlips = computed(() =>
         if (day < start || day > end) return false
       }
       if (!slip.lines.some((line) => matchesEnterprise(line.enterpriseId))) return false
+      if (
+        isPlatform.value &&
+        !matchesEnterpriseKeyword(slip.enterpriseName) &&
+        !slip.lines.some((line) => matchesEnterpriseKeyword(line.enterpriseName))
+      ) {
+        return false
+      }
+      if (
+        !matchesProviderKeyword(slip.serviceProviderName) &&
+        !slip.lines.some((line) => matchesProviderKeyword(line.serviceProviderName))
+      ) {
+        return false
+      }
+      if (!slip.lines.some((line) => matchesDepartmentKeyword(line.departmentName))) {
+        return false
+      }
       if (keyword.value.trim()) {
         const kw = keyword.value.trim().toLowerCase()
         const haystack = [
           slip.slipNo,
           settlementManageTypeMap[slip.type],
           ...slip.lines.flatMap((line) => [
-            line.enterpriseName,
             line.orderNo,
             line.orderName,
             line.employeeName,
@@ -115,6 +161,7 @@ const filteredSlips = computed(() =>
     .map((slip) => ({
       ...slip,
       enterpriseLabel: slipEnterpriseLabel(slip),
+      providerLabel: slipProviderLabel(slip),
       typeLabel: settlementManageTypeMap[slip.type],
       amountLabel: formatMoney(slip.totalAmount),
       quantityLabel: formatSettlementQuantity(slip.type, slip.totalQuantity),
@@ -131,24 +178,15 @@ const settledSummary = computed(() => ({
 
 const selectedCount = computed(() => selectedKeys.value.size)
 
-const allPendingSelected = computed(() =>
-  pendingLines.value.length > 0 &&
-  pendingLines.value.every((line) => selectedKeys.value.has(line.key)),
-)
-
-const somePendingSelected = computed(() =>
-  pendingLines.value.some((line) => selectedKeys.value.has(line.key)) && !allPendingSelected.value,
-)
-
 function isLineSelected(key: string) {
   return selectedKeys.value.has(key)
 }
 
-function isGroupAllSelected(group: PendingEnterpriseGroup) {
+function isGroupAllSelected(group: PendingSettleGroup) {
   return group.lines.length > 0 && group.lines.every((line) => selectedKeys.value.has(line.key))
 }
 
-function isGroupIndeterminate(group: PendingEnterpriseGroup) {
+function isGroupIndeterminate(group: PendingSettleGroup) {
   const selected = group.lines.filter((line) => selectedKeys.value.has(line.key)).length
   return selected > 0 && selected < group.lines.length
 }
@@ -160,19 +198,13 @@ function toggleLine(key: string, checked: boolean) {
   selectedKeys.value = next
 }
 
-function toggleGroup(group: PendingEnterpriseGroup, checked: boolean) {
+function toggleGroup(group: PendingSettleGroup, checked: boolean) {
   const next = new Set(selectedKeys.value)
   for (const line of group.lines) {
     if (checked) next.add(line.key)
     else next.delete(line.key)
   }
   selectedKeys.value = next
-}
-
-function toggleAllPending(checked: boolean) {
-  selectedKeys.value = checked
-    ? new Set(pendingLines.value.map((line) => line.key))
-    : new Set()
 }
 
 function formatLineRow(row: PendingSettlementLineRow) {
@@ -192,9 +224,15 @@ function batchSettle() {
   }
   try {
     const items = [...selectedKeys.value].map(parseSettlementLineKey)
-    const slip = store.batchSettleWorkerLines(items, typeTab.value)
+    const slips = store.batchSettleWorkerLines(items, typeTab.value)
     selectedKeys.value = new Set()
-    ElMessage.success(`结算单 ${slip.slipNo} 已生成，共 ${slip.workerCount} 笔明细`)
+    if (slips.length === 1) {
+      ElMessage.success(`结算单 ${slips[0].slipNo} 已生成，共 ${slips[0].workerCount} 笔明细`)
+    } else {
+      ElMessage.success(
+        `已按企业+服务商生成 ${slips.length} 张结算单，共 ${slips.reduce((s, x) => s + x.workerCount, 0)} 笔明细`,
+      )
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '发薪失败')
   }
@@ -215,7 +253,7 @@ function goImport() {
       <div>
         <h2 class="page-title">发薪管理</h2>
         <p class="text-muted">
-          待结算按企业汇总，展开查看单笔班次/任务明细；已结算含工时、任务与导入发薪
+          待结算按企业+服务商汇总；确认发薪时多企业不可合并，同企业不同服务商将分别生成结算单
         </p>
       </div>
       <div class="header-actions">
@@ -274,7 +312,25 @@ function goImport() {
     </el-row>
 
     <div class="page-toolbar">
-      <EnterpriseScopeSelect v-if="isPlatform" v-model="enterpriseFilter" mode="filter" />
+      <el-input
+        v-if="isPlatform"
+        v-model="enterpriseKeyword"
+        placeholder="企业名称（模糊）"
+        clearable
+        style="width: 200px"
+      />
+      <el-input
+        v-model="providerKeyword"
+        placeholder="服务商名称（模糊）"
+        clearable
+        style="width: 200px"
+      />
+      <el-input
+        v-model="departmentKeyword"
+        placeholder="部门名称（模糊）"
+        clearable
+        style="width: 180px"
+      />
       <el-date-picker
         v-model="periodRange"
         type="daterange"
@@ -287,31 +343,23 @@ function goImport() {
       />
       <el-input
         v-model="keyword"
-        :placeholder="statusTab === 'pending_settlement' ? '搜索企业、姓名、班次/任务' : '搜索结算单号、企业、灵工、类型'"
+        :placeholder="statusTab === 'pending_settlement' ? '搜索姓名、班次/任务' : '搜索结算单号、灵工、类型'"
         clearable
         prefix-icon="Search"
-        style="width: 280px"
+        style="width: 220px"
       />
-      <el-checkbox
-        v-if="statusTab === 'pending_settlement' && pendingLines.length"
-        :model-value="allPendingSelected"
-        :indeterminate="somePendingSelected"
-        @change="toggleAllPending($event as boolean)"
-      >
-        全选当前筛选结果
-      </el-checkbox>
     </div>
 
     <template v-if="statusTab === 'pending_settlement'">
       <el-table
         :key="`${typeTab}-pending`"
-        :data="enterpriseGroups"
+        :data="settleGroups"
         border
         stripe
-        row-key="enterpriseId"
+        row-key="key"
       >
         <el-table-column type="expand" width="48">
-          <template #default="{ row }: { row: PendingEnterpriseGroup }">
+          <template #default="{ row }: { row: PendingSettleGroup }">
             <div class="expand-panel">
               <el-table :data="row.lines.map(formatLineRow)" border size="small">
                 <el-table-column width="48">
@@ -330,6 +378,12 @@ function goImport() {
                   </template>
                 </el-table-column>
                 <el-table-column prop="employeeName" label="姓名" width="100" />
+                <el-table-column label="手机号" width="130">
+                  <template #default="{ row: line }">{{ line.phone || '—' }}</template>
+                </el-table-column>
+                <el-table-column label="部门" min-width="120" show-overflow-tooltip>
+                  <template #default="{ row: line }">{{ line.departmentName || '—' }}</template>
+                </el-table-column>
                 <el-table-column prop="dateLabel" label="日期" width="120" />
                 <template v-if="typeTab === 'hourly'">
                   <el-table-column prop="orderName" label="班次/抢班名称" min-width="200" show-overflow-tooltip />
@@ -346,7 +400,10 @@ function goImport() {
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="enterpriseName" label="企业" min-width="200" />
+        <el-table-column prop="enterpriseName" label="企业" min-width="180" />
+        <el-table-column label="服务商" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.serviceProviderName || '—' }}</template>
+        </el-table-column>
         <el-table-column prop="workerCount" label="待发薪人数" width="120" align="center" />
         <el-table-column label="待发薪金额" width="140" align="right">
           <template #default="{ row }">{{ formatMoney(row.totalAmount) }}</template>
@@ -360,8 +417,10 @@ function goImport() {
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!enterpriseGroups.length" description="暂无待结算数据" />
-      <p v-else class="toolbar-hint">展开企业查看单笔班次/任务明细，勾选后点击「确认发薪」生成结算单</p>
+      <el-empty v-if="!settleGroups.length" description="暂无待结算数据" />
+      <p v-else class="toolbar-hint">
+        展开企业+服务商查看明细；勾选后确认发薪。多企业不可合并；同企业不同服务商将分别生成结算单
+      </p>
     </template>
 
     <template v-else>
@@ -373,7 +432,8 @@ function goImport() {
         @row-click="goSlipDetail"
       >
         <el-table-column prop="slipNo" label="结算单号" min-width="160" />
-        <el-table-column prop="enterpriseLabel" label="企业" min-width="180" />
+        <el-table-column prop="enterpriseLabel" label="企业" min-width="160" />
+        <el-table-column prop="providerLabel" label="服务商" min-width="160" show-overflow-tooltip />
         <el-table-column prop="typeLabel" label="类型" width="100" />
         <el-table-column prop="workerCount" label="人数" width="90" align="center" />
         <el-table-column prop="quantityLabel" label="工时/次数/人数" width="140" align="right" />
@@ -387,7 +447,7 @@ function goImport() {
       </el-table>
 
       <el-empty v-if="!filteredSlips.length" description="暂无结算单" />
-      <p v-else class="toolbar-hint">类型含工时、任务、导入发薪；点击查看明细</p>
+      <p v-else class="toolbar-hint">结算单按企业+服务商维度生成；类型含工时、任务、导入发薪</p>
     </template>
   </div>
 </template>

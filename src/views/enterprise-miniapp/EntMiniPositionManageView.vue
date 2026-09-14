@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
+import { JOB_TYPE_OPTIONS } from '@/constants/recruitment'
 import type { EnterprisePosition, GrabInterviewPositionProfile } from '@/types'
 import { generateId } from '@/utils'
 
@@ -12,6 +13,7 @@ const { enterpriseId } = useEnterpriseMiniAuth()
 
 const formOpen = ref(false)
 const editingId = ref<string | null>(null)
+const skillOptions = computed(() => store.skillLibraryOptions)
 
 function emptyProfile(): GrabInterviewPositionProfile {
   return {
@@ -31,7 +33,6 @@ const form = reactive({
   id: '',
   name: '',
   profile: emptyProfile(),
-  skillsText: '',
 })
 
 const positions = computed(() => store.getEnterprisePositions(enterpriseId.value))
@@ -41,7 +42,6 @@ function openCreate() {
   form.id = ''
   form.name = ''
   form.profile = emptyProfile()
-  form.skillsText = ''
   formOpen.value = true
 }
 
@@ -49,13 +49,26 @@ function openEdit(row: EnterprisePosition) {
   editingId.value = row.id
   form.id = row.id
   form.name = row.name
-  form.profile = JSON.parse(JSON.stringify({ ...emptyProfile(), ...row.profile }))
-  form.skillsText = (row.profile.skills ?? []).join('、')
+  form.profile = JSON.parse(
+    JSON.stringify({
+      ...emptyProfile(),
+      ...row.profile,
+      skills: [...(row.profile.skills ?? [])],
+    }),
+  )
   formOpen.value = true
 }
 
 function closeForm() {
   formOpen.value = false
+}
+
+function toggleSkill(name: string) {
+  const list = form.profile.skills ?? []
+  const idx = list.indexOf(name)
+  if (idx >= 0) list.splice(idx, 1)
+  else list.push(name)
+  form.profile.skills = [...list]
 }
 
 function submit() {
@@ -64,18 +77,16 @@ function submit() {
     ElMessage.warning('请填写岗位名称')
     return
   }
-  const skills = form.skillsText
-    .split(/[,，、]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const skills = [...new Set((form.profile.skills ?? []).map((s) => s.trim()).filter(Boolean))]
   try {
     store.upsertEnterprisePosition(enterpriseId.value, {
       id: form.id || generateId('epos'),
-      name: form.name.trim() || positionName,
+      name: positionName,
       profile: {
         ...form.profile,
         positionName,
         skills,
+        requirements: '',
         gender: form.profile.gender || 'any',
       },
       schedule: editingId.value
@@ -119,7 +130,7 @@ async function removeRow(row: EnterprisePosition) {
         <strong>{{ row.profile.positionName || row.name }}</strong>
         <p>
           <span v-if="row.profile.jobType">{{ row.profile.jobType }} · </span>
-          {{ row.profile.requirements || row.profile.description || '暂无要求说明' }}
+          {{ row.profile.description || '暂无岗位说明' }}
         </p>
         <div v-if="row.profile.skills?.length" class="tags">
           <em v-for="s in row.profile.skills" :key="s">{{ s }}</em>
@@ -137,16 +148,26 @@ async function removeRow(row: EnterprisePosition) {
           <strong>{{ editingId ? '编辑岗位' : '新增岗位' }}</strong>
           <button type="button" @click="closeForm">关闭</button>
         </header>
-        <label>模版名称</label>
-        <input v-model="form.name" placeholder="如：营业厅营业员模板">
         <label>岗位名称</label>
         <input v-model="form.profile.positionName" placeholder="人员与抢班展示名称">
         <label>岗位类型</label>
-        <input v-model="form.profile.jobType" placeholder="如：零售服务">
-        <label>技能（顿号分隔）</label>
-        <input v-model="form.skillsText" placeholder="健康证、业务合规证">
-        <label>任职要求</label>
-        <textarea v-model="form.profile.requirements" rows="3" />
+        <select v-model="form.profile.jobType">
+          <option value="">请选择</option>
+          <option v-for="t in JOB_TYPE_OPTIONS" :key="t" :value="t">{{ t }}</option>
+        </select>
+        <label>技能要求</label>
+        <div class="skill-picks">
+          <button
+            v-for="s in skillOptions"
+            :key="s.id"
+            type="button"
+            class="skill-chip"
+            :class="{ active: form.profile.skills?.includes(s.name) }"
+            @click="toggleSkill(s.name)"
+          >
+            {{ s.name }}
+          </button>
+        </div>
         <label>岗位描述</label>
         <textarea v-model="form.profile.description" rows="2" />
         <label>年龄范围</label>
@@ -299,6 +320,24 @@ async function removeRow(row: EnterprisePosition) {
   border-radius: 10px;
   padding: 10px 12px;
   font-size: 14px;
+}
+.skill-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.skill-chip {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #374151;
+}
+.skill-chip.active {
+  border-color: #228bff;
+  background: #d5e9ff;
+  color: #0b5fff;
 }
 .inline {
   display: flex;

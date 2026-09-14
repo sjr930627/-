@@ -85,7 +85,7 @@ const menuGroups: MenuGroup[] = [
       { path: '/grab-attendance-data', title: '考勤数据', icon: 'DataBoard' },
       {
         path: '/grab-attendance-exceptions',
-        title: '考勤审批记录',
+        title: '考勤审批',
         icon: 'WarningFilled',
         badgeKey: 'grabAttendance',
       },
@@ -125,14 +125,14 @@ const menuGroups: MenuGroup[] = [
   },
   {
     index: 'statistics',
-    title: '分析统计',
+    title: '数据分析',
     icon: 'DataAnalysis',
     children: [
-      { path: '/statistics/overview', title: '概览看板', icon: 'Odometer' },
-      { path: '/bi/monitor', title: '数据监控中心', icon: 'Monitor' },
+      { path: '/statistics/shift', title: '班次统计', icon: 'Calendar' },
       { path: '/statistics/attendance', title: '考勤分析', icon: 'Timer' },
       { path: '/statistics/task', title: '任务分析', icon: 'Finished' },
-      { path: '/statistics/settlement', title: '结算分析', icon: 'Wallet' },
+      { path: '/statistics/settlement/enterprise', title: '企业结算分析', icon: 'Wallet' },
+      { path: '/statistics/settlement/worker', title: '灵工结算分析', icon: 'Money' },
     ],
   },
 ]

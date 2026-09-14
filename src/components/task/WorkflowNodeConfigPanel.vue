@@ -3,17 +3,15 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   workflowActionMap,
-  workflowEntryConditionTypeMap,
-  workflowEntryListenTargetMap,
-  workflowEntryTimeoutActionMap,
+  workflowEntryConditionTypeOptions,
+  workflowEntryTimeoutActionOptions,
   workflowFieldTypeMap,
   workflowNodeActionOptions,
-  workflowPunchCountModeMap,
+  workflowPunchCountModeOptions,
   workflowPunchLocationSourceMap,
   workflowPunchMethodMap,
   workflowPunchMethodOptions,
   workflowPunchNavigateModeMap,
-  workflowPunchTimeSourceMap,
   workflowRoleMap,
 } from '@/constants/task'
 import type {
@@ -79,34 +77,14 @@ const nodeTypeIcon = computed(() => {
 
 const roleOptions = Object.entries(workflowRoleMap) as [WorkflowRole, string][]
 const fieldTypeOptions = Object.entries(workflowFieldTypeMap) as [WorkflowFieldType, string][]
-const conditionTypeOptions = Object.entries(workflowEntryConditionTypeMap) as [
-  WorkflowEntryConditionType,
-  string,
-][]
-const listenTargetOptions = Object.entries(workflowEntryListenTargetMap) as [
-  WorkflowEntryConditionGroup['listenTarget'],
-  string,
-][]
+const conditionTypeOptions = workflowEntryConditionTypeOptions
 const punchNavigateOptions = Object.entries(workflowPunchNavigateModeMap) as [
   WorkflowPunchNavigateMode,
   string,
 ][]
-const punchCountModeOptions = Object.entries(workflowPunchCountModeMap) as [
-  WorkflowEntryConditionGroup['punchCountMode'],
-  string,
-][]
-const locationSourceOptions = Object.entries(workflowPunchLocationSourceMap) as [
-  WorkflowEntryConditionGroup['locationSource'],
-  string,
-][]
-const serviceTimeSourceOptions = Object.entries(workflowPunchTimeSourceMap) as [
-  WorkflowEntryConditionGroup['serviceTimeSource'],
-  string,
-][]
-const timeoutActionOptions = Object.entries(workflowEntryTimeoutActionMap) as [
-  WorkflowEntryConditionGroup['timeoutAction'],
-  string,
-][]
+const punchCountModeOptions = workflowPunchCountModeOptions
+const locationSourceOptions = Object.entries(workflowPunchLocationSourceMap)
+const timeoutActionOptions = workflowEntryTimeoutActionOptions
 
 const activeGroupIndex = ref(0)
 const editingGroupIndex = ref<number | null>(null)
@@ -135,8 +113,8 @@ const isEnterpriseNode = computed(() => props.node?.role === 'enterprise')
 
 const fieldsPreviewHint = computed(() =>
   isEnterpriseNode.value
-    ? '下方「弹窗预览」模拟企业端操作弹窗，填写字段名称后即时更新'
-    : '下方「填报预览」模拟灵工端填报页，填写字段名称后即时更新',
+    ? '流转下一节点时以弹窗展示字段；填写字段名称后下方预览即时更新'
+    : '流转下一节点时以弹窗展示字段；若无字段则二次确认。填写名称后下方预览即时更新',
 )
 
 function addNodeField() {
@@ -182,9 +160,12 @@ const entryGroups = computed(() => props.node?.entryConditionGroups ?? [])
 const activeGroup = computed(() => entryGroups.value[activeGroupIndex.value] ?? null)
 
 const activeGroupType = computed(() => {
-  if (!activeGroup.value) return 'none' as WorkflowEntryConditionType
+  if (!activeGroup.value) return 'punch_record' as WorkflowEntryConditionType
   const migrated = migrateEntryConditionGroup(activeGroup.value)
-  return migrated.type === 'external_event' ? 'punch_record' : migrated.type
+  if (migrated.type === 'external_event' || migrated.type === 'field_filled' || migrated.type === 'none') {
+    return 'punch_record'
+  }
+  return migrated.type
 })
 
 function onConditionTypeChange(type: WorkflowEntryConditionType) {
@@ -195,19 +176,36 @@ function onConditionTypeChange(type: WorkflowEntryConditionType) {
     group.generatePunchRecord = true
     group.punchNavigateMode = 'jump_to_punch_page'
     group.listenTarget = 'task_executor'
-    group.incompletePrompt = group.incompletePrompt || '请先完成打卡'
+    group.pendingPunchPrompt =
+      group.pendingPunchPrompt?.trim() || '进入本节点时，系统自动为执行人生成待打卡记录。'
+    group.incompletePrompt = group.incompletePrompt?.trim() || '请先完成打卡'
+    if (group.timeoutDays == null) group.timeoutDays = 3
+    if (!group.timeoutAction) group.timeoutAction = 'auto_cancel'
     ensureActivePunchRuleDefaults()
+  } else if (type === 'time_condition') {
+    group.incompletePrompt = group.incompletePrompt?.trim() || '请等待时间条件满足'
+    if (group.timeoutDays == null) group.timeoutDays = 3
+    if (!group.timeoutAction) group.timeoutAction = 'notify_only'
   }
 }
 
 function ensureActivePunchRuleDefaults() {
   const group = activeGroup.value
   if (!group) return
-  if (!group.punchCountMode) group.punchCountMode = 'clock_in_out'
+  group.generatePunchRecord = true
+  if (!group.punchCountMode || group.punchCountMode === 'each_service_period') {
+    group.punchCountMode = 'clock_in_out'
+  }
   if (!group.locationSource) group.locationSource = 'task_region'
-  if (!group.serviceTimeSource) group.serviceTimeSource = 'task_schedule'
-  if (!group.allowedPunchMethods?.length) group.allowedPunchMethods = ['gps']
-  if (group.requireWithinServiceWindow === undefined) group.requireWithinServiceWindow = true
+  group.serviceTimeSource = 'task_schedule'
+  group.serviceTimeFieldId = undefined
+  const methods = (group.allowedPunchMethods ?? ['gps']).filter(
+    (m) => m === 'gps' || m === 'wifi' || m === 'qrcode',
+  )
+  group.allowedPunchMethods = methods.length ? methods : ['gps']
+  if (!group.pendingPunchPrompt?.trim()) {
+    group.pendingPunchPrompt = '进入本节点时，系统自动为执行人生成待打卡记录。'
+  }
 }
 
 function punchMethodEnabled(method: PunchMethod) {
@@ -217,7 +215,7 @@ function punchMethodEnabled(method: PunchMethod) {
 
 function togglePunchMethod(method: PunchMethod) {
   if (!activeGroup.value || props.readonly) return
-  const list = activeGroup.value.allowedPunchMethods ?? ['gps']
+  const list = [...(activeGroup.value.allowedPunchMethods ?? ['gps'])]
   const idx = list.indexOf(method)
   if (idx >= 0) {
     if (list.length <= 1) return
@@ -225,7 +223,21 @@ function togglePunchMethod(method: PunchMethod) {
   } else {
     list.push(method)
   }
-  activeGroup.value.allowedPunchMethods = [...list]
+  activeGroup.value.allowedPunchMethods = list
+}
+
+function clearTimeoutDays() {
+  if (!activeGroup.value || props.readonly) return
+  activeGroup.value.timeoutDays = undefined
+}
+
+function onTimeoutActionChange(action: WorkflowEntryConditionGroup['timeoutAction']) {
+  const group = activeGroup.value
+  if (!group || props.readonly) return
+  group.timeoutAction = action
+  if (action !== 'auto_advance') {
+    group.timeoutTargetNodeId = undefined
+  }
 }
 
 watch(
@@ -389,7 +401,7 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                 type="warning"
                 :closable="false"
                 show-icon
-                title="流程已绑定任务，采集字段不可修改"
+                title="只读模式，采集字段不可修改"
                 class="fields-readonly-alert"
               />
               <p v-else class="hint block-hint">{{ fieldsPreviewHint }}</p>
@@ -433,7 +445,7 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
               </div>
 
               <div v-if="field.fieldType === 'select'" class="field-editor-row">
-                <label>下拉选项</label>
+                <label>枚举选项</label>
                 <el-input
                   :model-value="selectOptionsText(field)"
                   :disabled="readonly"
@@ -557,7 +569,7 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
 
                 <div class="editor-card">
                   <div class="editor-field">
-                    <label>条件类型</label>
+                    <label>条件类型 <em class="req">*</em></label>
                     <el-select
                       :model-value="activeGroupType"
                       :disabled="readonly"
@@ -566,31 +578,31 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                       @update:model-value="onConditionTypeChange($event as WorkflowEntryConditionType)"
                     >
                       <el-option
-                        v-for="[key, label] in conditionTypeOptions"
-                        :key="key"
-                        :label="label"
-                        :value="key"
+                        v-for="opt in conditionTypeOptions"
+                        :key="opt.value"
+                        :label="opt.label"
+                        :value="opt.value"
                       />
                     </el-select>
                   </div>
 
                   <template v-if="activeGroupType === 'punch_record'">
-                    <div class="punch-flow-hint">
-                      <p>进入本节点时，系统自动为执行人生成<strong>待打卡记录</strong>。</p>
-                      <p>用户从任务入口进入后，将跳转至独立打卡页完成打卡，无需在任务页内操作。</p>
-                    </div>
-
                     <div class="editor-field">
-                      <el-checkbox
-                        v-model="activeGroup.generatePunchRecord"
+                      <label>待打卡提示 <em class="req">*</em></label>
+                      <el-input
+                        v-model="activeGroup.pendingPunchPrompt"
                         :disabled="readonly"
-                      >
-                        进入节点时自动生成待打卡记录
-                      </el-checkbox>
+                        type="textarea"
+                        :rows="2"
+                        maxlength="200"
+                        show-word-limit
+                        size="small"
+                        placeholder="进入本节点时，系统自动为执行人生成待打卡记录。"
+                      />
                     </div>
 
                     <div class="editor-field">
-                      <label>打卡完成方式</label>
+                      <label>打卡方式 <em class="req">*</em></label>
                       <el-radio-group v-model="activeGroup.punchNavigateMode" :disabled="readonly" size="small">
                         <el-radio
                           v-for="[key, label] in punchNavigateOptions"
@@ -600,31 +612,11 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                           {{ label }}
                         </el-radio>
                       </el-radio-group>
-                    </div>
-
-                    <div class="editor-field">
-                      <label>打卡对象</label>
-                      <el-radio-group v-model="activeGroup.listenTarget" :disabled="readonly" size="small">
-                        <el-radio
-                          v-for="[key, label] in listenTargetOptions"
-                          :key="key"
-                          :value="key"
-                        >
-                          {{ label }}
-                        </el-radio>
-                      </el-radio-group>
-                    </div>
-
-                    <div class="editor-field readonly-hint">
-                      <label>完成条件</label>
-                      <span>打卡记录已提交（与考勤模块联动校验）</span>
+                      <p class="hint">默认跳转至打卡页</p>
                     </div>
 
                     <div class="punch-rule-block">
-                      <h5>打卡规则（关联任务时间周期）</h5>
-                      <p class="hint">
-                        地点与服务时段默认取自任务发布时录入的信息；也可绑定流程自定义字段
-                      </p>
+                      <h5>打卡规则 <em class="req">*</em></h5>
 
                       <div class="editor-field">
                         <label>打卡方式（可多选）</label>
@@ -641,6 +633,7 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                             {{ workflowPunchMethodMap[method] }}
                           </button>
                         </div>
+                        <p class="hint">WiFi、扫码仅可跟随执行人考勤组配置打卡</p>
                       </div>
 
                       <div class="editor-field">
@@ -651,30 +644,17 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                           size="small"
                         >
                           <el-radio
-                            v-for="[key, label] in punchCountModeOptions"
-                            :key="key"
-                            :value="key"
+                            v-for="opt in punchCountModeOptions"
+                            :key="opt.value"
+                            :value="opt.value"
                           >
-                            {{ label }}
+                            {{ opt.label }}
                           </el-radio>
                         </el-radio-group>
                       </div>
 
-                      <div v-if="activeGroup.punchCountMode === 'clock_in_only'" class="editor-field">
-                        <label>默认计薪工时（小时）</label>
-                        <el-input-number
-                          v-model="activeGroup.defaultWorkHours"
-                          :disabled="readonly"
-                          :min="0.5"
-                          :max="24"
-                          :step="0.5"
-                          size="small"
-                          controls-position="right"
-                        />
-                      </div>
-
                       <div class="editor-field">
-                        <label>打卡地点来源</label>
+                        <label>打卡地点</label>
                         <el-select
                           v-model="activeGroup.locationSource"
                           :disabled="readonly"
@@ -700,7 +680,7 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                           :disabled="readonly"
                           size="small"
                           style="width: 100%"
-                          placeholder="选择任务录入字段"
+                          placeholder="选择任务自定义字段"
                         >
                           <el-option
                             v-for="opt in textFieldOptions"
@@ -710,93 +690,46 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                           />
                         </el-select>
                         <p v-if="!textFieldOptions.length" class="hint">
-                          请在流程设置中添加文本类字段（如「服务地点」）
+                          请先在流程字段中添加文本类字段（≤200 字）
                         </p>
                       </div>
 
                       <div class="editor-field">
-                        <label>服务时间段来源</label>
-                        <el-select
-                          v-model="activeGroup.serviceTimeSource"
-                          :disabled="readonly"
-                          size="small"
-                          style="width: 100%"
-                        >
-                          <el-option
-                            v-for="[key, label] in serviceTimeSourceOptions"
-                            :key="key"
-                            :label="label"
-                            :value="key"
-                          />
-                        </el-select>
+                        <label>打卡时间段</label>
+                        <el-input model-value="任务起止时间" disabled size="small" />
+                        <p class="hint">仅读取任务发布时的起止时间</p>
                       </div>
 
-                      <div
-                        v-if="activeGroup.serviceTimeSource === 'task_field'"
-                        class="editor-field"
-                      >
-                        <label>时段字段</label>
-                        <el-select
-                          v-model="activeGroup.serviceTimeFieldId"
-                          :disabled="readonly"
-                          size="small"
-                          style="width: 100%"
-                          placeholder="如：服务时间段"
-                        >
-                          <el-option
-                            v-for="opt in textFieldOptions"
-                            :key="opt.value"
-                            :label="opt.label"
-                            :value="opt.value"
-                          />
-                        </el-select>
-                      </div>
-
-                      <div
-                        v-if="activeGroup.serviceTimeSource === 'fixed_window'"
-                        class="editor-field time-window-row"
-                      >
-                        <label>固定时段</label>
-                        <el-input
-                          v-model="activeGroup.serviceStartTime"
-                          :disabled="readonly"
-                          size="small"
-                          placeholder="09:00"
-                          style="width: 88px"
-                        />
-                        <span>至</span>
-                        <el-input
-                          v-model="activeGroup.serviceEndTime"
-                          :disabled="readonly"
-                          size="small"
-                          placeholder="18:00"
-                          style="width: 88px"
-                        />
-                      </div>
-
-                      <div class="editor-field">
-                        <el-checkbox
-                          v-model="activeGroup.requireWithinServiceWindow"
-                          :disabled="readonly"
-                        >
-                          须在服务时段内打卡
-                        </el-checkbox>
+                      <div class="punch-rule-logic">
+                        <p>生成待打卡记录规则：配置本条件后，将按上述打卡配置为执行人生成待打卡记录。</p>
+                        <p>
+                          打卡时间要求：晚于起始时段记为迟到；早于结束时段记为早退。超过 4
+                          小时仍未打卡视为缺勤，须发起补卡审批后方可继续流转。进度中记录打卡、补卡等操作日志。
+                        </p>
                       </div>
                     </div>
                   </template>
 
-                  <div v-if="activeGroupType !== 'none'" class="editor-field">
-                    <label>未完成提示</label>
+                  <div
+                    v-if="activeGroupType === 'punch_record' || activeGroupType === 'time_condition'"
+                    class="editor-field"
+                  >
+                    <label>未完成提示 <em class="req">*</em></label>
                     <el-input
                       v-model="activeGroup.incompletePrompt"
                       :disabled="readonly"
                       size="small"
-                      placeholder="如：请先完成打卡"
+                      maxlength="100"
+                      show-word-limit
+                      placeholder="面包屑下方展示的提示文案"
                     />
                   </div>
 
-                  <div v-if="activeGroupType !== 'none'" class="editor-field timeout-row">
-                    <label>超时处理</label>
+                  <div
+                    v-if="activeGroupType === 'punch_record' || activeGroupType === 'time_condition'"
+                    class="editor-field timeout-row"
+                  >
+                    <label>超时配置（天）</label>
                     <el-input-number
                       v-model="activeGroup.timeoutDays"
                       :disabled="readonly"
@@ -804,37 +737,58 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
                       :max="90"
                       size="small"
                       controls-position="right"
+                      :value-on-clear="undefined"
                     />
-                    <span>天后</span>
-                    <el-select
-                      v-model="activeGroup.timeoutAction"
-                      :disabled="readonly"
+                    <el-button
+                      v-if="!readonly && activeGroup.timeoutDays != null"
+                      link
+                      type="primary"
                       size="small"
-                      style="width: 110px"
+                      @click="clearTimeoutDays"
+                    >
+                      清除
+                    </el-button>
+                    <p class="hint">
+                      默认 3 天；清除后任务只能强制取消。提醒将生成待办；自动取消在终止打卡时间后超时未流转则取消；自动流转需指定目标节点。
+                    </p>
+                  </div>
+
+                  <div
+                    v-if="activeGroupType === 'punch_record' || activeGroupType === 'time_condition'"
+                    class="editor-field"
+                  >
+                    <label>超时操作</label>
+                    <el-select
+                      :model-value="activeGroup.timeoutAction"
+                      :disabled="readonly || activeGroup.timeoutDays == null"
+                      size="small"
+                      style="width: 100%"
+                      @update:model-value="onTimeoutActionChange($event)"
                     >
                       <el-option
-                        v-for="[key, label] in timeoutActionOptions"
-                        :key="key"
-                        :label="label"
-                        :value="key"
+                        v-for="opt in timeoutActionOptions"
+                        :key="opt.value"
+                        :label="opt.label"
+                        :value="opt.value"
                       />
                     </el-select>
                   </div>
 
                   <div
                     v-if="
-                      activeGroupType !== 'none' &&
-                      (activeGroup.timeoutAction === 'auto_cancel' || activeGroup.timeoutAction === 'auto_advance')
+                      (activeGroupType === 'punch_record' || activeGroupType === 'time_condition') &&
+                      activeGroup.timeoutAction === 'auto_advance' &&
+                      activeGroup.timeoutDays != null
                     "
                     class="editor-field"
                   >
-                    <label>超时流转至</label>
+                    <label>自动流转节点</label>
                     <el-select
                       v-model="activeGroup.timeoutTargetNodeId"
                       :disabled="readonly"
                       size="small"
                       style="width: 100%"
-                      placeholder="选择目标节点"
+                      placeholder="选择流转节点"
                     >
                       <el-option v-for="opt in targetOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
                     </el-select>
@@ -858,7 +812,7 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
             <p v-if="isFixedStartNode" class="hint block-hint">
               开始节点固定为「确认领取」，仅可配置流转目标节点
             </p>
-            <p v-else class="hint block-hint">自定义按钮文案与动作类型；也可在画布拖连线自动添加</p>
+            <p v-else class="hint block-hint">动作类型：提交 / 确认 / 取消 / 拒绝；可自定义按钮文案</p>
             <div v-if="node.actions.length" class="action-editor-list">
               <div v-for="(action, idx) in node.actions" :key="idx" class="action-editor-card">
                 <div class="action-editor-head">
@@ -918,16 +872,26 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
             </el-button>
           </section>
 
+          <section v-if="node.nodeType !== 'end'" class="block">
+            <h4>【通知设置】</h4>
+            <p class="hint block-hint">可选；节点到达时按勾选渠道通知</p>
+            <div class="notify-row">
+              <el-checkbox v-model="node.notifySms" :disabled="readonly">短信通知</el-checkbox>
+              <el-checkbox v-model="node.notifyServiceAccount" :disabled="readonly">服务号通知</el-checkbox>
+              <el-checkbox v-model="node.notifyMessage" :disabled="readonly">消息通知</el-checkbox>
+            </div>
+          </section>
+
           <section class="block collapsible-detail">
-            <h4>【操作后去哪？】</h4>
-            <p class="hint block-hint">各按钮的流转目标见上方「操作按钮」；此处配置节点超时规则</p>
+            <h4>【超时设置】</h4>
+            <p class="hint block-hint">节点级超时：触发自动流转或取消</p>
             <div class="meta-line">
-              <span>节点超时</span>
+              <span>当前</span>
               <span>{{ timeoutSummary() }}</span>
             </div>
             <template v-if="!readonly && node.nodeType !== 'end'">
               <div class="field-compact" style="margin-top: 10px">
-                <el-checkbox v-model="node.timeoutEnabled">启用超时自动流转</el-checkbox>
+                <el-checkbox v-model="node.timeoutEnabled">启用超时</el-checkbox>
               </div>
               <div v-if="node.timeoutEnabled" class="timeout-config">
                 <el-input-number
@@ -1497,6 +1461,37 @@ function onActionTypeChange(action: WorkflowActionConfig, type: WorkflowAction) 
   font-size: 12px;
   font-weight: 600;
   color: #334155;
+}
+
+.punch-rule-logic {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px dashed #cbd5e1;
+}
+
+.punch-rule-logic p {
+  margin: 0 0 6px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #64748b;
+}
+
+.punch-rule-logic p:last-child {
+  margin-bottom: 0;
+}
+
+.req {
+  color: #f56c6c;
+  font-style: normal;
+  margin-left: 2px;
+}
+
+.notify-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .method-chips {

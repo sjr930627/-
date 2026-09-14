@@ -17,7 +17,7 @@ import {
 } from '@/services/shiftDemandPlan'
 import { resolveShiftIdForTemplate } from '@/services/scheduleGroup'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
-import { addDays, getWeekStart } from '@/utils'
+import { addDays, getDepartmentManagerIds, getWeekStart } from '@/utils'
 
 export interface DemandGapShiftItem {
   date: string
@@ -97,8 +97,12 @@ function resolveManagerName(
     if (binding?.managerName) return binding.managerName
   }
   const dept = departments.find((d) => d.id === departmentId)
-  if (dept?.managerEmployeeId) {
-    return employees.find((e) => e.id === dept.managerEmployeeId)?.name ?? '—'
+  const managerIds = getDepartmentManagerIds(dept)
+  if (managerIds.length) {
+    const names = managerIds
+      .map((id) => employees.find((e) => e.id === id)?.name)
+      .filter((n): n is string => Boolean(n))
+    return names.length ? names.join('、') : '—'
   }
   return '—'
 }

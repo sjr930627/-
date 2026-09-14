@@ -9,11 +9,14 @@ import {
   buildFormulaFieldContext,
   formatBillingEnterpriseLabel,
   formatBillingFormulaDisplay,
+  formulaOperators,
   parseBillingFormulaStorage,
   resolveBillingEnterpriseScope,
   resolvePayrollFormulaGroupKey,
   defaultPayrollFormulaDisplay,
   defaultServiceFeeFormulaDisplay,
+  settlementInsertFields,
+  serviceFeeInsertFields,
 } from '@/constants/billingRule'
 import type { BillingRule } from '@/types'
 import type { BillingFormulaExampleKey, PayrollFormulaGroupKey } from '@/constants/billingRule'
@@ -48,9 +51,9 @@ const enterpriseOptions = computed(() =>
 
 const formulaContext = computed(() => buildFormulaFieldContext(store.billImportTemplates))
 
-const settlementFormulaFields = computed(() => formulaContext.value.settlementFields)
+const settlementFormulaFields = computed(() => settlementInsertFields)
 
-const serviceFeeFormulaFields = computed(() => formulaContext.value.serviceFields)
+const serviceFeeFormulaFields = computed(() => serviceFeeInsertFields)
 
 const tableData = computed(() =>
   store.billingRules.map((r) => {
@@ -121,13 +124,19 @@ function insertField(fieldKey: string, target: 'settlement' | 'service_fee') {
     formulaContext.value.fieldMap[fieldKey]?.label ??
     billingFormulaFieldMap[fieldKey as keyof typeof billingFormulaFieldMap]?.label ??
     fieldKey
-  if (target === 'settlement') {
-    form.value.payrollFormula += form.value.payrollFormula ? ` + ${label}` : label
-    settlementFormulaRef.value?.focus()
-  } else {
-    form.value.serviceFeeFormula += form.value.serviceFeeFormula ? ` + ${label}` : label
-    serviceFeeFormulaRef.value?.focus()
-  }
+  appendToken(label, target)
+}
+
+function insertOperator(op: string, target: 'settlement' | 'service_fee') {
+  appendToken(op, target)
+}
+
+function appendToken(token: string, target: 'settlement' | 'service_fee') {
+  const key = target === 'settlement' ? 'payrollFormula' : 'serviceFeeFormula'
+  const current = form.value[key]
+  form.value[key] = current ? `${current} ${token}` : token
+  if (target === 'settlement') settlementFormulaRef.value?.focus()
+  else serviceFeeFormulaRef.value?.focus()
 }
 
 watch(
@@ -202,19 +211,6 @@ onMounted(() => {
         <p class="text-muted">配置结算金额公式与服务费金额公式，支持按企业适配</p>
       </div>
       <el-button type="primary" @click="openCreate">新建规则</el-button>
-    </div>
-
-    <div class="example-cards">
-      <div v-for="example in billingFormulaExamples" :key="example.key" class="example-card">
-        <div class="example-head">
-          <span class="example-title">{{ example.label }}</span>
-          <el-button size="small" link type="primary" @click="openCreate(); applyFormulaExample(example.key)">
-            使用示例
-          </el-button>
-        </div>
-        <code class="formula-preview">{{ example.display }}</code>
-        <p class="example-desc">{{ example.description }}</p>
-      </div>
     </div>
 
     <el-table :data="tableData" border stripe row-key="id">
@@ -304,39 +300,20 @@ onMounted(() => {
       </el-form-item>
 
       <el-divider content-position="left">结算金额公式</el-divider>
-      <div class="example-actions">
-        <span class="section-hint">结算类型示例：</span>
-        <el-button
-          v-for="example in billingFormulaExamples"
-          :key="example.key"
-          size="small"
-          :type="formulaGroup === example.key ? 'primary' : 'default'"
-          @click="applyFormulaExample(example.key)"
+      <el-form-item label="结算公式类型" required>
+        <el-radio-group
+          :model-value="formulaGroup"
+          @update:model-value="(v) => applyFormulaExample(v as BillingFormulaExampleKey)"
         >
-          {{ example.label }}
-        </el-button>
-      </div>
-      <div class="field-tags">
-        <el-tooltip
-          v-for="f in settlementFormulaFields"
-          :key="f.key"
-          :content="`${f.description}${f.unit ? `（${f.unit}）` : ''}`"
-          placement="top"
-        >
-          <el-tag class="field-tag" size="small" effect="plain">{{ f.label }}</el-tag>
-        </el-tooltip>
-      </div>
-      <div v-if="formulaContext.templateFields.length" class="field-tags import-field-tags">
-        <span class="section-hint">导入模板字段：</span>
-        <el-tooltip
-          v-for="f in formulaContext.templateFields"
-          :key="`tpl-${f.key}`"
-          :content="f.description"
-          placement="top"
-        >
-          <el-tag class="field-tag" size="small" type="success" effect="plain">{{ f.label }}</el-tag>
-        </el-tooltip>
-      </div>
+          <el-radio-button
+            v-for="example in billingFormulaExamples"
+            :key="example.key"
+            :value="example.key"
+          >
+            {{ example.label }}
+          </el-radio-button>
+        </el-radio-group>
+      </el-form-item>
       <el-form-item label="结算金额" required>
         <div class="formula-editor">
           <div class="insert-bar">
@@ -350,27 +327,28 @@ onMounted(() => {
               {{ f.label }}
             </el-button>
           </div>
+          <div class="insert-bar">
+            <span class="insert-label">运算符号：</span>
+            <el-button
+              v-for="op in formulaOperators"
+              :key="op"
+              size="small"
+              @click="insertOperator(op, 'settlement')"
+            >
+              {{ op }}
+            </el-button>
+          </div>
           <el-input
             ref="settlementFormulaRef"
             v-model="form.payrollFormula"
             type="textarea"
             :rows="2"
-            placeholder="如：出勤工时 * 时薪单价 - 扣款"
+            placeholder="如：出勤工时 * 客户时薪单价"
           />
         </div>
       </el-form-item>
 
       <el-divider content-position="left">服务费金额公式</el-divider>
-      <div class="field-tags">
-        <el-tooltip
-          v-for="f in serviceFeeFormulaFields"
-          :key="f.key"
-          :content="`${f.description}${f.unit ? `（${f.unit}）` : ''}`"
-          placement="top"
-        >
-          <el-tag class="field-tag" size="small" effect="plain">{{ f.label }}</el-tag>
-        </el-tooltip>
-      </div>
       <el-form-item label="服务费金额" required>
         <div class="formula-editor">
           <div class="insert-bar">
@@ -384,12 +362,23 @@ onMounted(() => {
               {{ f.label }}
             </el-button>
           </div>
+          <div class="insert-bar">
+            <span class="insert-label">运算符号：</span>
+            <el-button
+              v-for="op in formulaOperators"
+              :key="`svc-${op}`"
+              size="small"
+              @click="insertOperator(op, 'service_fee')"
+            >
+              {{ op }}
+            </el-button>
+          </div>
           <el-input
             ref="serviceFeeFormulaRef"
             v-model="form.serviceFeeFormula"
             type="textarea"
             :rows="2"
-            placeholder="如：灵工薪酬 * 服务费率"
+            placeholder="如：排班工时 * 管理服务单价 + 抢班工时 * 抢班管理单价"
           />
         </div>
       </el-form-item>
@@ -407,39 +396,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.example-cards {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.example-card {
-  border: 1px solid #ebeef5;
-  border-radius: 8px;
-  padding: 12px 14px;
-  background: #fafafa;
-}
-
-.example-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.example-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.example-desc {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: #909399;
-  line-height: 1.5;
-}
-
 .formula-preview {
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 12px;
@@ -454,31 +410,6 @@ onMounted(() => {
 
 .enterprise-scope {
   width: 100%;
-}
-
-.example-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-  padding-left: 110px;
-  margin-bottom: 8px;
-}
-
-.section-hint {
-  font-size: 12px;
-  color: #909399;
-}
-
-.field-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 0 8px 110px;
-}
-
-.field-tag {
-  cursor: default;
 }
 
 .formula-editor {
@@ -497,11 +428,5 @@ onMounted(() => {
   font-size: 12px;
   color: var(--el-text-color-secondary);
   flex-shrink: 0;
-}
-
-@media (max-width: 1200px) {
-  .example-cards {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

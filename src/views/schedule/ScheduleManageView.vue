@@ -22,6 +22,12 @@ import {
   isScheduleFutureDate,
   isScheduleShiftHistorical,
   resolveAssignmentStartTime,
+  FLEX_SHIFT_ID,
+  FREE_PUNCH_SHIFT_ID,
+  getAssignmentWorkHours,
+  parseScheduleTimeSegments,
+  formatScheduleSegmentLabel,
+  isCustomFlexAssignment,
 } from '@/constants/schedule'
 import {
   CANCEL_SHIFT_REASON_OPTIONS,
@@ -206,6 +212,24 @@ const shiftRows = computed(() =>
     endTime: d.template.endTime,
   })),
 )
+
+/** 单元格可选班次：不含休息 / 自由打卡 / 自定义 */
+function isSelectableWorkShift(shift: { id: string; code: string; name: string }) {
+  if (shift.id === FLEX_SHIFT_ID || shift.id === FREE_PUNCH_SHIFT_ID) return false
+  if (shift.code === 'REST' || shift.code === 'FREE' || shift.code === 'FLEX' || shift.code === 'CUSTOM') {
+    return false
+  }
+  if (shift.name === '休息' || shift.name === '自由打卡' || shift.name === '自定义') return false
+  return true
+}
+
+const cellPickerShifts = computed(() => {
+  const fromGroup = groupShifts.value
+    .map((d) => d.shift!)
+    .filter((s) => isSelectableWorkShift(s))
+  if (fromGroup.length) return fromGroup
+  return store.shifts.filter((s) => isSelectableWorkShift(s))
+})
 
 const selectedLineShiftContext = computed(() => {
   if (!selectedLineShiftId.value) return null
@@ -399,6 +423,25 @@ const detailShift = computed(() =>
     : null,
 )
 
+const detailShiftLabel = computed(() => {
+  const asn = detailAssignment.value
+  if (!asn) return '未排班'
+  const shift = detailShift.value
+  const segments = parseScheduleTimeSegments(asn.note)
+  const range = segments.length
+    ? segments.map(formatScheduleSegmentLabel).join(',')
+    : shift
+      ? `${shift.startTime.slice(0, 5)}-${shift.endTime.slice(0, 5)}`
+      : ''
+  const name = isCustomFlexAssignment(asn)
+    ? '自定义'
+    : shift?.name || asn.shiftId
+  const hours = getAssignmentWorkHours(asn, store.shifts)
+  const hoursLabel = Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`
+  if (!range) return `${name} ${hoursLabel}`.trim()
+  return `${name}（${range}）${hoursLabel}`
+})
+
 const detailPublishedAssignment = computed(() => {
   if (!detailCell.value) return null
   return board.getPublishedAssignment(detailCell.value.employeeId, detailCell.value.date)
@@ -480,26 +523,35 @@ function onCellClick(employeeId: string, date: string, event: MouseEvent) {
     openDetail(employeeId, date)
     return
   }
-  const asn = board.getVisibleAssignment(employeeId, date)
-  if (asn) {
-    board.cycleShift(employeeId, date, store.shifts)
-  } else {
-    pickerTarget.value = { employeeId, date }
-    shiftPickerPos.value = { x: event.clientX, y: event.clientY }
-    shiftPickerVisible.value = true
-  }
+  pickerTarget.value = { employeeId, date }
+  shiftPickerPos.value = { x: event.clientX, y: event.clientY }
+  batchMenuVisible.value = false
+  shiftPickerVisible.value = true
 }
 
 function onCellContext(employeeId: string, date: string, event: MouseEvent) {
   if (board.editMode.value !== 'editing') return
   board.toggleSelect(employeeId, date, event.shiftKey)
   batchMenuPos.value = { x: event.clientX, y: event.clientY }
+  shiftPickerVisible.value = false
   batchMenuVisible.value = true
 }
 
 function pickShift(shiftId: string) {
   if (!pickerTarget.value) return
   board.setCellShift(pickerTarget.value.employeeId, pickerTarget.value.date, shiftId)
+  shiftPickerVisible.value = false
+  pickerTarget.value = null
+}
+
+function clearPickedShift() {
+  if (!pickerTarget.value) return
+  board.clearCell(pickerTarget.value.employeeId, pickerTarget.value.date)
+  shiftPickerVisible.value = false
+  pickerTarget.value = null
+}
+
+function closeShiftPicker() {
   shiftPickerVisible.value = false
   pickerTarget.value = null
 }
@@ -699,6 +751,13 @@ async function restorePublishVersion(record: SchedulePublishRecord) {
 
 function formatPublishTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN')
+}
+
+function formatSnapshotShiftLabel(shiftId: string) {
+  const shift = store.shifts.find((s) => s.id === shiftId)
+  if (!shift) return shiftId
+  const range = `${shift.startTime.slice(0, 5)}-${shift.endTime.slice(0, 5)}`
+  return `${shift.name}（${range}）`
 }
 
 function onKeydown(e: KeyboardEvent) {
@@ -1006,17 +1065,27 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     <Teleport to="body">
       <div
         v-if="shiftPickerVisible"
-        class="shift-picker"
-        :style="{ left: shiftPickerPos.x + 'px', top: shiftPickerPos.y + 'px' }"
+        class="shift-picker-mask"
+        @mousedown.self="closeShiftPicker"
       >
         <div
-          v-for="s in store.shifts"
-          :key="s.id"
-          class="picker-item"
-          :style="{ borderColor: s.color }"
-          @click="pickShift(s.id)"
+          class="shift-picker"
+          :style="{ left: shiftPickerPos.x + 'px', top: shiftPickerPos.y + 'px' }"
+          @mousedown.stop
         >
-          {{ s.name }}
+          <div class="picker-title">选择班次</div>
+          <div
+            v-for="s in cellPickerShifts"
+            :key="s.id"
+            class="picker-item"
+            :style="{ borderColor: s.color }"
+            @click="pickShift(s.id)"
+          >
+            {{ s.name }}
+            <span class="picker-time">{{ s.startTime.slice(0, 5) }}-{{ s.endTime.slice(0, 5) }}</span>
+          </div>
+          <div v-if="!cellPickerShifts.length" class="picker-empty">暂无可选班次</div>
+          <div class="picker-item danger" @click="clearPickedShift">清除班次</div>
         </div>
       </div>
       <div
@@ -1027,7 +1096,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       >
         <div class="batch-title">批量操作（{{ board.selectedCells.value.size }}格）</div>
         <div
-          v-for="s in store.shifts"
+          v-for="s in cellPickerShifts"
           :key="s.id"
           class="batch-item"
           @click="board.batchSetShift(s.id); batchMenuVisible = false"
@@ -1043,10 +1112,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <el-descriptions :column="1" border size="small">
           <el-descriptions-item label="员工">{{ detailEmployee.name }}</el-descriptions-item>
           <el-descriptions-item label="日期">{{ detailCell.date }}</el-descriptions-item>
-          <el-descriptions-item label="班次">{{ detailShift?.name ?? '未排班' }}</el-descriptions-item>
-          <el-descriptions-item v-if="detailShift" label="时间">
-            {{ detailShift.startTime }}-{{ detailShift.endTime }}
-          </el-descriptions-item>
+          <el-descriptions-item label="班次">{{ detailShiftLabel }}</el-descriptions-item>
           <el-descriptions-item label="状态">
             <span
               v-if="detailPublishedAssignment && normalizeConfirmStatus(detailPublishedAssignment.confirmStatus)"
@@ -1087,10 +1153,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             style="width: 100%; margin-bottom: 8px"
             @change="(id: string) => board.setCellShift(detailCell!.employeeId, detailCell!.date, id)"
           >
-            <el-option v-for="s in store.shifts" :key="s.id" :label="s.name" :value="s.id" />
+            <el-option
+              v-for="s in cellPickerShifts"
+              :key="s.id"
+              :label="`${s.name}（${s.startTime.slice(0, 5)}-${s.endTime.slice(0, 5)}）`"
+              :value="s.id"
+            />
           </el-select>
           <el-button v-if="detailAssignment" type="danger" plain @click="board.clearCell(detailCell!.employeeId, detailCell!.date)">
-            取消排班
+            清除班次
           </el-button>
         </div>
         <p v-else-if="detailIsHistorical" class="text-muted tip">历史班次仅可查看</p>
@@ -1198,7 +1269,6 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
         <el-table-column label="发布时间" min-width="160">
           <template #default="{ row }">{{ formatPublishTime(row.publishedAt) }}</template>
         </el-table-column>
-        <el-table-column prop="changeNote" label="说明" min-width="100" show-overflow-tooltip />
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="viewPublishVersion(row)">查看</el-button>
@@ -1246,12 +1316,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             </template>
           </el-table-column>
           <el-table-column prop="date" label="日期" width="110" />
-          <el-table-column label="班次" width="100">
+          <el-table-column label="班次" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">
-              {{ store.shifts.find((s) => s.id === row.shiftId)?.name ?? row.shiftId }}
+              {{ formatSnapshotShiftLabel(row.shiftId) }}
             </template>
           </el-table-column>
-          <el-table-column prop="note" label="备注" min-width="120" show-overflow-tooltip />
         </el-table>
       </template>
     </el-dialog>
@@ -1728,6 +1797,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border: 2px solid #f56c6c !important;
 }
 
+.shift-picker-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2999;
+}
+
 .shift-picker,
 .batch-menu {
   position: fixed;
@@ -1737,7 +1812,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   padding: 8px;
-  min-width: 120px;
+  min-width: 160px;
+}
+
+.picker-title {
+  font-size: 12px;
+  color: #909399;
+  padding: 4px 12px 8px;
+}
+
+.picker-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #c0c4cc;
 }
 
 .picker-item,
@@ -1747,6 +1834,16 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   border-radius: 4px;
   font-size: 13px;
   border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.picker-time {
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
 }
 
 .picker-item:hover,
@@ -1754,14 +1851,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   background: #f5f3ff;
 }
 
+.picker-item.danger,
+.batch-item.danger {
+  color: #f56c6c;
+  border-left-color: transparent;
+  margin-top: 4px;
+  border-top: 1px solid #f0f0f0;
+  padding-top: 10px;
+}
+
 .batch-title {
   font-size: 12px;
   color: #909399;
   padding: 4px 8px 8px;
-}
-
-.batch-item.danger {
-  color: #f56c6c;
 }
 
 .drawer-actions {

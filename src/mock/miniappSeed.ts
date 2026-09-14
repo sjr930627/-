@@ -513,7 +513,7 @@ export const seedWorkerAgreements: WorkerAgreement[] = [
     signedAt: '2025-06-10T09:30:00',
     effectiveDate: '2025-06-10',
     expiryDate: '2026-06-09',
-    status: 'expired',
+    status: 'signed',
     createdAt: '2025-06-05T08:00:00',
   },
   {
@@ -560,7 +560,7 @@ export const seedWorkerAgreements: WorkerAgreement[] = [
     signedAt: '2025-08-01T11:00:00',
     effectiveDate: '2025-08-01',
     expiryDate: '2026-07-31',
-    status: 'terminated',
+    status: 'signed',
     createdAt: '2025-07-25T09:00:00',
   },
 ]

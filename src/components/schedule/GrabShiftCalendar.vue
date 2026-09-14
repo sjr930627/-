@@ -52,7 +52,7 @@ const monthSummary = computed(() => {
   const monthSlots = props.slots.filter((s) => s.date.startsWith(prefix))
   return {
     total: monthSlots.length,
-    open: monthSlots.filter((s) => s.status === 'open' || s.status === 'partial').length,
+    open: monthSlots.filter((s) => s.status === 'open' || (s.status as string) === 'partial').length,
     full: monthSlots.filter((s) => s.status === 'full').length,
   }
 })
@@ -113,8 +113,9 @@ function selectDate(date: string | null) {
   selectedDate.value = selectedDate.value === date ? null : date
 }
 
-function statusClass(status: GrabShiftSlot['status']) {
-  return `status-${status}`
+function statusClass(status: GrabShiftSlot['status'] | string) {
+  const normalized = status === 'partial' ? 'open' : status
+  return `status-${normalized}`
 }
 </script>
 
@@ -136,7 +137,6 @@ function statusClass(status: GrabShiftSlot['status']) {
 
     <div class="calendar-legend">
       <span class="legend-item"><i class="dot status-open" />招募中</span>
-      <span class="legend-item"><i class="dot status-partial" />部分满员</span>
       <span class="legend-item"><i class="dot status-full" />已满员</span>
       <span class="legend-item"><i class="dot status-cancelled" />已取消</span>
     </div>
@@ -271,11 +271,6 @@ function statusClass(status: GrabShiftSlot['status']) {
   border: 2px solid #f56c6c;
 }
 
-.dot.status-partial {
-  background: #fdf6ec;
-  border: 2px solid #e6a23c;
-}
-
 .dot.status-full {
   background: #f0f9eb;
   border: 2px solid #67c23a;
@@ -378,12 +373,6 @@ function statusClass(status: GrabShiftSlot['status']) {
   background: #fef0f0;
   color: #c45656;
   border: 1px solid #fbc4c4;
-}
-
-.slot-pill.status-partial {
-  background: #fdf6ec;
-  color: #b88230;
-  border: 1px solid #f5dab1;
 }
 
 .slot-pill.status-full {

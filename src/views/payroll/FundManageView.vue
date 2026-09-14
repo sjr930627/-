@@ -326,6 +326,10 @@ const workerPendingRows = computed(() => {
     store.workerIncomeRecords,
     selectedWorker.value.employeeId,
     ['pending_settlement'],
+    {
+      enterpriseName: selectedWorker.value.enterpriseName,
+      departmentName: selectedWorker.value.departmentName,
+    },
   ).map((row) => ({
     ...row,
     dateLabel: formatIncomeDate(row.date),
@@ -339,10 +343,16 @@ const workerSettledRows = computed(() => {
     store.workerIncomeRecords,
     selectedWorker.value.employeeId,
     ['claimable', 'claimed'],
+    {
+      enterpriseName: selectedWorker.value.enterpriseName,
+      departmentName: selectedWorker.value.departmentName,
+    },
   ).map((row) => ({
     ...row,
     dateLabel: formatIncomeDate(row.date),
     amountLabel: formatFundAmount(row.amount),
+    withdrawStatusLabel: row.status === 'claimed' ? '已提现' : '未提现',
+    withdrawStatusType: row.status === 'claimed' ? 'success' : 'warning',
   }))
 })
 
@@ -357,7 +367,6 @@ const workerWithdrawalRows = computed(() => {
     grossLabel: formatFundAmount(batch.gross),
     taxLabel: formatFundAmount(batch.tax),
     netLabel: formatFundAmount(batch.netAmount),
-    titleLabel: batch.titles.join('；'),
   }))
 })
 
@@ -477,12 +486,6 @@ function openWorkerDetail(row: WorkerFundAccountRow) {
                   <div v-if="row.accountType === 'cmb' && row.cmbConfig" class="config-detail text-muted">
                     {{ row.cmbConfig.branchName }} · 联行号 {{ row.cmbConfig.bankCode }}
                   </div>
-                </template>
-              </el-table-column>
-              <el-table-column label="默认" width="70" align="center">
-                <template #default="{ row }">
-                  <el-tag v-if="row.isDefault" size="small" type="success">默认</el-tag>
-                  <span v-else class="text-muted">—</span>
                 </template>
               </el-table-column>
               <el-table-column label="操作" width="160" fixed="right">
@@ -656,10 +659,7 @@ function openWorkerDetail(row: WorkerFundAccountRow) {
     >
       <template v-if="selectedWorker">
         <el-descriptions :column="2" border class="worker-desc">
-          <el-descriptions-item label="工号">{{ selectedWorker.employeeNo }}</el-descriptions-item>
           <el-descriptions-item label="手机号">{{ selectedWorker.phone }}</el-descriptions-item>
-          <el-descriptions-item label="企业">{{ selectedWorker.enterpriseName }}</el-descriptions-item>
-          <el-descriptions-item label="部门">{{ selectedWorker.departmentName }}</el-descriptions-item>
           <el-descriptions-item label="待结算金额">
             <span class="pending-amount">{{ formatFundAmount(selectedWorker.pendingAmount) }}</span>
           </el-descriptions-item>
@@ -672,27 +672,43 @@ function openWorkerDetail(row: WorkerFundAccountRow) {
           <el-tab-pane label="待结算明细" name="pending">
             <el-table :data="workerPendingRows" border stripe size="small" empty-text="暂无待结算明细">
               <el-table-column prop="dateLabel" label="日期" width="100" />
-              <el-table-column prop="name" label="班次/任务名称" min-width="200" show-overflow-tooltip />
+              <el-table-column label="企业" min-width="140" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.enterpriseName || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="部门" min-width="120" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.departmentName || '—' }}</template>
+              </el-table-column>
+              <el-table-column prop="name" label="班次/任务名称" min-width="180" show-overflow-tooltip />
               <el-table-column prop="quantityLabel" label="工时/任务数量" width="130" align="right" />
               <el-table-column prop="unitPriceLabel" label="工时单价/任务单价" width="150" align="right" />
-              <el-table-column prop="amountLabel" label="发薪金额" width="120" align="right" />
+              <el-table-column prop="amountLabel" label="发薪金额" width="110" align="right" />
             </el-table>
           </el-tab-pane>
 
           <el-tab-pane label="结算明细" name="settled">
             <el-table :data="workerSettledRows" border stripe size="small" empty-text="暂无结算明细">
               <el-table-column prop="dateLabel" label="日期" width="100" />
-              <el-table-column prop="name" label="班次/任务名称" min-width="200" show-overflow-tooltip />
+              <el-table-column label="企业" min-width="140" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.enterpriseName || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="部门" min-width="120" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.departmentName || '—' }}</template>
+              </el-table-column>
+              <el-table-column prop="name" label="班次/任务名称" min-width="180" show-overflow-tooltip />
               <el-table-column prop="quantityLabel" label="工时/任务数量" width="130" align="right" />
               <el-table-column prop="unitPriceLabel" label="工时单价/任务单价" width="150" align="right" />
-              <el-table-column prop="amountLabel" label="发薪金额" width="120" align="right" />
+              <el-table-column prop="amountLabel" label="发薪金额" width="110" align="right" />
+              <el-table-column label="状态" width="90" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.withdrawStatusType">{{ row.withdrawStatusLabel }}</el-tag>
+                </template>
+              </el-table-column>
             </el-table>
           </el-tab-pane>
 
           <el-tab-pane label="提现记录" name="withdrawals">
             <el-table :data="workerWithdrawalRows" border stripe size="small" empty-text="暂无提现记录">
               <el-table-column prop="claimedAtLabel" label="提现时间" width="160" />
-              <el-table-column prop="titleLabel" label="关联收入" min-width="200" show-overflow-tooltip />
               <el-table-column prop="recordCount" label="笔数" width="70" align="center" />
               <el-table-column prop="grossLabel" label="提现金额" width="120" align="right" />
               <el-table-column prop="taxLabel" label="个税" width="100" align="right" />
@@ -726,9 +742,6 @@ function openWorkerDetail(row: WorkerFundAccountRow) {
             <el-radio value="frozen">冻结</el-radio>
             <el-radio value="disabled">停用</el-radio>
           </el-radio-group>
-        </el-form-item>
-        <el-form-item label="默认账户">
-          <el-switch v-model="accountForm.isDefault" />
         </el-form-item>
 
         <template v-if="accountForm.accountType === 'alipay'">

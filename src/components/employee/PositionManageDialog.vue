@@ -2,6 +2,8 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import SkillLibraryManageDialog from '@/components/skill/SkillLibraryManageDialog.vue'
+import { JOB_TYPE_OPTIONS } from '@/constants/recruitment'
 import type { EnterprisePosition, GrabInterviewPositionProfile } from '@/types'
 import { generateId } from '@/utils'
 
@@ -17,6 +19,9 @@ const emit = defineEmits<{
 const store = useAppStore()
 const editingId = ref<string | null>(null)
 const formVisible = ref(false)
+const skillLibVisible = ref(false)
+
+const skillOptions = computed(() => store.skillLibraryOptions)
 
 function emptyProfile(): GrabInterviewPositionProfile {
   return {
@@ -36,7 +41,6 @@ const form = reactive({
   id: '',
   name: '',
   profile: emptyProfile(),
-  skillsText: '',
 })
 
 const positions = computed(() => store.getEnterprisePositions(props.enterpriseId))
@@ -60,7 +64,6 @@ function openCreate() {
   form.id = ''
   form.name = ''
   form.profile = emptyProfile()
-  form.skillsText = ''
   formVisible.value = true
 }
 
@@ -71,8 +74,8 @@ function openEdit(row: EnterprisePosition) {
   form.profile = {
     ...emptyProfile(),
     ...JSON.parse(JSON.stringify(row.profile)),
+    skills: [...(row.profile.skills ?? [])],
   }
-  form.skillsText = (row.profile.skills ?? []).join('、')
   formVisible.value = true
 }
 
@@ -87,18 +90,16 @@ function submitForm() {
     ElMessage.warning('请填写岗位名称')
     return
   }
-  const skills = form.skillsText
-    .split(/[,，、]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const skills = [...new Set((form.profile.skills ?? []).map((s) => s.trim()).filter(Boolean))]
   try {
     store.upsertEnterprisePosition(props.enterpriseId, {
       id: form.id || generateId('epos'),
-      name: form.name.trim() || positionName,
+      name: positionName,
       profile: {
         ...form.profile,
         positionName,
         skills,
+        requirements: '',
         gender: form.profile.gender || 'any',
       },
       schedule: editingId.value
@@ -150,7 +151,6 @@ function skillsSummary(row: EnterprisePosition) {
       <el-table-column label="岗位名称" min-width="120">
         <template #default="{ row }">
           <div class="name">{{ row.profile.positionName || row.name }}</div>
-          <div v-if="row.name && row.name !== row.profile.positionName" class="sub">{{ row.name }}</div>
         </template>
       </el-table-column>
       <el-table-column label="类型" prop="profile.jobType" width="90" show-overflow-tooltip>
@@ -175,20 +175,40 @@ function skillsSummary(row: EnterprisePosition) {
       destroy-on-close
     >
       <el-form label-position="top">
-        <el-form-item label="模版名称" required>
-          <el-input v-model="form.name" placeholder="如：营业厅营业员模板" />
-        </el-form-item>
         <el-form-item label="岗位名称" required>
           <el-input v-model="form.profile.positionName" placeholder="人员与抢班展示用名称" />
         </el-form-item>
         <el-form-item label="岗位类型">
-          <el-input v-model="form.profile.jobType" placeholder="如：零售服务" />
+          <el-select
+            v-model="form.profile.jobType"
+            clearable
+            filterable
+            placeholder="请选择岗位类型"
+            style="width: 100%"
+          >
+            <el-option v-for="t in JOB_TYPE_OPTIONS" :key="t" :label="t" :value="t" />
+          </el-select>
         </el-form-item>
         <el-form-item label="技能要求">
-          <el-input v-model="form.skillsText" placeholder="多个技能用顿号/逗号分隔" />
-        </el-form-item>
-        <el-form-item label="任职要求">
-          <el-input v-model="form.profile.requirements" type="textarea" :rows="3" />
+          <div class="skill-field">
+            <el-select
+              v-model="form.profile.skills"
+              multiple
+              filterable
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="请从技能库选择"
+              style="flex: 1"
+            >
+              <el-option
+                v-for="s in skillOptions"
+                :key="s.id"
+                :label="s.name"
+                :value="s.name"
+              />
+            </el-select>
+            <el-button link type="primary" @click="skillLibVisible = true">维护技能库</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="岗位描述">
           <el-input v-model="form.profile.description" type="textarea" :rows="2" />
@@ -216,6 +236,8 @@ function skillsSummary(row: EnterprisePosition) {
         <el-button type="primary" @click="submitForm">保存</el-button>
       </div>
     </el-drawer>
+
+    <SkillLibraryManageDialog v-model:visible="skillLibVisible" />
   </el-drawer>
 </template>
 
@@ -236,10 +258,11 @@ function skillsSummary(row: EnterprisePosition) {
   font-weight: 600;
   color: #111827;
 }
-.sub {
-  margin-top: 2px;
-  font-size: 11px;
-  color: #94a3b8;
+.skill-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
 }
 .inline {
   display: flex;

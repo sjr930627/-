@@ -14,13 +14,17 @@ import {
   enterpriseUnassignedDepartmentId,
   departmentJoinQrImageUrl,
   buildDepartmentJoinQrPayload,
+  enterpriseRootDepartmentId,
+  isLeafDepartment,
 } from '@/constants/department'
 import { grabShiftPositionOptions } from '@/services/grabShift'
 import {
   buildDepartmentTree,
   countDepartmentEmployees,
   getDepartmentDescendantIds,
+  getDepartmentManagerIds,
   getDepartmentName,
+  getDepartmentPath,
 } from '@/utils'
 import { attendanceGroupTypeMap, formatShiftPeriod } from '@/constants/attendanceGroup'
 import type { DepartmentTreeNode, Employee } from '@/types'
@@ -53,8 +57,8 @@ const poolCandidates = computed(() =>
 )
 
 function openAddPerson() {
-  if (!selectedDeptId.value || isUnassignedDept.value || isEnterpriseRootDept.value) {
-    ElMessage.warning('请选择可加入人员的业务部门')
+  if (!selectedDeptId.value || !isLeafDept.value) {
+    ElMessage.warning('仅叶子部门可添加人员')
     return
   }
   addMode.value = 'pick'
@@ -184,6 +188,10 @@ const isEnterpriseRootDept = computed(() =>
   selectedDept.value ? isEnterpriseRootDepartment(selectedDept.value) : false,
 )
 
+const isLeafDept = computed(() =>
+  selectedDept.value ? isLeafDepartment(selectedDept.value) : false,
+)
+
 const selectedLocked = computed(
   () => isUnassignedDept.value || isEnterpriseRootDept.value,
 )
@@ -229,29 +237,28 @@ const deptLevelLabel = computed(() => {
   return labels[level - 1] ? `${labels[level - 1]}部门` : `${level}级部门`
 })
 
-const managerEmployee = computed(() => {
-  if (!selectedDept.value) return null
-  if (selectedDept.value.managerEmployeeId) {
-    return (
-      scopedEmployees.value.find((e) => e.id === selectedDept.value!.managerEmployeeId) ?? null
-    )
+const managerEmployees = computed(() => {
+  if (!selectedDept.value) return []
+  const ids = getDepartmentManagerIds(selectedDept.value)
+  if (ids.length) {
+    return ids
+      .map((id) => scopedEmployees.value.find((e) => e.id === id))
+      .filter((e): e is Employee => Boolean(e))
   }
-  return (
+  const fallback =
     scopedEmployees.value.find(
       (e) => e.departmentId === selectedDeptId.value && e.position.includes('组长'),
-    ) ??
-    scopedEmployees.value.find((e) => e.departmentId === selectedDeptId.value) ??
-    null
-  )
+    ) ?? scopedEmployees.value.find((e) => e.departmentId === selectedDeptId.value)
+  return fallback ? [fallback] : []
 })
 
 const selectedDeptQrUrl = computed(() => {
-  if (!selectedDept.value || isUnassignedDept.value || isEnterpriseRootDept.value) return ''
+  if (!selectedDept.value || isUnassignedDept.value || !isLeafDept.value) return ''
   return departmentJoinQrImageUrl(resolvedEnterpriseId.value, selectedDept.value.id, 180)
 })
 
 const selectedDeptQrPayload = computed(() => {
-  if (!selectedDept.value || isUnassignedDept.value || isEnterpriseRootDept.value) return ''
+  if (!selectedDept.value || isUnassignedDept.value || !isLeafDept.value) return ''
   return buildDepartmentJoinQrPayload(resolvedEnterpriseId.value, selectedDept.value.id)
 })
 
@@ -297,7 +304,7 @@ const employeeRows = computed(() => {
       const onDuty = e.onDuty ?? (e.status === 'active' && punchedIn && !punchedOut)
       return {
         ...e,
-        departmentName: getDepartmentName(scopedDepartments.value, e.departmentId),
+        departmentName: getDepartmentPath(scopedDepartments.value, e.departmentId),
         onDuty,
       }
     })
@@ -309,15 +316,19 @@ function onSelect(id: string) {
 
 function onAddChild(parentId: string | null) {
   try {
-    const parent = parentId ? scopedDepartments.value.find((d) => d.id === parentId) : null
+    const resolvedParentId =
+      parentId && !isUnassignedDepartment(parentId)
+        ? parentId
+        : enterpriseRootDepartmentId(resolvedEnterpriseId.value)
+    const parent = scopedDepartments.value.find((d) => d.id === resolvedParentId) ?? null
     if (parent?.nodeType === 'leaf') {
       ElMessage.warning('叶节点下不可创建子组织')
       return
     }
-    const siblings = scopedDepartments.value.filter((d) => d.parentId === parentId)
+    const siblings = scopedDepartments.value.filter((d) => d.parentId === resolvedParentId)
     const item = store.addDepartment({
       name: '新建组织',
-      parentId,
+      parentId: resolvedParentId,
       sort: siblings.length + 1,
       enterpriseId: resolvedEnterpriseId.value,
       orgType: 'department',
@@ -435,7 +446,7 @@ function goEmployeeDetail(row: Employee) {
                   <h2 class="dept-title-row">
                     {{ selectedDept.name }}
                     <el-button
-                      v-if="!isUnassignedDept && !isEnterpriseRootDept"
+                      v-if="isLeafDept"
                       link
                       type="primary"
                       class="qr-btn"
@@ -499,12 +510,14 @@ function goEmployeeDetail(row: Employee) {
                   {{ formatShiftPeriod(selectedAttendanceGroup) }}
                 </el-descriptions-item>
                 <el-descriptions-item label="负责人">
-                  <template v-if="managerEmployee">
-                    <el-avatar :size="24" class="mgr-avatar">
-                      {{ managerEmployee.name[0] }}
-                    </el-avatar>
-                    {{ managerEmployee.name }}
-                  </template>
+                  <div v-if="managerEmployees.length" class="mgr-list">
+                    <span v-for="mgr in managerEmployees" :key="mgr.id" class="mgr-item">
+                      <el-avatar :size="24" class="mgr-avatar">
+                        {{ mgr.name[0] }}
+                      </el-avatar>
+                      {{ mgr.name }}
+                    </span>
+                  </div>
                   <span v-else class="text-muted">未设置</span>
                 </el-descriptions-item>
                 <el-descriptions-item label="排序">{{ selectedDept.sort }}</el-descriptions-item>
@@ -530,7 +543,7 @@ function goEmployeeDetail(row: Employee) {
                 style="width: 220px"
               />
               <el-button
-                v-if="!isUnassignedDept && !isEnterpriseRootDept"
+                v-if="isLeafDept"
                 type="primary"
                 @click="openAddPerson"
               >
@@ -618,7 +631,7 @@ function goEmployeeDetail(row: Employee) {
           <el-option
             v-for="emp in poolCandidates"
             :key="emp.id"
-            :label="`${emp.name}（${emp.phone || emp.employeeNo}）· ${getDepartmentName(scopedDepartments, emp.departmentId)}`"
+            :label="`${emp.name}（${emp.phone || emp.employeeNo}）· ${getDepartmentPath(scopedDepartments, emp.departmentId)}`"
             :value="emp.id"
           />
         </el-select>
@@ -771,6 +784,18 @@ function goEmployeeDetail(row: Employee) {
   font-weight: 600;
   color: #334155;
   margin: 0 0 10px;
+}
+
+.mgr-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.mgr-item {
+  display: inline-flex;
+  align-items: center;
 }
 
 .mgr-avatar {

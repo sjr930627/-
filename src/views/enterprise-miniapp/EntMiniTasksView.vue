@@ -55,7 +55,6 @@ function createEmptyForm(): TaskPublishFormModel {
     addressDetail: '',
     metadataFields: [],
     fixedPrice: 50,
-    trainingCourseId: '',
     plannedTotal: 100,
     unlimitedQuantity: false,
     longTerm: false,
@@ -283,10 +282,6 @@ function validatePublish() {
     ElMessage.warning('请填写任务内容')
     return false
   }
-  if (!form.value.regionCodes?.length || form.value.regionCodes.length < 3) {
-    ElMessage.warning('请选择省市区')
-    return false
-  }
   if (!form.value.fixedPrice || form.value.fixedPrice < 1) {
     ElMessage.warning('请填写固定单价')
     return false
@@ -348,7 +343,6 @@ function buildPayload(): Omit<
     scopeDepartmentIds: deptScope.scopeDepartmentIds,
     pricingMode: 'fixed',
     fixedPrice: form.value.fixedPrice,
-    trainingCourseId: form.value.trainingCourseId.trim() || undefined,
     unlimitedQuantity: form.value.unlimitedQuantity,
     plannedTotal: form.value.unlimitedQuantity ? undefined : form.value.plannedTotal,
     longTerm: form.value.longTerm,
@@ -544,6 +538,7 @@ function handleAction(
           <el-form label-position="top">
             <TaskPublishFormBody
               v-model="form"
+              :require-location="false"
               :provider-options="providerOptions"
               :department-options="departmentOptions"
               :workflow-options="workflowOptions"

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { getDepartmentName } from '@/utils'
+import { buildDepartmentTree, getDepartmentDescendantIds } from '@/utils'
+import { DEFAULT_WORKFORCE_ENTERPRISE_ID, isUnassignedDepartment } from '@/constants/department'
 import { enterpriseOperatorRoleId } from '@/constants/enterprise'
 import { accountHasRole } from '@/constants/account'
-import EnterpriseOwnerPicker from '@/components/enterprise/EnterpriseOwnerPicker.vue'
+import type { DepartmentTreeNode } from '@/types'
 
 const props = withDefaults(
   defineProps<{
@@ -12,7 +13,7 @@ const props = withDefaults(
     placeholder?: string
   }>(),
   {
-    placeholder: '部门树多选或搜索企业负责人',
+    placeholder: '按负责人搜索 / 部门级联选择',
   },
 )
 
@@ -21,98 +22,176 @@ const emit = defineEmits<{
 }>()
 
 const store = useAppStore()
-const pickerVisible = ref(false)
 
-const selectedOwners = computed(() =>
-  props.modelValue
-    .map((id) => store.systemAccounts.find((a) => a.id === id))
-    .filter((a): a is NonNullable<typeof a> => Boolean(a)),
+interface OwnerTreeNode {
+  id: string
+  label: string
+  isDept?: boolean
+  meta?: string
+  searchText?: string
+  children?: OwnerTreeNode[]
+}
+
+/** 运营后台权限组织（非企业灵工部门树） */
+const platformDepartments = computed(() =>
+  store
+    .getDepartmentsByEnterprise(DEFAULT_WORKFORCE_ENTERPRISE_ID)
+    .filter((d) => !isUnassignedDepartment(d.id)),
 )
 
-const operatorOptions = computed(() =>
+/** 运营后台权限账号中的企业操作员 */
+const operatorAccounts = computed(() =>
   store.systemAccounts
-    .filter((a) => accountHasRole(a, enterpriseOperatorRoleId) && a.status === 'enabled')
-    .map((a) => ({
-      id: a.id,
-      label: `${a.displayName}（${getDepartmentName(store.departments, a.departmentId)}）`,
-      searchText: `${a.displayName} ${a.username} ${a.phone ?? ''}`,
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')),
+    .filter(
+      (a) =>
+        accountHasRole(a, enterpriseOperatorRoleId) &&
+        a.status === 'enabled' &&
+        a.accountPortal !== 'enterprise' &&
+        !a.enterpriseId,
+    )
+    .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN')),
 )
 
-function onSelectChange(ids: string[]) {
-  emit('update:modelValue', ids)
+const personIdSet = computed(() => new Set(operatorAccounts.value.map((a) => a.id)))
+
+const ownerTree = computed((): OwnerTreeNode[] => {
+  const byDept = new Map<string, typeof operatorAccounts.value>()
+  for (const account of operatorAccounts.value) {
+    const deptId = account.departmentId || '__none__'
+    const list = byDept.get(deptId) ?? []
+    list.push(account)
+    byDept.set(deptId, list)
+  }
+
+  const toPersonNode = (account: (typeof operatorAccounts.value)[number]): OwnerTreeNode => ({
+    id: account.id,
+    label: account.displayName,
+    meta: account.phone || account.username,
+    searchText: `${account.displayName} ${account.username} ${account.phone ?? ''}`.toLowerCase(),
+  })
+
+  const mapDept = (node: DepartmentTreeNode): OwnerTreeNode | null => {
+    const childDepts = node.children.map(mapDept).filter((n): n is OwnerTreeNode => Boolean(n))
+    const people = (byDept.get(node.id) ?? []).map(toPersonNode)
+    byDept.delete(node.id)
+    if (!childDepts.length && !people.length) return null
+    return {
+      id: `dept:${node.id}`,
+      label: node.name,
+      isDept: true,
+      searchText: node.name.toLowerCase(),
+      children: [...childDepts, ...people],
+    }
+  }
+
+  const roots = buildDepartmentTree(platformDepartments.value)
+    .map(mapDept)
+    .filter((n): n is OwnerTreeNode => Boolean(n))
+
+  const leftovers = [...byDept.values()].flat().map(toPersonNode)
+  if (leftovers.length) {
+    roots.push({
+      id: 'dept:__unassigned__',
+      label: '未分配部门',
+      isDept: true,
+      searchText: '未分配部门',
+      children: leftovers,
+    })
+  }
+
+  return roots
+})
+
+/** 部门节点 → 该部门及下级下全部操作员 */
+function personIdsUnderDept(deptId: string): string[] {
+  if (deptId === '__unassigned__') {
+    const known = new Set(platformDepartments.value.map((d) => d.id))
+    return operatorAccounts.value
+      .filter((a) => !a.departmentId || !known.has(a.departmentId))
+      .map((a) => a.id)
+  }
+  const ids = getDepartmentDescendantIds(platformDepartments.value, deptId)
+  return operatorAccounts.value.filter((a) => ids.has(a.departmentId)).map((a) => a.id)
 }
 
-function openPicker() {
-  pickerVisible.value = true
+function filterNode(keyword: string, data: OwnerTreeNode) {
+  if (!keyword) return true
+  const kw = keyword.trim().toLowerCase()
+  if (!kw) return true
+  if (data.label.toLowerCase().includes(kw)) return true
+  if (data.searchText?.includes(kw)) return true
+  return false
 }
 
-function clearAll() {
-  emit('update:modelValue', [])
+/** 勾选部门时展开为该部门（含下级）全部人员；人员节点原样保留 */
+function normalizeToPersonIds(raw: string[] | string | null): string[] {
+  const next = Array.isArray(raw) ? raw : raw ? [raw] : []
+  const personIds = new Set<string>()
+
+  for (const id of next) {
+    if (String(id).startsWith('dept:')) {
+      for (const pid of personIdsUnderDept(String(id).slice('dept:'.length))) {
+        personIds.add(pid)
+      }
+      continue
+    }
+    if (personIdSet.value.has(id)) personIds.add(id)
+  }
+
+  return [...personIds]
+}
+
+function onSelectChange(ids: string[] | string | null) {
+  emit('update:modelValue', normalizeToPersonIds(ids))
 }
 </script>
 
 <template>
-  <div class="owner-filter">
-    <el-select
-      :model-value="modelValue"
-      multiple
-      filterable
-      collapse-tags
-      collapse-tags-tooltip
-      clearable
-      :placeholder="placeholder"
-      class="owner-select"
-      @update:model-value="onSelectChange"
-    >
-      <el-option
-        v-for="opt in operatorOptions"
-        :key="opt.id"
-        :label="opt.label"
-        :value="opt.id"
-      >
-        <span>{{ opt.label }}</span>
-      </el-option>
-    </el-select>
-    <el-button @click="openPicker">部门树</el-button>
-
-    <el-dialog
-      v-model="pickerVisible"
-      title="按权限部门选择企业负责人"
-      width="720px"
-      destroy-on-close
-      append-to-body
-    >
-      <p class="dialog-tip text-muted">
-        左侧选择权限部门树，右侧勾选账号（支持多选）；也可在右侧输入姓名/账号/手机查询。
-      </p>
-      <EnterpriseOwnerPicker :model-value="modelValue" @update:model-value="onSelectChange" />
-      <template #footer>
-        <el-button @click="clearAll">清空</el-button>
-        <el-button type="primary" @click="pickerVisible = false">
-          确定{{ selectedOwners.length ? `（已选 ${selectedOwners.length}）` : '' }}
-        </el-button>
-      </template>
-    </el-dialog>
-  </div>
+  <el-tree-select
+    :model-value="modelValue"
+    :data="ownerTree"
+    multiple
+    filterable
+    clearable
+    collapse-tags
+    collapse-tags-tooltip
+    show-checkbox
+    default-expand-all
+    :render-after-expand="false"
+    :filter-node-method="filterNode"
+    :props="{ value: 'id', label: 'label', children: 'children' }"
+    :placeholder="placeholder"
+    class="owner-tree-select"
+    @update:model-value="onSelectChange"
+  >
+    <template #default="{ data }">
+      <span class="tree-node" :class="{ 'is-dept': data.isDept }">
+        <span class="tree-label">{{ data.label }}</span>
+        <span v-if="data.meta" class="tree-meta">{{ data.meta }}</span>
+      </span>
+    </template>
+  </el-tree-select>
 </template>
 
 <style scoped>
-.owner-filter {
-  display: flex;
+.owner-tree-select {
+  width: 100%;
+}
+
+.tree-node {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.owner-select {
-  flex: 1;
-  min-width: 0;
-}
-
-.dialog-tip {
-  margin: 0 0 12px;
+  gap: 6px;
   font-size: 13px;
+}
+
+.tree-node.is-dept .tree-label {
+  color: #606266;
+  font-weight: 600;
+}
+
+.tree-meta {
+  color: #909399;
+  font-size: 12px;
 }
 </style>

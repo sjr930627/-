@@ -2,7 +2,6 @@
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { enterpriseStatusMap } from '@/constants/enterprise'
 import { resolveServiceProviderForEnterprise } from '@/services/billSettlement'
 import {
   countConfiguredDepartmentSettlements,
@@ -14,7 +13,6 @@ const store = useAppStore()
 const router = useRouter()
 
 const keyword = ref('')
-const statusFilter = ref<'all' | 'active' | 'expiring' | 'terminated'>('all')
 
 const tableData = computed(() =>
   store.enterprises
@@ -41,8 +39,6 @@ const tableData = computed(() =>
       return {
         ...ent,
         providerName: provider?.name ?? '—',
-        statusLabel: enterpriseStatusMap[ent.status].label,
-        statusType: enterpriseStatusMap[ent.status].type,
         deptCount: departments.length,
         taskTypeCount: taskTypes.length,
         hourlyConfigured,
@@ -50,12 +46,10 @@ const tableData = computed(() =>
       }
     })
     .filter((row) => {
-      if (statusFilter.value !== 'all' && row.status !== statusFilter.value) return false
       if (!keyword.value.trim()) return true
       const kw = keyword.value.trim().toLowerCase()
       return (
         row.name.toLowerCase().includes(kw) ||
-        row.code.toLowerCase().includes(kw) ||
         row.providerName.toLowerCase().includes(kw)
       )
     }),
@@ -80,20 +74,20 @@ function openDetail(row: { id: string }) {
     <div class="toolbar">
       <el-input
         v-model="keyword"
-        placeholder="搜索企业名称、编号或服务商"
+        placeholder="搜索企业名称或服务商"
         clearable
         style="width: 280px"
       />
-      <el-radio-group v-model="statusFilter">
-        <el-radio-button value="all">全部</el-radio-button>
-        <el-radio-button value="active">合作中</el-radio-button>
-        <el-radio-button value="expiring">即将到期</el-radio-button>
-        <el-radio-button value="terminated">已终止</el-radio-button>
-      </el-radio-group>
     </div>
 
     <el-table :data="tableData" border stripe>
-      <el-table-column prop="name" label="企业名称" min-width="180" />
+      <el-table-column label="企业名称" min-width="180">
+        <template #default="{ row }">
+          <el-button link type="primary" class="name-link" @click="openDetail(row)">
+            {{ row.name }}
+          </el-button>
+        </template>
+      </el-table-column>
       <el-table-column prop="code" label="企业编号" width="140" />
       <el-table-column prop="providerName" label="服务商" min-width="180" show-overflow-tooltip />
       <el-table-column label="工时（已配部门价）" width="150" align="center">
@@ -106,14 +100,9 @@ function openDetail(row: { id: string }) {
           {{ row.taskConfigured }} / {{ row.taskTypeCount }}
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="100">
-        <template #default="{ row }">
-          <el-tag :type="row.statusType" size="small">{{ row.statusLabel }}</el-tag>
-        </template>
-      </el-table-column>
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row)">配置</el-button>
+          <el-button link type="primary" @click="openDetail(row)">查看</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -126,5 +115,11 @@ function openDetail(row: { id: string }) {
   gap: 12px;
   margin-bottom: 16px;
   align-items: center;
+}
+
+.name-link {
+  padding: 0;
+  height: auto;
+  font-weight: 500;
 }
 </style>

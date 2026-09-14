@@ -1,5 +1,5 @@
 const STORAGE_PREFIX = 'shift-attendance:'
-const DEMO_BRANDING_VERSION = 'sinopec-v26'
+const DEMO_BRANDING_VERSION = 'sinopec-v30'
 
 const DEMO_BRANDING_KEYS = [
   'enterprises',
@@ -55,6 +55,20 @@ export function ensureDemoBrandingVersion() {
   localStorage.removeItem(`${STORAGE_PREFIX}courseLearningRecordsVersion`)
   localStorage.removeItem(`${STORAGE_PREFIX}examQuestionsVersion`)
   localStorage.setItem(versionKey, DEMO_BRANDING_VERSION)
+}
+
+/** 补齐缺失的演示合同（兼容旧本地缓存未含草稿样例） */
+export function ensureServiceContracts(
+  list: import('@/types').ServiceContract[],
+  seed: import('@/types').ServiceContract[],
+): import('@/types').ServiceContract[] {
+  const ids = new Set(list.map((c) => c.id))
+  const missing = seed.filter((s) => !ids.has(s.id)).map((s) => ({
+    ...s,
+    versions: s.versions ? s.versions.map((v) => ({ ...v })) : undefined,
+  }))
+  if (!missing.length) return list
+  return [...missing, ...list]
 }
 
 /** 补齐开票抬头 id / 默认标记（兼容旧本地数据） */
@@ -293,6 +307,21 @@ export function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
+/** 根据 18 位身份证号计算周岁年龄 */
+export function calcAgeFromIdCard(idCard?: string | null): number | undefined {
+  const id = (idCard ?? '').trim()
+  if (!/^\d{17}[\dXx]$/.test(id)) return undefined
+  const y = Number(id.slice(6, 10))
+  const m = Number(id.slice(10, 12))
+  const d = Number(id.slice(12, 14))
+  if (!y || m < 1 || m > 12 || d < 1 || d > 31) return undefined
+  const today = new Date()
+  let age = today.getFullYear() - y
+  const monthDiff = today.getMonth() + 1 - m
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < d)) age -= 1
+  return age >= 0 && age <= 150 ? age : undefined
+}
+
 export function formatDate(date: Date): string {
   const y = date.getFullYear()
   const m = String(date.getMonth() + 1).padStart(2, '0')
@@ -390,6 +419,119 @@ export function getDepartmentName(departments: import('@/types').Department[], i
   return departments.find((d) => d.id === id)?.name ?? '-'
 }
 
+/** 部门级联路径展示，如：生产部 / 朝阳营业厅 */
+export function getDepartmentPath(
+  departments: import('@/types').Department[],
+  id: string,
+  separator = ' / ',
+): string {
+  if (!id) return '—'
+  const byId = new Map(departments.map((d) => [d.id, d]))
+  const names: string[] = []
+  let cur = byId.get(id)
+  const guard = new Set<string>()
+  while (cur && !guard.has(cur.id)) {
+    guard.add(cur.id)
+    names.unshift(cur.name)
+    cur = cur.parentId ? byId.get(cur.parentId) : undefined
+  }
+  return names.length ? names.join(separator) : '—'
+}
+
+export interface DepartmentCascaderOption {
+  value: string
+  label: string
+  disabled?: boolean
+  children?: DepartmentCascaderOption[]
+}
+
+/**
+ * 构建部门级联选项。
+ * leafOnly 时：仅叶子可选；有子节点的中间层不设 disabled（否则 Element Plus 无法点选深层叶子）。
+ * 无子节点的 branch 标记 disabled；allowIds 可强制放开（编辑兼容）。
+ */
+export function buildDepartmentCascaderOptions(
+  departments: import('@/types').Department[],
+  options?: {
+    leafOnly?: boolean
+    /** 返回 true 表示排除该部门 */
+    exclude?: (dept: import('@/types').Department) => boolean
+    /** 即使非叶子也允许选择（编辑存量数据） */
+    allowIds?: string[]
+  },
+): DepartmentCascaderOption[] {
+  const leafOnly = options?.leafOnly ?? true
+  const allow = new Set((options?.allowIds || []).filter(Boolean))
+  const list = options?.exclude
+    ? departments.filter((d) => !options.exclude!(d))
+    : departments
+  const tree = buildDepartmentTree(list)
+
+  const mapNode = (
+    node: import('@/types').DepartmentTreeNode,
+  ): DepartmentCascaderOption => {
+    const children = node.children.length
+      ? node.children.map(mapNode)
+      : undefined
+    const hasChildren = Boolean(children?.length)
+    // 中间层绝不能 disabled，否则深层叶子无法选中
+    let disabled = false
+    if (leafOnly && !hasChildren && !allow.has(node.id)) {
+      disabled = node.nodeType === 'branch'
+    }
+    return {
+      value: node.id,
+      label: node.name,
+      disabled,
+      children,
+    }
+  }
+
+  return tree.map(mapNode)
+}
+
+/** 部门负责人 ID 列表（兼容旧单选字段） */
+export function getDepartmentManagerIds(dept?: {
+  managerEmployeeId?: string | null
+  managerEmployeeIds?: string[]
+} | null): string[] {
+  if (!dept) return []
+  if (dept.managerEmployeeIds?.length) {
+    return [...new Set(dept.managerEmployeeIds.filter(Boolean))]
+  }
+  if (dept.managerEmployeeId) return [dept.managerEmployeeId]
+  return []
+}
+
+/** 写入负责人时同步单/多选字段 */
+export function normalizeDepartmentManagers(ids: string[]): {
+  managerEmployeeIds: string[]
+  managerEmployeeId: string | null
+} {
+  const managerEmployeeIds = [...new Set(ids.filter(Boolean))]
+  return {
+    managerEmployeeIds,
+    managerEmployeeId: managerEmployeeIds[0] ?? null,
+  }
+}
+
+/** 部门负责人姓名（按部门配置带出） */
+export function getDepartmentManagerNames(
+  dept:
+    | {
+        managerEmployeeId?: string | null
+        managerEmployeeIds?: string[]
+      }
+    | null
+    | undefined,
+  employees: { id: string; name: string }[],
+): string {
+  const ids = getDepartmentManagerIds(dept)
+  if (!ids.length) return ''
+  const byId = new Map(employees.map((e) => [e.id, e.name]))
+  return ids.map((id) => byId.get(id)).filter(Boolean).join('、')
+}
+
 export function getDepartmentDescendantIds(
   departments: import('@/types').Department[],
   rootId: string,
@@ -418,6 +560,23 @@ export function countDepartmentEmployees(
     ? getDepartmentDescendantIds(departments, departmentId)
     : new Set([departmentId])
   return employees.filter((e) => ids.has(e.departmentId) && e.status !== 'resigned').length
+}
+
+/** 部门排班 + 抢班人数合计（不含已离职） */
+export function countDepartmentScheduleAndGrab(
+  departments: import('@/types').Department[],
+  employees: import('@/types').Employee[],
+  departmentId: string,
+  includeDescendants = false,
+): number {
+  const ids = includeDescendants
+    ? getDepartmentDescendantIds(departments, departmentId)
+    : new Set([departmentId])
+  return employees.filter((e) => {
+    if (!ids.has(e.departmentId) || e.status === 'resigned') return false
+    const category = e.personnelCategory ?? 'schedule'
+    return category === 'schedule' || category === 'grab'
+  }).length
 }
 
 export function countDepartmentAccounts(

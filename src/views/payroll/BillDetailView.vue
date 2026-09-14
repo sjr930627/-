@@ -396,6 +396,23 @@ async function voidBill() {
   }
 }
 
+async function rejectBill() {
+  if (!bill.value) return
+  try {
+    const { value } = await ElMessageBox.prompt('请输入驳回原因', '驳回账单', {
+      confirmButtonText: '确认驳回',
+      cancelButtonText: '取消',
+      inputPlaceholder: '驳回原因',
+      inputValidator: (val) => !!val?.trim() || '请填写驳回原因',
+    })
+    store.rejectSettlementBill(bill.value.id, value.trim())
+    ElMessage.success('账单已驳回，已退回服务商待提交')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '操作失败')
+  }
+}
+
 function viewBillingRule() {
   if (bill.value?.billingRuleId) {
     router.push({
@@ -446,6 +463,14 @@ function viewBillingRule() {
           @click="voidBill"
         >
           作废
+        </el-button>
+        <el-button
+          v-if="isEnterprise && bill.status === 'pending_confirm'"
+          type="danger"
+          plain
+          @click="rejectBill"
+        >
+          驳回
         </el-button>
         <el-button
           v-if="isEnterprise && bill.status === 'pending_confirm'"
@@ -534,6 +559,16 @@ function viewBillingRule() {
         </div>
       </el-col>
     </el-row>
+
+    <el-alert
+      v-if="bill.rejectReason && bill.status === 'pending_submit'"
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 16px"
+      :title="`企业已驳回：${bill.rejectReason}`"
+      :description="bill.rejectedAt ? `驳回时间 ${formatTime(bill.rejectedAt)}` : undefined"
+    />
 
     <div class="page-card section">
       <h3 class="section-title">基本信息</h3>

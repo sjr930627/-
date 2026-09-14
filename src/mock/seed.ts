@@ -48,14 +48,14 @@ export const seedDepartments: Department[] = [
     sort: 1,
     nodeType: 'leaf',
     code: 'ORG-UNASSIGNED',
-    description: '管理待申请 / 已申请入驻的人员，审批通过后分配部门与人员 ID',
+    description: '管理待申请 / 已申请入驻的人员，审批通过后分配部门与岗位',
   },
   {
     id: 'dept_hr',
     name: '人事行政部',
     parentId: 'dept_root',
     sort: 1,
-    nodeType: 'branch',
+    nodeType: 'leaf',
     code: 'ORG-HR',
   },
   {
@@ -72,9 +72,10 @@ export const seedDepartments: Department[] = [
     name: '中国移动朝阳营业厅',
     parentId: 'dept_prod',
     sort: 1,
-    nodeType: 'branch',
+    nodeType: 'leaf',
     code: 'ORG-OP-CY',
     managerEmployeeId: 'emp_001',
+    managerEmployeeIds: ['emp_001'],
     attendanceGroupId: 'ag_factory',
     description: '负责朝阳区域营业厅运营与客户服务',
     /** 16:9 横版，推荐 960×540 / 1280×720 */
@@ -85,6 +86,7 @@ export const seedDepartments: Department[] = [
     name: '生产二车间',
     parentId: 'dept_prod',
     sort: 2,
+    nodeType: 'leaf',
     code: 'ORG-OP-02',
   },
   {
@@ -92,6 +94,7 @@ export const seedDepartments: Department[] = [
     name: '物流部',
     parentId: 'dept_root',
     sort: 3,
+    nodeType: 'leaf',
     code: 'ORG-LG',
   },
 ]
@@ -158,7 +161,7 @@ export const seedEmployees: Employee[] = [
     status: 'active',
     phone: '13800001001',
     gender: 'male',
-    age: 32,
+    age: 36,
     email: 'zhangwei@example.com',
     address: '浙江省杭州市西湖区文三路',
     realNameVerified: true,
@@ -193,7 +196,7 @@ export const seedEmployees: Employee[] = [
     status: 'active',
     phone: '13800001003',
     gender: 'male',
-    age: 28,
+    age: 34,
     personnelCategory: 'grab',
     idCardNo: '330102199203033456',
     realNameVerified: true,
@@ -211,7 +214,7 @@ export const seedEmployees: Employee[] = [
     status: 'active',
     phone: '13800001004',
     gender: 'female',
-    age: 26,
+    age: 31,
     personnelCategory: 'grab',
     idCardNo: '330102199504055678',
     realNameVerified: true,
@@ -229,7 +232,7 @@ export const seedEmployees: Employee[] = [
     status: 'active',
     phone: '13800001005',
     gender: 'male',
-    age: 34,
+    age: 37,
     personnelCategory: 'grab',
     idCardNo: '330102198811117890',
     realNameVerified: true,
@@ -260,7 +263,7 @@ export const seedEmployees: Employee[] = [
     status: 'active',
     phone: '13800001007',
     gender: 'male',
-    age: 36,
+    age: 38,
     personnelCategory: 'grab',
     idCardNo: '330102198804048901',
     realNameVerified: true,
@@ -278,7 +281,7 @@ export const seedEmployees: Employee[] = [
     status: 'active',
     phone: '13800001008',
     gender: 'male',
-    age: 29,
+    age: 33,
     personnelCategory: 'grab',
     idCardNo: '330102199305056012',
     realNameVerified: true,
@@ -309,7 +312,7 @@ export const seedEmployees: Employee[] = [
     status: 'active',
     phone: '13800001010',
     gender: 'male',
-    age: 31,
+    age: 34,
     personnelCategory: 'grab',
     idCardNo: '330102199207078234',
     realNameVerified: true,
@@ -501,6 +504,14 @@ export const seedAssignmentsWithDemo: ScheduleAssignment[] = (() => {
     asn.published = true
     asn.confirmStatus = 'confirmed'
   })
+  // Demo 锚定日抢班出勤：张伟早班改为抢班（关联当日抢班班次）
+  const todayGrabAsn = items.find((a) => a.employeeId === 'emp_001' && a.date === '2026-07-27')
+  if (todayGrabAsn) {
+    todayGrabAsn.fromGrabSlotId = 'gs_today_0727'
+    todayGrabAsn.shiftId = 'shift_morning'
+    todayGrabAsn.published = true
+    todayGrabAsn.confirmStatus = 'confirmed'
+  }
   // emp_005 / emp_007 属自由打卡组（ag_sales），当日不排班
   const grabAsn = items.find((a) => a.employeeId === 'emp_001' && a.date === '2026-07-28')
   if (grabAsn) {
@@ -874,6 +885,20 @@ export const seedCancelShiftRequests: CancelShiftRequest[] = [
     reviewedBy: '排班管理员',
     reviewedAt: '2026-07-28T09:30:00.000Z',
     reviewNote: '单人取消',
+  },
+  {
+    id: 'cancel_005',
+    employeeId: 'emp_002',
+    date: '2026-08-06',
+    shiftId: 'shift_afternoon',
+    teamId: 'team_a',
+    reason: '临时行程冲突，申请取消该抢班班次',
+    status: 'pending',
+    initiatedBy: 'employee',
+    source: 'grab',
+    cancelScope: 'person',
+    grabSlotId: 'gs_003',
+    createdAt: '2026-08-01T10:20:00.000Z',
   },
   {
     id: 'cancel_004',

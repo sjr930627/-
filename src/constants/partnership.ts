@@ -78,7 +78,8 @@ export const providerStatusMap: Record<
   { label: string; type: 'success' | 'warning' | 'info' }
 > = {
   cooperating: { label: '合作中', type: 'success' },
-  suspended: { label: '已暂停', type: 'warning' },
+  /** @deprecated 界面已合并为合作中/已终止，兼容旧数据 */
+  suspended: { label: '已终止', type: 'info' },
   terminated: { label: '已终止', type: 'info' },
 }
 
@@ -200,6 +201,15 @@ export const settlementCycleMap: Record<import('@/types').SettlementCycle, strin
   monthly: '按月结算',
   quarterly: '按季结算',
 }
+
+/** 合同新增/编辑可选结算周期（不含按季） */
+export const settlementCycleFormOptions: {
+  value: Exclude<import('@/types').SettlementCycle, 'quarterly'>
+  label: string
+}[] = [
+  { value: 'weekly', label: settlementCycleMap.weekly },
+  { value: 'monthly', label: settlementCycleMap.monthly },
+]
 
 export function formatSettlementConfig(contract: ServiceContract): string {
   if (contract.settlementCycle === 'weekly') {

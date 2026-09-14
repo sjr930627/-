@@ -75,7 +75,7 @@ const menuGroups: MenuGroup[] = [
       { path: '/enterprise/grab-attendance-data', title: '考勤数据', icon: 'DataBoard' },
       {
         path: '/enterprise/grab-attendance-exceptions',
-        title: '考勤审批记录',
+        title: '考勤审批',
         icon: 'WarningFilled',
         badgeKey: 'grabAttendance',
       },
@@ -87,7 +87,7 @@ const menuGroups: MenuGroup[] = [
     icon: 'List',
     children: [
       { path: '/enterprise/task/publish', title: '任务发布', icon: 'Promotion' },
-      { path: '/enterprise/task/progress', title: '任务进度', icon: 'DataLine' },
+      { path: '/enterprise/task/progress', title: '任务管理', icon: 'DataLine' },
     ],
   },
   {
@@ -110,14 +110,14 @@ const menuGroups: MenuGroup[] = [
   },
   {
     index: 'statistics',
-    title: '分析统计',
+    title: '数据分析',
     icon: 'DataAnalysis',
     children: [
-      { path: '/enterprise/statistics/overview', title: '概览看板', icon: 'Odometer' },
-      { path: '/enterprise/bi/monitor', title: '数据监控中心', icon: 'Monitor' },
+      { path: '/enterprise/statistics/shift', title: '班次统计', icon: 'Calendar' },
       { path: '/enterprise/statistics/attendance', title: '考勤分析', icon: 'Timer' },
       { path: '/enterprise/statistics/task', title: '任务分析', icon: 'Finished' },
-      { path: '/enterprise/statistics/settlement', title: '结算分析', icon: 'Wallet' },
+      { path: '/enterprise/statistics/settlement/enterprise', title: '企业结算分析', icon: 'Wallet' },
+      { path: '/enterprise/statistics/settlement/worker', title: '灵工结算分析', icon: 'Money' },
     ],
   },
 ]

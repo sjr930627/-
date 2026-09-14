@@ -28,7 +28,7 @@ const router = useRouter()
 const store = useAppStore()
 const { runEnterpriseAction } = useEnterpriseInstanceAction()
 
-const includeOpLogs = ref(true)
+const includeOpLogs = true
 const cancelReason = ref('')
 const enterpriseForm = reactive<Record<string, string | number | boolean>>({})
 const actionLoading = ref(false)
@@ -61,7 +61,7 @@ const lifecycleRecords = computed(() =>
         instance.value,
         task.value,
         workflow.value,
-        includeOpLogs.value,
+        includeOpLogs,
       )
     : [],
 )
@@ -164,7 +164,7 @@ async function executeCancel() {
       <el-breadcrumb separator=">">
         <el-breadcrumb-item>任务管理</el-breadcrumb-item>
         <el-breadcrumb-item @click="goBack">
-          {{ isEnterprise ? '任务进度查看' : '任务管理' }}
+          任务管理
         </el-breadcrumb-item>
         <el-breadcrumb-item>认领详情</el-breadcrumb-item>
       </el-breadcrumb>
@@ -197,6 +197,9 @@ async function executeCancel() {
               {{ statusMeta.label }}
             </el-descriptions-item>
             <el-descriptions-item label="企业名称">{{ instance.enterpriseName }}</el-descriptions-item>
+            <el-descriptions-item label="服务商">
+              {{ task.serviceProviderName || '—' }}
+            </el-descriptions-item>
             <el-descriptions-item label="任务流程">
               <el-tag size="small" type="info">{{ workflow.name }}</el-tag>
             </el-descriptions-item>
@@ -231,7 +234,6 @@ async function executeCancel() {
             </div>
             <div class="timeline-toolbar">
               <span class="record-count">{{ lifecycleRecords.length }} 条记录</span>
-              <el-switch v-model="includeOpLogs" active-text="含操作日志" />
             </div>
           </div>
 

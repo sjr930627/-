@@ -32,8 +32,8 @@ export const trainingMaterialStatusMap: Record<TrainingMaterialStatus, string> =
 }
 
 export const courseStudyModeOptions: { value: CourseStudyMode; label: string }[] = [
-  { value: 'sequential', label: '必须全部学完' },
-  { value: 'free', label: '可跳读' },
+  { value: 'required', label: '必修' },
+  { value: 'optional', label: '非必修' },
 ]
 
 export const courseScopeTypeOptions: { value: CourseScopeType; label: string }[] = [
@@ -42,10 +42,13 @@ export const courseScopeTypeOptions: { value: CourseScopeType; label: string }[]
   { value: 'tag', label: '按标签' },
 ]
 
-export const courseGateOptions = [
+export const examGateOptions = [
   { key: 'requireExamPassForSchedule' as const, label: '考核通过后才可排班/抢班' },
   { key: 'requireExamPassForTask' as const, label: '考核通过后才可接任务' },
 ]
+
+/** @deprecated 使用 examGateOptions */
+export const courseGateOptions = examGateOptions
 
 export const courseStatusMap: Record<CourseStatus, string> = {
   draft: '草稿',
@@ -116,6 +119,16 @@ export function getMaterialCategoryLabel(
   const custom = categories?.find((c) => c.id === cat || c.name === cat)
   if (custom) return custom.name
   return trainingMaterialCategoryOptions.find((o) => o.value === cat)?.label ?? cat
+}
+
+/** 题目配图列表（兼容旧单图 imageUrl） */
+export function getExamQuestionImageUrls(q: {
+  imageUrl?: string
+  imageUrls?: string[]
+}): string[] {
+  if (q.imageUrls?.length) return q.imageUrls.filter(Boolean)
+  if (q.imageUrl) return [q.imageUrl]
+  return []
 }
 
 export function formatFileSize(bytes: number) {

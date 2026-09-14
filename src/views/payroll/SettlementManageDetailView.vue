@@ -11,6 +11,7 @@ import {
   formatSettlementUnitPrice,
   settlementManageTypeMap,
   slipEnterpriseLabel,
+  slipProviderLabel,
 } from '@/constants/settlementManage'
 
 const route = useRoute()
@@ -66,6 +67,7 @@ function formatTime(iso?: string) {
     <el-descriptions :column="4" border class="summary-desc">
       <el-descriptions-item label="结算单号">{{ slip.slipNo }}</el-descriptions-item>
       <el-descriptions-item label="企业">{{ slipEnterpriseLabel(slip) }}</el-descriptions-item>
+      <el-descriptions-item label="服务商">{{ slipProviderLabel(slip) }}</el-descriptions-item>
       <el-descriptions-item label="类型">{{ settlementManageTypeMap[slip.type] }}</el-descriptions-item>
       <el-descriptions-item label="发薪时间">{{ formatTime(slip.settledAt) }}</el-descriptions-item>
       <el-descriptions-item label="人数">{{ slip.workerCount }}</el-descriptions-item>
@@ -78,16 +80,17 @@ function formatTime(iso?: string) {
     <h3 class="section-title">发薪明细</h3>
 
     <el-table v-if="isImport" :data="tableData" border stripe>
-      <el-table-column prop="enterpriseName" label="企业" min-width="160" />
       <el-table-column prop="phone" label="手机号" min-width="140">
         <template #default="{ row }">{{ row.phone || '—' }}</template>
       </el-table-column>
       <el-table-column prop="employeeName" label="姓名" width="100" />
+      <el-table-column label="部门" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.departmentName || '—' }}</template>
+      </el-table-column>
       <el-table-column prop="amountLabel" label="发薪金额" width="130" align="right" />
     </el-table>
 
     <el-table v-else :data="tableData" border stripe>
-      <el-table-column prop="enterpriseName" label="企业" min-width="160" />
       <el-table-column prop="employeeName" label="灵工" width="100" />
       <el-table-column prop="phone" label="手机号" width="130">
         <template #default="{ row }">{{ row.phone || '—' }}</template>

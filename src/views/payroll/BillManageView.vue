@@ -8,10 +8,9 @@ import {
   formatBillPayerEnterpriseName,
   formatMoney,
   formatPeriod,
-  resolveBillPayerSubjectType,
   resolveBillStatusMeta,
 } from '@/constants/payrollBill'
-import { isUnassignedDepartment } from '@/constants/department'
+import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
 import type { SettlementBill, SettlementBillSourceType } from '@/types'
 import {
   billingRulesForEnterprise,
@@ -27,6 +26,7 @@ const router = useRouter()
 const { isEnterprise, pathPrefix } = usePortal()
 
 const statusFilter = ref<'all' | SettlementBill['status']>('all')
+const billNoKeyword = ref('')
 const keyword = ref('')
 
 watch(
@@ -42,21 +42,17 @@ const saving = ref(false)
 const uploadRef = ref<UploadInstance>()
 const importFile = ref<File | null>(null)
 
-const confirmVisible = ref(false)
-const confirming = ref(false)
-const confirmingBill = ref<SettlementBill | null>(null)
-const confirmForm = ref({
-  payerSubjectType: 'self' as 'self' | 'other',
-  payerEnterpriseName: '',
-  payerCreditCode: '',
-})
+const paymentVisible = ref(false)
+const paying = ref(false)
+const payingBill = ref<SettlementBill | null>(null)
+const voucherFile = ref('')
 
 /** 部门选择：all = 全公司，其它为部门 id */
 const BILL_DEPT_ALL = 'all'
 
 const form = ref({
   enterpriseId: '',
-  departmentKey: BILL_DEPT_ALL,
+  departmentKeys: [BILL_DEPT_ALL] as string[],
   payerSubjectType: 'self' as 'self' | 'other',
   payerEnterpriseName: '',
   payerCreditCode: '',
@@ -86,32 +82,50 @@ const departmentOptions = computed(() => {
       (d) =>
         d.enterpriseId === form.value.enterpriseId &&
         !isUnassignedDepartment(d.id) &&
-        d.orgType !== 'enterprise',
+        !isEnterpriseRootDepartment(d),
     )
     .sort((a, b) => a.sort - b.sort || a.name.localeCompare(b.name, 'zh-CN'))
 })
 
 function resolveDepartmentPayload() {
-  if (form.value.departmentKey === BILL_DEPT_ALL) {
+  const keys = form.value.departmentKeys.filter(Boolean)
+  if (!keys.length || keys.includes(BILL_DEPT_ALL)) {
     return {
       departmentScope: 'all' as const,
       departmentId: undefined,
+      departmentIds: undefined,
       departmentName: '全公司',
     }
   }
-  const dept = store.departments.find((d) => d.id === form.value.departmentKey)
-  if (!dept) throw new Error('请选择部门')
+  const depts = keys
+    .map((id) => store.departments.find((d) => d.id === id))
+    .filter((d): d is NonNullable<typeof d> => Boolean(d))
+  if (!depts.length) throw new Error('请选择部门')
   return {
     departmentScope: 'department' as const,
-    departmentId: dept.id,
-    departmentName: dept.name,
+    departmentId: depts[0].id,
+    departmentIds: depts.map((d) => d.id),
+    departmentName: depts.map((d) => d.name).join('、'),
   }
+}
+
+function onDepartmentKeysChange(keys: string[]) {
+  if (!keys.length) {
+    form.value.departmentKeys = [BILL_DEPT_ALL]
+    return
+  }
+  const last = keys[keys.length - 1]
+  if (last === BILL_DEPT_ALL) {
+    form.value.departmentKeys = [BILL_DEPT_ALL]
+    return
+  }
+  form.value.departmentKeys = keys.filter((k) => k !== BILL_DEPT_ALL)
 }
 
 watch(
   () => form.value.enterpriseId,
   (enterpriseId) => {
-    form.value.departmentKey = BILL_DEPT_ALL
+    form.value.departmentKeys = [BILL_DEPT_ALL]
     const rules = availableRules.value
     form.value.billingRuleId = rules.find((r) => r.isDefault)?.id ?? rules[0]?.id ?? ''
     const templates = availableImportTemplates.value
@@ -144,10 +158,11 @@ const tableData = computed(() =>
     .filter((b) => {
       if (isEnterprise.value && b.enterpriseId !== store.currentEnterprise?.id) return false
       if (statusFilter.value !== 'all' && b.status !== statusFilter.value) return false
+      const billNoKw = billNoKeyword.value.trim().toLowerCase()
+      if (billNoKw && !b.billNo.toLowerCase().includes(billNoKw)) return false
       if (!keyword.value.trim()) return true
       const kw = keyword.value.trim().toLowerCase()
       return (
-        b.billNo.toLowerCase().includes(kw) ||
         b.enterpriseName.includes(kw) ||
         (b.serviceProviderName ?? '').includes(kw)
       )
@@ -166,6 +181,11 @@ const tableData = computed(() =>
         payerDisplayName: formatBillPayerEnterpriseName(b, companyName),
         statusLabel: meta.label,
         statusType: meta.type,
+        submittedAtLabel: b.pushedAt
+          ? new Date(b.pushedAt).toLocaleString('zh-CN')
+          : b.status === 'pending_submit'
+            ? '—'
+            : new Date(b.createdAt).toLocaleString('zh-CN'),
       }
     })
     .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd)),
@@ -175,68 +195,12 @@ function openDetail(row: SettlementBill) {
   router.push(`${pathPrefix.value}/payroll/bills/${row.id}`)
 }
 
-function onConfirmPayerSubjectChange(val: string | number | boolean | undefined) {
-  if (!confirmingBill.value || val !== 'self') return
-  const company = store.enterprises.find((e) => e.id === confirmingBill.value!.enterpriseId)
-  if (!company) return
-  confirmForm.value.payerEnterpriseName = company.name
-  confirmForm.value.payerCreditCode = company.creditCode ?? ''
-}
-
 function onCreatePayerSubjectChange(val: string | number | boolean | undefined) {
   if (val !== 'self') return
   const enterprise = store.enterprises.find((e) => e.id === form.value.enterpriseId)
   if (!enterprise) return
   form.value.payerEnterpriseName = enterprise.name
   form.value.payerCreditCode = enterprise.creditCode ?? ''
-}
-
-function confirmBill(row: SettlementBill) {
-  confirmingBill.value = row
-  const company =
-    store.enterprises.find((e) => e.id === row.enterpriseId)?.name ?? row.enterpriseName
-  const subjectType = resolveBillPayerSubjectType(row)
-  confirmForm.value = {
-    payerSubjectType: subjectType,
-    payerEnterpriseName:
-      subjectType === 'self' ? company : row.payerEnterpriseName ?? company,
-    payerCreditCode:
-      subjectType === 'self'
-        ? store.enterprises.find((e) => e.id === row.enterpriseId)?.creditCode ??
-          row.payerCreditCode ??
-          ''
-        : row.payerCreditCode ?? '',
-  }
-  confirmVisible.value = true
-}
-
-async function submitConfirmBill() {
-  if (!confirmingBill.value) return
-  confirming.value = true
-  try {
-    const company =
-      store.enterprises.find((e) => e.id === confirmingBill.value!.enterpriseId) ?? null
-    const subjectType = confirmForm.value.payerSubjectType
-    const payerEnterpriseName =
-      subjectType === 'self'
-        ? company?.name ?? confirmingBill.value.enterpriseName
-        : confirmForm.value.payerEnterpriseName.trim()
-    const payerCreditCode =
-      subjectType === 'self'
-        ? company?.creditCode ?? confirmForm.value.payerCreditCode
-        : confirmForm.value.payerCreditCode
-    store.confirmSettlementBill(confirmingBill.value.id, {
-      payerSubjectType: subjectType,
-      payerEnterpriseName,
-      payerCreditCode,
-    })
-    confirmVisible.value = false
-    ElMessage.success('账单已确认，状态已更新为待付款')
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '操作失败')
-  } finally {
-    confirming.value = false
-  }
 }
 
 async function voidBill(row: SettlementBill) {
@@ -253,12 +217,27 @@ async function voidBill(row: SettlementBill) {
   }
 }
 
+async function submitBill(row: SettlementBill) {
+  try {
+    await ElMessageBox.confirm(
+      `确定提交账单「${row.billNo}」至企业确认？`,
+      '提交账单',
+      { type: 'warning' },
+    )
+    store.submitSettlementBill(row.id)
+    ElMessage.success('账单已提交，等待企业确认')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '提交失败')
+  }
+}
+
 function resetForm() {
   const enterpriseId = store.enterprises[0]?.id ?? ''
   const enterprise = store.enterprises.find((e) => e.id === enterpriseId)
   form.value = {
     enterpriseId,
-    departmentKey: BILL_DEPT_ALL,
+    departmentKeys: [BILL_DEPT_ALL],
     payerSubjectType: 'self',
     payerEnterpriseName: enterprise?.name ?? '',
     payerCreditCode: enterprise?.creditCode ?? '',
@@ -288,7 +267,7 @@ function handleFileChange(file: UploadFile) {
 
 async function buildBillPayload() {
   if (!form.value.enterpriseId) throw new Error('请选择企业')
-  if (!form.value.departmentKey) throw new Error('请选择部门')
+  if (!form.value.departmentKeys.length) throw new Error('请选择部门')
   if (!form.value.periodRange?.[0] || !form.value.periodRange?.[1]) {
     throw new Error('请选择结算周期')
   }
@@ -395,6 +374,34 @@ function applyInvoice(row: SettlementBill) {
     query: { billId: row.id },
   })
 }
+
+function onExport() {
+  ElMessage.success(`已导出 ${tableData.value.length} 条账单（演示）`)
+}
+
+function openPayment(row: SettlementBill) {
+  payingBill.value = row
+  voucherFile.value = ''
+  paymentVisible.value = true
+}
+
+function submitPayment() {
+  if (!payingBill.value) return
+  if (!voucherFile.value.trim()) {
+    ElMessage.warning('请上传付款凭证')
+    return
+  }
+  paying.value = true
+  try {
+    store.submitBillPayment(payingBill.value.id, voucherFile.value.trim())
+    paymentVisible.value = false
+    ElMessage.success('付款已确认，账单状态为已付款')
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '提交失败')
+  } finally {
+    paying.value = false
+  }
+}
 </script>
 
 <template>
@@ -410,16 +417,25 @@ function applyInvoice(row: SettlementBill) {
           }}
         </p>
       </div>
-      <el-button v-if="!isEnterprise" type="primary" @click="openCreate">新增账单</el-button>
+      <div class="header-actions">
+        <el-button @click="onExport">导出</el-button>
+        <el-button v-if="!isEnterprise" type="primary" @click="openCreate">新增账单</el-button>
+      </div>
     </div>
 
     <div class="page-toolbar">
       <el-input
+        v-model="billNoKeyword"
+        placeholder="账单编号"
+        clearable
+        style="width: 200px"
+      />
+      <el-input
         v-model="keyword"
-        :placeholder="isEnterprise ? '搜索账单编号、服务商' : '搜索账单编号、企业、服务商'"
+        :placeholder="isEnterprise ? '搜索服务商' : '搜索企业、服务商'"
         clearable
         prefix-icon="Search"
-        style="width: 280px"
+        style="width: 240px"
       />
       <el-radio-group v-model="statusFilter">
         <el-radio-button value="all">全部</el-radio-button>
@@ -438,7 +454,7 @@ function applyInvoice(row: SettlementBill) {
         </template>
       </el-table-column>
       <el-table-column v-if="!isEnterprise" prop="enterpriseName" label="企业" min-width="160" />
-      <el-table-column prop="departmentName" label="部门" width="120">
+      <el-table-column prop="departmentName" label="部门" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">{{ row.departmentName || '全公司' }}</template>
       </el-table-column>
       <el-table-column label="付款企业" min-width="180">
@@ -454,10 +470,17 @@ function applyInvoice(row: SettlementBill) {
           <el-tag size="small" :type="row.statusType">{{ row.statusLabel }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column prop="submittedAtLabel" label="提交时间" width="170" />
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDetail(row)">
-            {{ !isEnterprise && row.status === 'pending_submit' ? '查看并提交' : '查看详情' }}
+          <el-button link type="primary" @click="openDetail(row)">查看详情</el-button>
+          <el-button
+            v-if="!isEnterprise && row.status === 'pending_submit'"
+            link
+            type="success"
+            @click="submitBill(row)"
+          >
+            提交账单
           </el-button>
           <el-button
             v-if="!isEnterprise && row.status === 'pending_submit'"
@@ -471,7 +494,7 @@ function applyInvoice(row: SettlementBill) {
             v-if="isEnterprise && row.status === 'pending_confirm'"
             link
             type="primary"
-            @click="confirmBill(row)"
+            @click="openDetail(row)"
           >
             确认账单
           </el-button>
@@ -487,9 +510,9 @@ function applyInvoice(row: SettlementBill) {
             v-if="row.status === 'pending_payment'"
             link
             type="primary"
-            @click="openDetail(row)"
+            @click="openPayment(row)"
           >
-            {{ isEnterprise ? '确认付款' : '查看付款' }}
+            付款
           </el-button>
           <el-button
             v-if="!isEnterprise && ['pending_confirm', 'pending_payment'].includes(row.status)"
@@ -530,11 +553,15 @@ function applyInvoice(row: SettlementBill) {
         </el-form-item>
         <el-form-item label="部门" required>
           <el-select
-            v-model="form.departmentKey"
-            placeholder="选择全公司或部门"
+            :model-value="form.departmentKeys"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="选择全公司或一个或多个部门"
             filterable
             :disabled="!form.enterpriseId"
             style="width: 100%"
+            @update:model-value="onDepartmentKeysChange"
           >
             <el-option label="全公司" :value="BILL_DEPT_ALL" />
             <el-option
@@ -544,7 +571,7 @@ function applyInvoice(row: SettlementBill) {
               :value="dept.id"
             />
           </el-select>
-          <p class="field-hint">必选：可选择全公司，或指定其中一个部门</p>
+          <p class="field-hint">必选：可选择全公司，或同时勾选多个部门</p>
         </el-form-item>
         <el-form-item label="付款主体">
           <el-radio-group
@@ -675,51 +702,60 @@ function applyInvoice(row: SettlementBill) {
     </el-dialog>
 
     <el-dialog
-      v-model="confirmVisible"
-      title="确认账单"
-      width="480px"
+      v-model="paymentVisible"
+      title="上传付款凭证"
+      width="520px"
       destroy-on-close
     >
-      <p class="confirm-tip">确认前可选择付款主体：本公司显示公司名称，其他主体显示其他公司名称</p>
-      <el-form label-width="120px">
-        <el-form-item label="付款主体">
-          <el-radio-group
-            v-model="confirmForm.payerSubjectType"
-            @change="onConfirmPayerSubjectChange"
-          >
-            <el-radio value="self">本公司</el-radio>
-            <el-radio value="other">其他主体</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item :label="confirmForm.payerSubjectType === 'self' ? '公司名称' : '其他公司名称'">
-          <el-input
-            v-model="confirmForm.payerEnterpriseName"
-            :placeholder="confirmForm.payerSubjectType === 'self' ? '本公司名称' : '请输入其他付款公司名称'"
-            :disabled="confirmForm.payerSubjectType === 'self'"
-            clearable
-          />
-        </el-form-item>
-        <el-form-item label="统一信用代码">
-          <el-input
-            v-model="confirmForm.payerCreditCode"
-            clearable
-            maxlength="18"
-            placeholder="统一社会信用代码"
-            :disabled="confirmForm.payerSubjectType === 'self'"
-          />
-        </el-form-item>
-      </el-form>
+      <template v-if="payingBill">
+        <el-alert
+          type="info"
+          :closable="false"
+          :title="`账单 ${payingBill.billNo} · 请支付 ${formatMoney(payingBill.totalPayable)}`"
+          style="margin-bottom: 16px"
+        />
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="开户银行">
+            {{ store.platformPaymentAccount.bankName }}
+          </el-descriptions-item>
+          <el-descriptions-item label="账户名称">
+            {{ store.platformPaymentAccount.accountName }}
+          </el-descriptions-item>
+          <el-descriptions-item label="银行账号">
+            {{ store.platformPaymentAccount.accountNo }}
+          </el-descriptions-item>
+          <el-descriptions-item label="开户支行">
+            {{ store.platformPaymentAccount.branch }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <el-form label-width="100px" style="margin-top: 16px">
+          <el-form-item label="付款凭证" required>
+            <el-input v-model="voucherFile" placeholder="输入文件名或点击模拟上传">
+              <template #append>
+                <el-button @click="voucherFile = `payment_${Date.now()}.pdf`">模拟上传</el-button>
+              </template>
+            </el-input>
+            <p class="text-muted" style="margin-top: 6px; font-size: 12px">
+              支持银行回单截图/PDF
+            </p>
+          </el-form-item>
+        </el-form>
+      </template>
       <template #footer>
-        <el-button @click="confirmVisible = false">取消</el-button>
-        <el-button type="primary" :loading="confirming" @click="submitConfirmBill">
-          确认账单
-        </el-button>
+        <el-button @click="paymentVisible = false">取消</el-button>
+        <el-button type="primary" :loading="paying" @click="submitPayment">确认付款</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <style scoped>
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .field-hint {
   margin: 6px 0 0;
   font-size: 12px;

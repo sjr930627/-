@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { WarningFilled } from '@element-plus/icons-vue'
 import {
@@ -55,6 +55,8 @@ const props = defineProps<{
   } | null
   /** custom=自定义灵活时段；shift=按班次需求 */
   mode?: 'shift' | 'custom'
+  /** 默认划线范围（自定义模式） */
+  defaultScope?: 'day' | 'week'
   /** 合规冲突（与下方排班列表同源） */
   conflictMap?: Map<string, string[]>
   /** 已确认班次：置灰不可划线/清除 */
@@ -67,7 +69,7 @@ const emit = defineEmits<{
 }>()
 
 const store = useAppStore()
-const lineScope = ref<'day' | 'week'>('day')
+const lineScope = ref<'day' | 'week'>(props.defaultScope === 'week' ? 'week' : 'day')
 /** 按周划线：起止时间（结束早于开始视为跨天） */
 const weekStartTime = ref('08:00')
 const weekEndTime = ref('16:00')
@@ -673,6 +675,11 @@ function onHourUp(employeeId: string) {
   dragEndHour.value = null
 }
 
+function onHourPointerDown(employeeId: string, hour: number, e: PointerEvent) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  onHourDown(employeeId, hour)
+}
+
 function onWeekDayDown(employeeId: string, dayIdx: number) {
   if (!props.editMode) {
     emit('enterEdit')
@@ -693,6 +700,56 @@ function onWeekDayEnter(employeeId: string, dayIdx: number) {
     weekDragEndIdx.value = dayIdx
   }
 }
+
+function onWeekDayPointerDown(employeeId: string, dayIdx: number, e: PointerEvent) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  onWeekDayDown(employeeId, dayIdx)
+}
+
+/** 触控划线：跟手经过单元格时扩展选区 */
+function onLinePointerMove(e: PointerEvent) {
+  if (draggingEmployeeId.value !== null) {
+    const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+    const cell = el?.closest('[data-hour-line-cell]') as HTMLElement | null
+    if (!cell) return
+    const empId = cell.dataset.employeeId
+    const slot = Number(cell.dataset.slot)
+    if (empId === draggingEmployeeId.value && !Number.isNaN(slot)) {
+      onHourEnter(empId, slot)
+    }
+    return
+  }
+  if (weekDraggingEmployeeId.value === null) return
+  const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null
+  const cell = el?.closest('[data-week-line-cell]') as HTMLElement | null
+  if (!cell) return
+  const empId = cell.dataset.employeeId
+  const dayIdx = Number(cell.dataset.dayIdx)
+  if (empId === weekDraggingEmployeeId.value && !Number.isNaN(dayIdx)) {
+    onWeekDayEnter(empId, dayIdx)
+  }
+}
+
+function onLinePointerUp() {
+  if (draggingEmployeeId.value) {
+    onHourUp(draggingEmployeeId.value)
+  }
+  if (weekDraggingEmployeeId.value) {
+    onWeekDayUp(weekDraggingEmployeeId.value)
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('pointermove', onLinePointerMove)
+  window.addEventListener('pointerup', onLinePointerUp)
+  window.addEventListener('pointercancel', onLinePointerUp)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('pointermove', onLinePointerMove)
+  window.removeEventListener('pointerup', onLinePointerUp)
+  window.removeEventListener('pointercancel', onLinePointerUp)
+})
 
 function onWeekDayUp(employeeId: string) {
   if (weekDraggingEmployeeId.value !== employeeId || weekDragStartIdx.value === null) return
@@ -1025,6 +1082,9 @@ watch(
             v-for="s in axisSlots"
             :key="s"
             class="hour-cell"
+            :data-hour-line-cell="true"
+            :data-employee-id="emp.id"
+            :data-slot="s"
             :class="{
               selecting: isHourInSelection(emp.id, s),
               'is-next-day': allowCrossDay && s >= daySplitSlot,
@@ -1032,6 +1092,7 @@ watch(
             }"
             @mousedown.prevent="onHourDown(emp.id, s)"
             @mouseenter="onHourEnter(emp.id, s)"
+            @pointerdown.prevent="onHourPointerDown(emp.id, s, $event)"
           />
           <div
             v-for="(bar, bIdx) in getDayLineBars(emp.id)"
@@ -1104,6 +1165,9 @@ watch(
           v-for="(date, dayIdx) in weekDates"
           :key="date"
           class="day-cell"
+          :data-week-line-cell="true"
+          :data-employee-id="emp.id"
+          :data-day-idx="dayIdx"
           :class="{
             selecting: isDayInWeekSelection(emp.id, dayIdx),
             filled: getAssignment(emp.id, date),
@@ -1117,6 +1181,7 @@ watch(
           "
           @mousedown.prevent="onWeekDayDown(emp.id, dayIdx)"
           @mouseenter="onWeekDayEnter(emp.id, dayIdx)"
+          @pointerdown.prevent="onWeekDayPointerDown(emp.id, dayIdx, $event)"
         >
           <div v-if="hasCellConflict(emp.id, date)" class="conflict-block">
             {{ conflictCellText(emp.id, date) }}
@@ -1356,6 +1421,7 @@ watch(
   cursor: crosshair;
   min-height: 44px;
   min-width: 8px;
+  touch-action: none;
 }
 
 .hour-cell.is-next-day {
@@ -1436,6 +1502,7 @@ watch(
   border-right: 1px solid #f1f5f9;
   cursor: crosshair;
   user-select: none;
+  touch-action: none;
   display: flex;
   align-items: center;
   justify-content: center;

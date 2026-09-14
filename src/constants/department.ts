@@ -58,8 +58,18 @@ export function isUnassignedDepartment(id: string | null | undefined) {
   return id === UNASSIGNED_DEPARTMENT_ID || id.startsWith('dept_unassigned_')
 }
 
-export function isEnterpriseRootDepartment(dept: Pick<Department, 'id' | 'orgType'>) {
-  return dept.orgType === 'enterprise' || dept.id.startsWith('dept_root_') || dept.id === 'dept_root'
+export function isEnterpriseRootDepartment(dept: Pick<Department, 'id' | 'orgType' | 'parentId'>) {
+  // 仅系统一级企业根；orgType=enterprise 的业务部门可挂在企业下，不算根节点
+  return dept.id === 'dept_root' || dept.id.startsWith('dept_root_')
+}
+
+/** 叶节点部门（可挂人员、可生成入驻二维码） */
+export function isLeafDepartment(
+  dept?: Pick<Department, 'id' | 'nodeType'> | null,
+): boolean {
+  if (!dept) return false
+  if (isUnassignedDepartment(dept.id)) return true
+  return dept.nodeType === 'leaf'
 }
 
 export function createEnterpriseRootDepartment(
@@ -85,7 +95,7 @@ export function createEnterpriseUnassignedDepartment(enterpriseId: string): Depa
     sort: 1,
     enterpriseId,
     nodeType: 'leaf',
-    description: '管理待申请 / 已申请入驻的人员，审批通过后分配部门与人员 ID',
+    description: '管理待申请 / 已申请入驻的人员，审批通过后分配部门与岗位',
   }
 }
 

@@ -2,14 +2,12 @@
 import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { enterpriseStatusMap } from '@/constants/enterprise'
 import { WORKFORCE_STATS_DEMO_DATE } from '@/mock/workforceSeed'
 
 const store = useAppStore()
 const router = useRouter()
 
 const keyword = ref('')
-const statusFilter = ref<'all' | 'active' | 'expiring' | 'terminated'>('all')
 const page = ref(1)
 const pageSize = ref(10)
 
@@ -26,17 +24,13 @@ const tableData = computed(() =>
       return {
         ...ent,
         ...stats,
-        statusMeta: enterpriseStatusMap[ent.status],
       }
     })
     .filter((row) => {
-      if (statusFilter.value !== 'all' && row.status !== statusFilter.value) return false
       if (!keyword.value.trim()) return true
       const kw = keyword.value.trim().toLowerCase()
       return (
-        row.code.toLowerCase().includes(kw) ||
-        row.name.toLowerCase().includes(kw) ||
-        row.shortName.toLowerCase().includes(kw)
+        row.name.toLowerCase().includes(kw) || row.shortName.toLowerCase().includes(kw)
       )
     })
     .sort(
@@ -63,7 +57,6 @@ const summary = computed(() => ({
 
 function resetFilters() {
   keyword.value = ''
-  statusFilter.value = 'all'
   page.value = 1
 }
 
@@ -119,23 +112,18 @@ onMounted(() => {
       <div class="filter-row">
         <el-input
           v-model="keyword"
-          placeholder="搜索企业编号、企业公司..."
+          placeholder="企业名称模糊查询"
           clearable
           prefix-icon="Search"
           class="search-input"
+          @clear="page = 1"
+          @keyup.enter="page = 1"
         />
         <el-button text @click="resetFilters">
           <el-icon><RefreshLeft /></el-icon>
-          重置筛选
+          重置
         </el-button>
       </div>
-
-      <el-radio-group v-model="statusFilter" class="status-tabs" @change="page = 1">
-        <el-radio-button value="all">全部企业</el-radio-button>
-        <el-radio-button value="active">合作中</el-radio-button>
-        <el-radio-button value="expiring">即将到期</el-radio-button>
-        <el-radio-button value="terminated">已终止</el-radio-button>
-      </el-radio-group>
     </div>
 
     <div class="page-card table-card">
@@ -148,7 +136,7 @@ onMounted(() => {
       </div>
 
       <el-table :data="pagedData" border stripe>
-        <el-table-column label="企业公司" min-width="220">
+        <el-table-column label="企业名称" min-width="220">
           <template #default="{ row }">
             <div class="name-cell">
               <span class="name-avatar" :style="{ background: avatarColor(row.name) }">
@@ -287,10 +275,6 @@ onMounted(() => {
 .search-input {
   flex: 1;
   min-width: 280px;
-}
-
-.status-tabs {
-  margin-top: 14px;
 }
 
 .table-card {

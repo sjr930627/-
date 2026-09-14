@@ -12,7 +12,7 @@ import {
   resolveEnterpriseIdByEmployee,
 } from '@/utils/enterpriseScope'
 import {
-  assignmentMatchesSource,
+  cancelShiftMatchesSource,
   type AttendanceAssignmentSource,
 } from '@/services/attendance'
 
@@ -22,7 +22,7 @@ const store = useAppStore()
 const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
   useEnterpriseScope('filter')
 
-const filterStatus = ref<'all' | 'pending' | 'approved' | 'rejected' | 'cancelled'>('all')
+const filterStatus = ref<'pending' | 'approved' | 'rejected'>('pending')
 
 const cancelStatusLabelMap: Record<'pending' | 'approved' | 'rejected' | 'cancelled', string> = {
   pending: '待审批',
@@ -64,11 +64,10 @@ function matchesRecordSource(row: {
   employeeId: string
   date: string
 }) {
-  if (row.source) return row.source === assignmentSource.value
-  if (row.grabSlotId) return assignmentSource.value === 'grab'
-  return assignmentMatchesSource(
-    store.getAssignment(row.employeeId, row.date),
+  return cancelShiftMatchesSource(
+    row,
     assignmentSource.value,
+    store.getAssignment(row.employeeId, row.date),
   )
 }
 
@@ -76,7 +75,7 @@ const tableData = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   return store.cancelShiftRequests
     .filter((r) => matchesRecordSource(r))
-    .filter((r) => filterStatus.value === 'all' || r.status === filterStatus.value)
+    .filter((r) => r.status === filterStatus.value)
     .map((r) => {
       const emp = store.employees.find((e) => e.id === r.employeeId)
       const slot = r.grabSlotId
@@ -101,9 +100,9 @@ const tableData = computed(() => {
           slot?.shiftName ??
           '—',
         reasonDisplay: formatCancelShiftReason(r),
+        initiatedByLabel: r.initiatedBy === 'employee' ? '灵工申请' : '管理端发起',
         scopeLabel:
           r.cancelScope === 'slot' ? '整班取消' : r.cancelScope === 'person' ? '单人取消' : '—',
-        sourceLabel: r.initiatedBy === 'admin' ? '管理端' : '灵工申请',
         statusLabel: cancelStatusLabelMap[r.status],
         createdAtLabel: new Date(r.createdAt).toLocaleString('zh-CN'),
       }
@@ -147,11 +146,9 @@ const tableData = computed(() => {
         style="width: 260px"
       />
       <el-radio-group v-model="filterStatus">
-        <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="pending">待审批</el-radio-button>
         <el-radio-button value="approved">已通过</el-radio-button>
         <el-radio-button value="rejected">已驳回</el-radio-button>
-        <el-radio-button value="cancelled">已撤销</el-radio-button>
       </el-radio-group>
     </div>
 
@@ -162,6 +159,7 @@ const tableData = computed(() => {
       <el-table-column prop="phone" label="手机号" width="130" />
       <el-table-column prop="date" label="日期" width="110" />
       <el-table-column prop="shiftName" label="班次" width="100" />
+      <el-table-column prop="initiatedByLabel" label="来源" width="110" />
       <el-table-column
         v-if="assignmentSource === 'grab'"
         prop="scopeLabel"
@@ -169,7 +167,6 @@ const tableData = computed(() => {
         width="100"
       />
       <el-table-column prop="reasonDisplay" label="取消原因" min-width="180" show-overflow-tooltip />
-      <el-table-column prop="sourceLabel" label="来源" width="100" />
       <el-table-column prop="statusLabel" label="状态" width="90" />
       <el-table-column prop="createdAtLabel" label="发起时间" width="170" />
       <el-table-column label="审批" min-width="140" show-overflow-tooltip>

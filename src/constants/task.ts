@@ -48,14 +48,12 @@ export const workflowActionMap: Record<WorkflowAction, string> = {
   transfer: '转派',
 }
 
-/** 节点配置面板展示的可选动作（不含转派） */
+/** 节点配置面板展示的可选动作 */
 export const workflowNodeActionOptions: WorkflowAction[] = [
   'submit',
   'confirm',
-  'reject',
-  'accept',
   'cancel',
-  'punch',
+  'reject',
 ]
 
 export const workflowPrerequisiteMap: Record<WorkflowPrerequisite, string> = {
@@ -73,36 +71,61 @@ export const workflowEntryConditionTypeMap: Record<WorkflowEntryConditionType, s
   none: '无条件',
 }
 
+/** 节点条件配置可选类型（仅待打卡 / 时间） */
+export const workflowEntryConditionTypeOptions: {
+  value: Extract<WorkflowEntryConditionType, 'punch_record' | 'time_condition'>
+  label: string
+}[] = [
+  { value: 'punch_record', label: '待打卡记录' },
+  { value: 'time_condition', label: '时间条件' },
+]
+
 export const workflowPunchNavigateModeMap: Record<WorkflowPunchNavigateMode, string> = {
   jump_to_punch_page: '点击任务跳转打卡页',
-  in_task: '任务内直接打卡',
+  in_task: '任务页内打卡',
 }
 
 export const workflowPunchCountModeMap: Record<WorkflowPunchCountMode, string> = {
-  clock_in_only: '仅上班打卡',
-  clock_in_out: '上下班打卡',
+  clock_in_only: '仅上班',
+  clock_in_out: '上下班',
   each_service_period: '每个服务时段都需打卡',
 }
 
+/** 条件配置可选打卡次数 */
+export const workflowPunchCountModeOptions: {
+  value: Extract<WorkflowPunchCountMode, 'clock_in_only' | 'clock_in_out'>
+  label: string
+}[] = [
+  { value: 'clock_in_only', label: '仅上班' },
+  { value: 'clock_in_out', label: '上下班' },
+]
+
 export const workflowPunchLocationSourceMap: Record<WorkflowPunchLocationSource, string> = {
-  task_region: '任务创建时的「任务地点」',
-  task_field: '任务录入的自定义字段',
+  task_region: '读取任务地址',
   attendance_group: '执行人考勤组地点',
+  task_field: '任务自定义字段',
 }
 
 export const workflowPunchTimeSourceMap: Record<WorkflowPunchTimeSource, string> = {
-  task_schedule: '任务起止时间（发布时录入）',
-  task_field: '任务录入的自定义字段',
+  task_schedule: '任务起止时间',
+  task_field: '任务自定义字段',
   fixed_window: '固定服务时段',
 }
 
-export const workflowPunchMethodOptions: PunchMethod[] = ['gps', 'wifi', 'field', 'qrcode']
+/** 条件配置打卡时间段固定为任务起止时间 */
+export const workflowPunchTimeSourceOptions: {
+  value: Extract<WorkflowPunchTimeSource, 'task_schedule'>
+  label: string
+}[] = [{ value: 'task_schedule', label: '任务起止时间' }]
+
+/** 节点打卡方式：定位 / WiFi / 扫码（WiFi、扫码须跟随考勤组） */
+export const workflowPunchMethodOptions: PunchMethod[] = ['gps', 'wifi', 'qrcode']
 
 export const workflowPunchMethodMap: Record<PunchMethod, string> = {
-  gps: '定位打卡',
-  wifi: 'WiFi打卡',
-  field: '外勤打卡',
-  qrcode: '扫码打卡',
+  gps: '定位',
+  wifi: 'WiFi',
+  field: '外勤',
+  qrcode: '扫码',
 }
 
 export const workflowEventSourceMap: Record<WorkflowEventSource, string> = {
@@ -138,14 +161,23 @@ export const workflowEntryListenTargetMap: Record<WorkflowEntryListenTarget, str
 }
 
 export const workflowEntryTimeoutActionMap: Record<WorkflowEntryTimeoutAction, string> = {
+  notify_only: '仅提醒',
   auto_cancel: '自动取消',
   auto_advance: '自动流转',
-  notify_only: '仅提醒',
 }
+
+export const workflowEntryTimeoutActionOptions: {
+  value: WorkflowEntryTimeoutAction
+  label: string
+}[] = [
+  { value: 'notify_only', label: '仅提醒' },
+  { value: 'auto_cancel', label: '自动取消' },
+  { value: 'auto_advance', label: '自动流转' },
+]
 
 export const workflowFieldTypeMap: Record<WorkflowFieldType, string> = {
   text: '文本',
-  select: '下拉',
+  select: '枚举',
   date: '日期',
   amount: '金额',
   attachment: '附件',
@@ -160,8 +192,8 @@ export const workflowNodeTypeMap: Record<WorkflowNodeType, string> = {
 }
 
 export const workflowStatusMap: Record<WorkflowStatus, string> = {
-  enabled: '启用',
-  disabled: '停用',
+  enabled: '已启用',
+  disabled: '已停用',
 }
 
 export const taskTypeStatusMap: Record<TaskTypeStatus, string> = {
@@ -174,9 +206,10 @@ export const taskTypeStatusMap: Record<TaskTypeStatus, string> = {
 
 export const taskPublishStatusMap: Record<TaskPublishStatus, string> = {
   draft: '未发布',
-  pending: '待审核',
+  pending: '待审批',
   active: '进行中',
   ended: '已结束',
+  completed: '已完成',
   cancelled: '已取消',
   rejected: '已驳回',
 }

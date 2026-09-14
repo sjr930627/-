@@ -613,22 +613,16 @@ export function isGrabSlotVisibleToWorker(
   return isEmployeeInDepartmentGrabPool(worker, deptId, departments)
 }
 
-/** 抢班直面：全局=企业抢班池；部门=部门抢班池 */
+/** 抢班直面：对企业抢班池人员可见（面试配置不再区分发布范围） */
 export function isGrabInterviewVisibleToWorker(
   post: {
     enterpriseId: string
-    departmentId: string
-    publishScope?: GrabPublishScope
   },
   worker: Pick<Employee, 'personnelCategory' | 'enterpriseId' | 'departmentId'> | undefined,
   departments: Array<Pick<Department, 'id'> & { parentId?: string | null; enterpriseId?: string }>,
 ): boolean {
   if (!worker) return false
-  const scope = post.publishScope ?? 'global'
-  if (scope === 'global') {
-    return isEmployeeInEnterpriseGrabPool(worker, post.enterpriseId, departments)
-  }
-  return isEmployeeInDepartmentGrabPool(worker, post.departmentId, departments)
+  return isEmployeeInEnterpriseGrabPool(worker, post.enterpriseId, departments)
 }
 
 export function getGrabShiftTemplateOptions(
@@ -909,7 +903,7 @@ export function isGrabShiftPublished(slot: Pick<GrabShiftSlot, 'publishStatus'>)
 export function isGrabShiftOpenForWorkers(
   slot: Pick<GrabShiftSlot, 'status' | 'publishStatus'>,
 ) {
-  return isGrabShiftPublished(slot) && (slot.status === 'open' || slot.status === 'partial')
+  return isGrabShiftPublished(slot) && (slot.status === 'open' || (slot.status as string) === 'partial')
 }
 
 export const grabShiftPublishStatusMap: Record<

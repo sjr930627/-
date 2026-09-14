@@ -230,12 +230,15 @@ export function buildNodeFromPalette(
         generatePunchRecord: true,
         punchNavigateMode: 'jump_to_punch_page',
         listenTarget: 'task_executor',
+        pendingPunchPrompt: '进入本节点时，系统自动为执行人生成待打卡记录。',
         incompletePrompt: '请先完成打卡',
         punchCountMode: 'clock_in_out',
         allowedPunchMethods: ['gps'],
         locationSource: 'task_region',
         serviceTimeSource: 'task_schedule',
         requireWithinServiceWindow: true,
+        timeoutDays: 3,
+        timeoutAction: 'auto_cancel',
       },
     ]
   }

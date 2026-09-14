@@ -10,8 +10,7 @@ const store = useAppStore()
 const router = useRouter()
 
 const keyword = ref('')
-const contactFilter = ref('')
-const statusFilter = ref<'all' | ServiceProviderStatus>('all')
+const statusFilter = ref<'all' | 'cooperating' | 'terminated'>('all')
 const page = ref(1)
 const pageSize = ref(8)
 const selectedIds = ref<string[]>([])
@@ -22,31 +21,36 @@ function avatarColor(name: string) {
   return avatarColors[name.charCodeAt(0) % avatarColors.length]
 }
 
+/** 展示用状态：暂停旧数据并入已终止 */
+function displayStatus(status: ServiceProviderStatus): 'cooperating' | 'terminated' {
+  return status === 'cooperating' ? 'cooperating' : 'terminated'
+}
+
 const tableData = computed(() =>
   store.serviceProviders
-    .map((p) => ({
-      ...p,
-      statusMeta: providerStatusMap[p.status],
-      enterpriseCount: p.linkedEnterpriseIds.length,
-      contractCount: store.getContractsByProvider(p.id).length,
-      activeContractCount: store.getContractsByProvider(p.id).filter((c) => c.status === 'active').length,
-      signTemplateCount: p.signContractTemplates?.length ?? 0,
-      requiredSignCount: p.signContractTemplates?.filter((t) => t.required).length ?? 0,
-      esignPlatformLabel: p.esignPlatform ? esignPlatformMap[p.esignPlatform] : '-',
-    }))
-    .filter((row) => {
-      if (statusFilter.value !== 'all' && row.status !== statusFilter.value) return false
-      if (contactFilter.value.trim()) {
-        const kw = contactFilter.value.trim()
-        if (!row.contact.includes(kw) && !row.phone.includes(kw)) return false
+    .map((p) => {
+      const uiStatus = displayStatus(p.status)
+      return {
+        ...p,
+        uiStatus,
+        statusMeta: providerStatusMap[uiStatus],
+        enterpriseCount: p.linkedEnterpriseIds.length,
+        contractCount: store.getContractsByProvider(p.id).length,
+        activeContractCount: store.getContractsByProvider(p.id).filter((c) => c.status === 'active')
+          .length,
+        signTemplateCount: p.signContractTemplates?.length ?? 0,
+        requiredSignCount: p.signContractTemplates?.filter((t) => t.required).length ?? 0,
+        esignPlatformLabel: p.esignPlatform ? esignPlatformMap[p.esignPlatform] : '-',
       }
+    })
+    .filter((row) => {
+      if (statusFilter.value !== 'all' && row.uiStatus !== statusFilter.value) return false
       if (!keyword.value.trim()) return true
       const kw = keyword.value.trim().toLowerCase()
       return (
         row.code.toLowerCase().includes(kw) ||
         row.name.toLowerCase().includes(kw) ||
-        (row.shortName?.toLowerCase().includes(kw) ?? false) ||
-        row.businessScope.toLowerCase().includes(kw)
+        (row.shortName?.toLowerCase().includes(kw) ?? false)
       )
     })
     .sort((a, b) => b.cooperationStartDate.localeCompare(a.cooperationStartDate)),
@@ -61,7 +65,6 @@ const totalCount = computed(() => tableData.value.length)
 
 function resetFilters() {
   keyword.value = ''
-  contactFilter.value = ''
   statusFilter.value = 'all'
   page.value = 1
 }
@@ -82,13 +85,35 @@ function openEdit(row: ServiceProvider) {
   router.push(`/service-providers/${row.id}/edit`)
 }
 
-async function updateStatus(row: ServiceProvider, status: ServiceProviderStatus, label: string) {
+async function terminateProvider(row: {
+  id: string
+  name: string
+  activeContractCount: number
+}) {
+  if (row.activeContractCount > 0) {
+    ElMessage.warning('存在生效中的合约，无法终止服务商合作')
+    return
+  }
   try {
-    await ElMessageBox.confirm(`确定将「${row.name}」标记为${label}？`, '变更状态', { type: 'warning' })
-    store.updateServiceProviderStatus(row.id, status)
-    ElMessage.success(`已更新为${label}`)
-  } catch {
-    // cancelled
+    await ElMessageBox.confirm(`确定终止「${row.name}」的合作？`, '终止合作', { type: 'warning' })
+    store.updateServiceProviderStatus(row.id, 'terminated')
+    ElMessage.success('已终止合作')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    if (e instanceof Error) ElMessage.error(e.message)
+  }
+}
+
+async function enableCooperation(row: ServiceProvider) {
+  try {
+    await ElMessageBox.confirm(`确定重新启用「${row.name}」的合作？`, '启用合作', {
+      type: 'info',
+    })
+    store.updateServiceProviderStatus(row.id, 'cooperating')
+    ElMessage.success('已启用合作')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    if (e instanceof Error) ElMessage.error(e.message)
   }
 }
 </script>
@@ -106,12 +131,11 @@ async function updateStatus(row: ServiceProvider, status: ServiceProviderStatus,
       <div class="filter-row">
         <el-input
           v-model="keyword"
-          placeholder="搜索服务商编号、名称、业务范围..."
+          placeholder="搜索服务商编号、名称..."
           clearable
           prefix-icon="Search"
           class="search-input"
         />
-        <el-input v-model="contactFilter" placeholder="联系人/电话" clearable style="width: 180px" />
         <el-button text @click="resetFilters">
           <el-icon><RefreshLeft /></el-icon>
           重置筛选
@@ -121,7 +145,6 @@ async function updateStatus(row: ServiceProvider, status: ServiceProviderStatus,
       <el-radio-group v-model="statusFilter" class="status-tabs" @change="page = 1">
         <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="cooperating">合作中</el-radio-button>
-        <el-radio-button value="suspended">已暂停</el-radio-button>
         <el-radio-button value="terminated">已终止</el-radio-button>
       </el-radio-group>
     </div>
@@ -155,9 +178,6 @@ async function updateStatus(row: ServiceProvider, status: ServiceProviderStatus,
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="contact" label="联系人" width="100" />
-        <el-table-column prop="phone" label="联系电话" width="130" />
-        <el-table-column prop="businessScope" label="业务范围" min-width="180" show-overflow-tooltip />
         <el-table-column label="关联企业" width="90" align="center">
           <template #default="{ row }">{{ row.enterpriseCount }}</template>
         </el-table-column>
@@ -167,7 +187,9 @@ async function updateStatus(row: ServiceProvider, status: ServiceProviderStatus,
         <el-table-column label="签署模板" width="100" align="center">
           <template #default="{ row }">
             <span>{{ row.signTemplateCount }}</span>
-            <span v-if="row.requiredSignCount" class="text-muted"> / {{ row.requiredSignCount }}必签</span>
+            <span v-if="row.requiredSignCount" class="text-muted">
+              / {{ row.requiredSignCount }}必签
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="电子签平台" width="110">
@@ -184,20 +206,20 @@ async function updateStatus(row: ServiceProvider, status: ServiceProviderStatus,
             <el-button link type="primary" @click="openDetail(row)">查看</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button
-              v-if="row.status === 'cooperating'"
-              link
-              type="warning"
-              @click="updateStatus(row, 'suspended', '已暂停')"
-            >
-              暂停
-            </el-button>
-            <el-button
-              v-if="row.status !== 'terminated'"
+              v-if="row.uiStatus === 'cooperating'"
               link
               type="danger"
-              @click="updateStatus(row, 'terminated', '已终止')"
+              @click="terminateProvider(row)"
             >
               终止
+            </el-button>
+            <el-button
+              v-else
+              link
+              type="success"
+              @click="enableCooperation(row)"
+            >
+              启用合作
             </el-button>
           </template>
         </el-table-column>

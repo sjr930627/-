@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
   buildConfirmHoursWarning,
+  buildDailyAttendanceCsv,
   buildDailyAttendanceList,
   canConfirmWorkHours,
   canCorrectWorkHours,
@@ -19,6 +20,7 @@ import {
   getStatusTagType,
   isDailyAttendanceVisible,
 } from '@/services/attendance'
+import { downloadTextFile } from '@/services/payroll'
 import { getWeekday, getDepartmentName } from '@/utils'
 import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 import type { AttendanceHoursAudit } from '@/types'
@@ -143,9 +145,7 @@ const tableData = computed(() => {
     })
 })
 
-const shiftColumnLabel = computed(() =>
-  props.assignmentSource === 'grab' ? '班次' : '类型/排班',
-)
+const shiftColumnLabel = computed(() => '班次')
 
 const summary = computed(() => {
   const list = tableData.value
@@ -303,6 +303,52 @@ function openAudit(row: (typeof tableData.value)[0]) {
   }
   auditVisible.value = true
 }
+
+function formatExportTime(iso?: string) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString('zh-CN')
+}
+
+function exportCsv() {
+  const rows = tableData.value
+  if (!rows.length) {
+    ElMessage.warning('当前筛选下暂无日考勤数据可导出')
+    return
+  }
+  const csv = buildDailyAttendanceCsv(
+    rows.map((r) => ({
+      enterpriseName: r.enterpriseName,
+      departmentName: r.departmentName,
+      employeeName: r.employeeName,
+      phone: r.phone,
+      date: r.date,
+      shiftName: r.shiftName,
+      clockIn: r.clockIn,
+      clockOut: r.clockOut,
+      actualPunchHoursText: formatActualPunchHoursText(r),
+      workHoursText: r.hoursConfirmed
+        ? formatDailyWorkHoursText(r)
+        : String(r.confirmWorkHours),
+      statusLabel: r.statusLabel,
+      hoursConfirmed: r.hoursConfirmed,
+      hoursConfirmedBy: r.hoursConfirmedBy,
+      hoursConfirmedAt: formatExportTime(r.hoursConfirmedAt),
+      workHoursCorrected: r.workHoursCorrected,
+      hoursCorrectedBy: r.hoursCorrectedBy,
+      hoursCorrectedAt: formatExportTime(r.hoursCorrectedAt),
+      manualNote: r.manualNote,
+    })),
+  )
+  const source = props.assignmentSource === 'grab' ? 'grab' : 'schedule'
+  downloadTextFile(
+    csv,
+    `daily_attendance_${source}_${selectedDate.value}.csv`,
+    'text/csv;charset=utf-8',
+  )
+  ElMessage.success(`已导出 ${rows.length} 条日考勤数据`)
+}
+
+defineExpose({ exportCsv })
 </script>
 
 <template>
@@ -356,7 +402,7 @@ function openAudit(row: (typeof tableData.value)[0]) {
       <el-table-column prop="departmentName" label="部门" min-width="110" show-overflow-tooltip />
       <el-table-column prop="employeeName" label="姓名" width="100" />
       <el-table-column prop="phone" label="手机号" width="130" />
-      <el-table-column prop="shiftName" :label="shiftColumnLabel" :min-width="assignmentSource === 'grab' ? 200 : 90" show-overflow-tooltip />
+      <el-table-column prop="shiftName" :label="shiftColumnLabel" min-width="180" show-overflow-tooltip />
       <el-table-column prop="clockIn" label="上班" width="80">
         <template #default="{ row }">{{ row.clockIn ?? '—' }}</template>
       </el-table-column>

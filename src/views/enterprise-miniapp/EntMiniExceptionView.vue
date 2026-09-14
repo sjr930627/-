@@ -50,9 +50,7 @@ function switchTab(next: TabKey) {
   })
 }
 
-const pageTitle = computed(() =>
-  tab.value === 'cancel' ? '取消班次申请' : '补卡申请',
-)
+const pageTitle = computed(() => '考勤审批')
 
 const flowOpen = ref(false)
 const flowStep = ref<FlowStep>('correct')
@@ -95,20 +93,6 @@ const cancelPending = computed(() =>
       sourceLabel: r.source === 'grab' ? '抢班' : '排班',
     }))
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)),
-)
-
-const exceptions = computed(() =>
-  store.exceptions
-    .filter(
-      (e) =>
-        (e.status === 'open' || e.status === 'appealed') &&
-        enterpriseEmployeeIds.value.has(e.employeeId),
-    )
-    .map((e) => ({
-      ...e,
-      employeeName: store.employees.find((x) => x.id === e.employeeId)?.name || e.employeeId,
-    }))
-    .slice(0, 40),
 )
 
 function resolveDayHours(employeeId: string, date: string) {
@@ -323,23 +307,6 @@ function skipConfirmLater() {
     })
   }
 }
-
-async function resolveExc(id: string) {
-  const { value } = await ElMessageBox.prompt('请填写处理说明', '考勤异常处理', {
-    inputPlaceholder: '如：已联系本人确认，按正常出勤处理',
-  })
-  const note = String(value || '').trim()
-  if (!note) {
-    ElMessage.warning('须填写处理说明')
-    return
-  }
-  try {
-    store.resolveException(id, note, operatorName.value)
-    ElMessage.success('异常已处理')
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '处理失败')
-  }
-}
 </script>
 
 <template>
@@ -374,17 +341,6 @@ async function resolveExc(id: string) {
           <button type="button" class="mini-btn-primary sm" @click="reviewMakeup(r.id, true)">
             通过
           </button>
-        </div>
-      </article>
-
-      <h3 class="sub-title">出勤异常</h3>
-      <div v-if="!exceptions.length" class="mini-empty">暂无待处理异常</div>
-      <article v-for="e in exceptions" :key="e.id" class="card">
-        <strong>{{ e.employeeName }}</strong>
-        <p>{{ e.date }} · {{ e.type }}</p>
-        <p class="reason">{{ e.message }}</p>
-        <div class="btns">
-          <button type="button" class="mini-btn-primary sm" @click="resolveExc(e.id)">处理</button>
         </div>
       </article>
     </section>
@@ -498,10 +454,6 @@ async function resolveExc(id: string) {
 }
 .panel {
   padding: 12px 16px 8px;
-}
-.sub-title {
-  margin: 16px 0 8px;
-  font-size: 14px;
 }
 .hint {
   margin: 0 0 10px;

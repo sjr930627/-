@@ -26,8 +26,14 @@ import {
   normalizeAttendanceShiftTemplateBreak,
   resolveGrabShiftWorkHoursFromTimes,
 } from '@/services/grabShift'
-import { countDepartmentEmployees, generateId } from '@/utils'
+import { countDepartmentScheduleAndGrab, generateId, getDepartmentManagerNames, getDepartmentPath } from '@/utils'
 import { formatVersionLabel } from '@/constants/attendanceGroup'
+import {
+  REGION_CASCADER_OPTIONS,
+  applyRegionPath,
+  regionPathFromParts,
+} from '@/constants/region'
+import DepartmentLeafCascader from '@/components/employee/DepartmentLeafCascader.vue'
 import type {
   AttendanceGroup,
   AttendanceGroupShiftTemplate,
@@ -68,8 +74,23 @@ const emptyShift = (): AttendanceGroupShiftTemplate => {
 const emptyLocation = (): PunchLocation => ({
   id: generateId('loc'),
   name: '',
+  province: '',
+  city: '',
+  district: '',
   address: '',
 })
+
+const regionCascaderProps = {
+  expandTrigger: 'hover' as const,
+}
+
+function locationRegionPath(loc: PunchLocation) {
+  return regionPathFromParts(loc.province, loc.city, loc.district)
+}
+
+function onLocationRegionChange(loc: PunchLocation, path: string[] | null) {
+  applyRegionPath(loc, path)
+}
 
 const form = ref<Omit<AttendanceGroup, 'id' | 'code' | 'createdAt' | 'updatedAt' | 'currentVersion' | 'versions'>>({
   name: '',
@@ -236,6 +257,9 @@ onMounted(() => {
     const source = store.attendanceGroups.find((g) => g.id === groupId.value)
     if (source) {
       hydrateForm(source)
+      form.value.departmentBindings = (form.value.departmentBindings ?? []).map((b) =>
+        buildDeptBinding(b.departmentId),
+      )
     } else {
       ElMessage.error('考勤组不存在')
       router.replace('/attendance-groups')
@@ -315,22 +339,30 @@ function removeLocation(index: number) {
   form.value.punchLocations.splice(index, 1)
 }
 
+function buildDeptBinding(departmentId: string) {
+  const dept = store.departments.find((d) => d.id === departmentId)
+  return {
+    departmentId,
+    departmentName: dept
+      ? getDepartmentPath(store.departments, departmentId)
+      : departmentId,
+    headcount: countDepartmentScheduleAndGrab(
+      store.departments,
+      store.employees,
+      departmentId,
+      false,
+    ),
+    managerName: getDepartmentManagerNames(dept, store.employees),
+  }
+}
+
 function openDeptPicker() {
   selectedDeptIds.value = form.value.departmentBindings.map((b) => b.departmentId)
   deptPickerVisible.value = true
 }
 
 function confirmDepts() {
-  form.value.departmentBindings = selectedDeptIds.value.map((id) => {
-    const dept = store.departments.find((d) => d.id === id)!
-    const existing = form.value.departmentBindings.find((b) => b.departmentId === id)
-    return {
-      departmentId: id,
-      departmentName: dept.name,
-      headcount: countDepartmentEmployees(store.departments, store.employees, id, true),
-      managerName: existing?.managerName,
-    }
-  })
+  form.value.departmentBindings = selectedDeptIds.value.map((id) => buildDeptBinding(id))
   deptPickerVisible.value = false
 }
 
@@ -383,6 +415,22 @@ function validate() {
   }
   if (form.value.attendanceType !== 'none') {
     ensurePricingConfig()
+  }
+  if (form.value.gpsEnabled) {
+    for (const loc of form.value.punchLocations) {
+      if (!loc.name.trim()) {
+        ElMessage.warning('请填写打卡地点名称')
+        return false
+      }
+      if (!loc.province || !loc.city || !loc.district) {
+        ElMessage.warning('请选择打卡点的省市区')
+        return false
+      }
+      if (!loc.address?.trim()) {
+        ElMessage.warning('请填写打卡点详细地址')
+        return false
+      }
+    }
   }
   return true
 }
@@ -730,14 +778,29 @@ function confirmSaveTemplate() {
           <el-button size="small" @click="addLocation">+ 添加打卡点</el-button>
         </div>
         <el-table :data="form.punchLocations" border size="small">
-          <el-table-column label="地点名称">
+          <el-table-column label="地点名称" min-width="120">
             <template #default="{ row }">
-              <el-input v-model="row.name" size="small" placeholder="总部大楼" />
+              <el-input v-model="row.name" size="small" placeholder="如：总部大楼" />
             </template>
           </el-table-column>
-          <el-table-column label="地址">
+          <el-table-column label="省市区" min-width="220">
             <template #default="{ row }">
-              <el-input v-model="row.address" size="small" />
+              <el-cascader
+                :model-value="locationRegionPath(row)"
+                :options="REGION_CASCADER_OPTIONS"
+                :props="regionCascaderProps"
+                clearable
+                filterable
+                size="small"
+                placeholder="请选择省 / 市 / 区"
+                style="width: 100%"
+                @update:model-value="onLocationRegionChange(row, $event)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="详细地址" min-width="180">
+            <template #default="{ row }">
+              <el-input v-model="row.address" size="small" placeholder="街道门牌号等" />
             </template>
           </el-table-column>
           <el-table-column label="操作" width="70">
@@ -822,14 +885,16 @@ function confirmSaveTemplate() {
         <el-button type="primary" link @click="openDeptPicker">+ 添加部门</el-button>
       </div>
       <el-table :data="form.departmentBindings" border stripe size="small">
-        <el-table-column prop="departmentName" label="部门" min-width="160" />
-        <el-table-column label="人数" width="140">
-          <template #default="{ row }">{{ row.headcount }} 人 [在职]</template>
-        </el-table-column>
-        <el-table-column label="负责人" width="120">
+        <el-table-column label="部门" min-width="200" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-input v-model="row.managerName" size="small" placeholder="负责人" />
+            {{ getDepartmentPath(store.departments, row.departmentId) }}
           </template>
+        </el-table-column>
+        <el-table-column label="人数" width="120" align="center">
+          <template #default="{ row }">{{ row.headcount }} 人</template>
+        </el-table-column>
+        <el-table-column label="负责人" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.managerName || '—' }}</template>
         </el-table-column>
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
@@ -983,12 +1048,14 @@ function confirmSaveTemplate() {
     </div>
   </div>
 
-  <el-dialog v-model="deptPickerVisible" title="选择关联部门" width="480px">
-    <el-checkbox-group v-model="selectedDeptIds">
-      <el-checkbox v-for="d in store.departments" :key="d.id" :label="d.id" class="dept-check">
-        {{ d.name }}
-      </el-checkbox>
-    </el-checkbox-group>
+  <el-dialog v-model="deptPickerVisible" title="选择关联部门" width="520px">
+    <p class="dept-picker-hint">仅可选择叶子部门，支持多选</p>
+    <DepartmentLeafCascader
+      v-model="selectedDeptIds"
+      :departments="store.departments"
+      multiple
+      placeholder="请按级联选择叶子部门"
+    />
     <template #footer>
       <el-button @click="deptPickerVisible = false">取消</el-button>
       <el-button type="primary" @click="confirmDepts">确定</el-button>
@@ -1147,9 +1214,10 @@ function confirmSaveTemplate() {
   margin-top: 8px;
 }
 
-.dept-check {
-  display: flex;
-  margin-bottom: 8px;
+.dept-picker-hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #64748b;
 }
 
 .shift-break-cell {

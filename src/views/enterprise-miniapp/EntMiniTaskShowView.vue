@@ -114,6 +114,10 @@ function viewInstances() {
           <span class="value">{{ task.departmentName || '—' }}</span>
         </div>
         <div class="info-row">
+          <span class="label">服务商</span>
+          <span class="value">{{ task.serviceProviderName || '—' }}</span>
+        </div>
+        <div class="info-row">
           <span class="label">任务流程</span>
           <span class="value">{{ workflow?.name ?? task.taskTypeName }}</span>
         </div>
@@ -144,10 +148,6 @@ function viewInstances() {
         <div class="info-row block">
           <span class="label">任务激励</span>
           <span class="value">{{ task.incentive || '—' }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">培训要求</span>
-          <span class="value">{{ task.trainingCourseId || '—' }}</span>
         </div>
       </section>
 

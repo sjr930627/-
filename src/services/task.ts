@@ -48,6 +48,38 @@ export function generateTaskName(taskTypeName: string, date = new Date()): strin
   return `${taskTypeName}-${y}${m}`
 }
 
+/** 业务任务编号：年月日 + 4 位随机数 */
+export function generateTaskNo(date = new Date(), existingNos?: Set<string>): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const prefix = `${y}${m}${d}`
+  for (let i = 0; i < 20; i++) {
+    const no = `${prefix}${String(Math.floor(Math.random() * 10000)).padStart(4, '0')}`
+    if (!existingNos?.has(no)) {
+      existingNos?.add(no)
+      return no
+    }
+  }
+  return `${prefix}${String(Date.now() % 10000).padStart(4, '0')}`
+}
+
+/** 为缺少 taskNo 的历史任务补齐编号 */
+export function ensureTaskNo(task: Task, existingNos?: Set<string>): Task {
+  if (task.taskNo) {
+    existingNos?.add(task.taskNo)
+    return task
+  }
+  const date = task.createdAt ? new Date(task.createdAt) : new Date()
+  const base = Number.isNaN(date.getTime()) ? new Date() : date
+  return { ...task, taskNo: generateTaskNo(base, existingNos) }
+}
+
+export function ensureTaskNos(tasks: Task[]): Task[] {
+  const existing = new Set(tasks.map((t) => t.taskNo).filter(Boolean))
+  return tasks.map((t) => ensureTaskNo(t, existing))
+}
+
 export function calcTaskProgress(task: {
   plannedTotal?: number
   acceptedCount: number
@@ -75,13 +107,133 @@ export function calcEnterpriseTaskProgress(task: {
   return { progress: Math.min(progress, 100), completionRate }
 }
 
-export type InstanceWorkflowStatus = 'running' | 'completed' | 'cancelled'
+/** 有限数量是否已达计划完成量 */
+export function isTaskQuantityCompleted(task: {
+  plannedTotal?: number
+  unlimitedQuantity?: boolean
+  completedCount: number
+}): boolean {
+  if (task.unlimitedQuantity || task.plannedTotal == null) return false
+  return task.completedCount >= task.plannedTotal
+}
 
-/** 根据工作流当前节点判断实例状态：结束节点=完成/取消，否则进行中 */
+/** 灵工领取达上限提示 */
+export const TASK_CLAIM_LIMIT_MESSAGE = '该任务已到领取上限，请换个任务试试'
+
+type ClaimOccupancyInstance = {
+  taskId: string
+  currentNodeId: string
+  currentNodeName: string
+  claimQuantity?: number
+}
+
+/** 进行中 + 已完成占用名额（取消/已结束不占用，可释放） */
+export function getTaskOccupiedClaimQuantity(
+  taskId: string,
+  instances: ClaimOccupancyInstance[],
+  workflow: TaskWorkflow | undefined,
+): { running: number; completed: number; occupied: number } {
+  let running = 0
+  let completed = 0
+  for (const inst of instances) {
+    if (inst.taskId !== taskId) continue
+    const status = resolveInstanceWorkflowStatus(inst, workflow)
+    const q = Math.max(1, inst.claimQuantity ?? 1)
+    if (status === 'running') running += q
+    else if (status === 'completed') completed += q
+  }
+  return { running, completed, occupied: running + completed }
+}
+
+/**
+ * 可领任务数 = 任务数量 − 进行中 − 已完成。
+ * 待审核/待提交、无上限返回 null（展示 —）。
+ */
+export function getTaskClaimableCount(
+  task: {
+    id: string
+    status: Task['status']
+    workflowId: string
+    plannedTotal?: number
+    unlimitedQuantity?: boolean
+  },
+  instances: ClaimOccupancyInstance[],
+  workflow: TaskWorkflow | undefined,
+): number | null {
+  if (task.status === 'pending' || task.status === 'draft') return null
+  if (task.unlimitedQuantity || task.plannedTotal == null) return null
+  const { occupied } = getTaskOccupiedClaimQuantity(task.id, instances, workflow)
+  return Math.max(0, task.plannedTotal - occupied)
+}
+
+export function formatTaskClaimableQuantity(
+  task: {
+    id: string
+    status: Task['status']
+    workflowId: string
+    plannedTotal?: number
+    unlimitedQuantity?: boolean
+  },
+  instances: ClaimOccupancyInstance[],
+  workflow: TaskWorkflow | undefined,
+): string {
+  const count = getTaskClaimableCount(task, instances, workflow)
+  return count == null ? '—' : String(count)
+}
+
+/** 是否仍在任务结束期限内（长期任务视为始终在期限内） */
+export function isTaskWithinDeadline(
+  task: { longTerm?: boolean; endTime: string },
+  now = Date.now(),
+): boolean {
+  if (task.longTerm) return true
+  return new Date(task.endTime).getTime() >= now
+}
+
+/** 进行中且（仍在期限内或数量未完成）时可手动结束 → 已结束 */
+export function canManuallyEndTask(
+  task: {
+    status: Task['status']
+    longTerm?: boolean
+    endTime: string
+    plannedTotal?: number
+    unlimitedQuantity?: boolean
+    completedCount: number
+  },
+  now = Date.now(),
+): boolean {
+  if (task.status !== 'active') return false
+  return isTaskWithinDeadline(task, now) || !isTaskQuantityCompleted(task)
+}
+
+/**
+ * 任务数已完成，且已过结束期限（长期任务仅看数量）时标记为已完成
+ */
+export function maybeMarkTaskCompleted(task: {
+  status: Task['status']
+  plannedTotal?: number
+  unlimitedQuantity?: boolean
+  completedCount: number
+  longTerm?: boolean
+  endTime: string
+}, now = Date.now()): boolean {
+  if (task.status !== 'active') return false
+  if (!isTaskQuantityCompleted(task)) return false
+  if (!task.longTerm && isTaskWithinDeadline(task, now)) return false
+  task.status = 'completed'
+  return true
+}
+
+export type InstanceWorkflowStatus = 'running' | 'completed' | 'cancelled' | 'ended'
+
+/** 根据工作流当前节点判断实例状态：结束节点=完成/取消/已结束，否则进行中 */
 export function resolveInstanceWorkflowStatus(
   instance: { currentNodeId: string; currentNodeName: string },
   workflow: TaskWorkflow | undefined,
 ): InstanceWorkflowStatus {
+  if (instance.currentNodeName.includes('已结束') || instance.currentNodeName === '结束') {
+    return 'ended'
+  }
   if (
     instance.currentNodeName.includes('取消') ||
     instance.currentNodeName.includes('关闭')
@@ -91,6 +243,7 @@ export function resolveInstanceWorkflowStatus(
   if (!workflow) return 'running'
   const node = workflow.nodes.find((n) => n.id === instance.currentNodeId)
   if (!node || node.nodeType !== 'end') return 'running'
+  if (node.name.includes('已结束')) return 'ended'
   if (node.name.includes('取消') || node.name.includes('关闭') || node.name.includes('驳回')) {
     return 'cancelled'
   }
@@ -103,7 +256,8 @@ export const instanceWorkflowStatusMap: Record<
 > = {
   running: { label: '执行中', type: 'warning' },
   completed: { label: '已完成', type: 'success' },
-  cancelled: { label: '已取消', type: 'info' },
+  cancelled: { label: '已结束', type: 'info' },
+  ended: { label: '已结束', type: 'info' },
 }
 
 export function getCurrentWorkflowNode(
@@ -331,13 +485,10 @@ export function extractEnterpriseActionNote(
   return ''
 }
 
-/** 统计引用该工作流的有效任务数（不含草稿/驳回） */
+/** 统计引用该工作流的进行中任务数（status === active） */
 export function countWorkflowBoundTasks(
   tasks: Pick<Task, 'workflowId' | 'status'>[],
   workflowId: string,
 ): number {
-  return tasks.filter(
-    (t) =>
-      t.workflowId === workflowId && t.status !== 'draft' && t.status !== 'rejected',
-  ).length
+  return tasks.filter((t) => t.workflowId === workflowId && t.status === 'active').length
 }

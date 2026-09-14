@@ -48,7 +48,7 @@ export const permissionCatalog: PermissionNode[] = [
   { id: 'perm_grab_interview', name: '抢班面试管理', code: 'grab:interview', module: '抢班管理', parentId: 'perm_grab', type: 'menu' },
   { id: 'perm_grab_manage', name: '抢班管理', code: 'grab:manage', module: '抢班管理', parentId: 'perm_grab', type: 'menu' },
   { id: 'perm_grab_attendance_data', name: '考勤数据', code: 'grab:attendance-data', module: '抢班管理', parentId: 'perm_grab', type: 'menu' },
-  { id: 'perm_grab_attendance_exception', name: '考勤审批记录', code: 'grab:attendance-exceptions', module: '抢班管理', parentId: 'perm_grab', type: 'menu' },
+  { id: 'perm_grab_attendance_exception', name: '考勤审批', code: 'grab:attendance-exceptions', module: '抢班管理', parentId: 'perm_grab', type: 'menu' },
   { id: 'perm_grab_cancel_shift_records', name: '取消班次记录', code: 'grab:cancel-shift-records', module: '抢班管理', parentId: 'perm_grab_manage', type: 'action' },
   { id: 'perm_grab_attendance_exception_approve', name: '异常审批', code: 'grab:attendance-exceptions:approve', module: '抢班管理', parentId: 'perm_grab_attendance_exception', type: 'action' },
 

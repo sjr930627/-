@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
+import { formatPunchLocationAddress } from '@/constants/region'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import {
@@ -193,7 +194,7 @@ async function removeGroup() {
           <div v-if="group.punchLocations.length">
             <div v-for="loc in group.punchLocations" :key="loc.id" class="loc-item">
               <strong>{{ loc.name || '打卡地点' }}</strong>
-              <span>{{ loc.address || '—' }}</span>
+              <span>{{ formatPunchLocationAddress(loc) }}</span>
             </div>
           </div>
           <p v-else class="empty-text">未配置打卡地点</p>

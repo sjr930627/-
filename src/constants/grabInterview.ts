@@ -37,8 +37,8 @@ export const grabInterviewScheduleModeOptions: {
   label: string
   desc: string
 }[] = [
-  { value: 'unified', label: '统一配置时间段', desc: '所选星期共用同一组时间段' },
-  { value: 'by_day', label: '按日配置时间段', desc: '每个星期可配置不同时间段' },
+  { value: 'unified', label: '所选日期统一面试时间', desc: '选中的星期共用同一组时间段' },
+  { value: 'by_day', label: '不同日期不同时间段', desc: '每个星期可分别配置时间段' },
 ]
 
 export const grabInterviewSeatUnitOptions: {
@@ -141,7 +141,10 @@ export function normalizeGrabInterviewDeptRule(rule: GrabInterviewDeptRule): Gra
 }
 
 /** 将旧版单岗位扁平结构迁移为多岗位 */
-export function normalizeDeptInterviewRule(rule: GrabInterviewDeptRule): GrabInterviewDeptRule {
+export function normalizeDeptInterviewRule(
+  rule: GrabInterviewDeptRule,
+  options?: { fallbackRequireInterview?: boolean },
+): GrabInterviewDeptRule {
   const legacySchedule =
     rule.weekdays || rule.timeSlots || rule.scheduleMode || rule.dayTimeSlots
       ? normalizeGrabInterviewScheduleRule({
@@ -177,30 +180,49 @@ export function normalizeDeptInterviewRule(rule: GrabInterviewDeptRule): GrabInt
     ]
   }
 
-  positions = positions.map((p) => ({
-    ...p,
-    id: p.id || generateId('gip'),
-    profile: {
-      ...emptyPositionProfile(),
-      ...p.profile,
-      skills: p.profile?.skills ?? [],
-      positionName: p.profile?.positionName || '未命名岗位',
-    },
-    ruleScope: p.ruleScope === 'department' ? 'department' : 'position',
-    schedule:
-      p.ruleScope === 'department'
-        ? undefined
-        : normalizeGrabInterviewScheduleRule(p.schedule ?? legacySchedule),
-  }))
+  const deptSchedule = normalizeGrabInterviewScheduleRule(
+    rule.departmentSchedule ?? legacySchedule ?? emptyScheduleRule(),
+  )
+
+  positions = positions.map((p) => {
+    const inherited =
+      p.ruleScope === 'department' || !p.schedule
+        ? deptSchedule
+        : normalizeGrabInterviewScheduleRule(p.schedule)
+    return {
+      ...p,
+      id: p.id || generateId('gip'),
+      profile: {
+        ...emptyPositionProfile(),
+        ...p.profile,
+        skills: p.profile?.skills ?? [],
+        positionName: p.profile?.positionName || '未命名岗位',
+      },
+      ruleScope: 'position' as const,
+      schedule: inherited,
+    }
+  })
 
   return {
     departmentId: rule.departmentId,
-    publishScope: rule.publishScope === 'department' ? 'department' : 'global',
+    requireInterview: rule.requireInterview ?? options?.fallbackRequireInterview ?? false,
+    /** 面试配置不再区分发布范围，统一 global */
+    publishScope: 'global',
     positions,
-    departmentSchedule: normalizeGrabInterviewScheduleRule(
-      rule.departmentSchedule ?? legacySchedule ?? emptyScheduleRule(),
-    ),
+    /** 保留字段供旧数据兼容，新配置以岗位 schedule 为准 */
+    departmentSchedule: deptSchedule,
   }
+}
+
+/** 部门是否需要面试（优先部门配置，缺省回退企业级） */
+export function deptRequiresInterview(
+  rule: GrabInterviewDeptRule | undefined | null,
+  enterpriseRequireInterview = false,
+): boolean {
+  if (!rule) return false
+  return normalizeDeptInterviewRule(rule, {
+    fallbackRequireInterview: enterpriseRequireInterview,
+  }).requireInterview === true
 }
 
 export function resolvePositionSchedule(
@@ -208,10 +230,12 @@ export function resolvePositionSchedule(
   position?: GrabInterviewDeptPosition | null,
 ): GrabInterviewScheduleRule {
   const normalized = normalizeDeptInterviewRule(dept)
-  if (!position || position.ruleScope === 'department') {
+  if (!position) {
     return normalizeGrabInterviewScheduleRule(normalized.departmentSchedule)
   }
-  return normalizeGrabInterviewScheduleRule(position.schedule)
+  return normalizeGrabInterviewScheduleRule(
+    position.schedule ?? normalized.departmentSchedule,
+  )
 }
 
 export function findDeptPosition(
@@ -271,6 +295,56 @@ export function formatSeatRuleLabel(
 ) {
   const unit = seatUnitMinutes === 60 ? '每 1 小时' : '每半小时'
   return `${unit}可面试 ${seatsPerUnit} 人`
+}
+
+export function formatSchedulePreviewText(schedule: GrabInterviewScheduleRule): string {
+  const normalized = normalizeGrabInterviewScheduleRule(schedule)
+  const mode = normalized.scheduleMode ?? 'unified'
+  const seat = formatSeatRuleLabel(
+    (normalized.seatUnitMinutes ?? 30) as GrabInterviewSeatUnitMinutes,
+    normalized.seatsPerUnit ?? 1,
+  )
+  const weekdayLabels = normalized.weekdays.map((d) => grabInterviewWeekdayMap[d]).join('、') || '—'
+  if (mode === 'unified') {
+    const slots = normalized.timeSlots.map((s) => `${s.start}-${s.end}`).join('、') || '—'
+    return `${weekdayLabels} · ${slots} · ${seat}`
+  }
+  const parts = normalized.weekdays.map((d) => {
+    const slots = (normalized.dayTimeSlots?.[d] ?? [])
+      .map((s) => `${s.start}-${s.end}`)
+      .join('/')
+    return `${grabInterviewWeekdayMap[d]} ${slots || '—'}`
+  })
+  return `${parts.join('；')} · ${seat}`
+}
+
+export function validateInterviewSchedule(
+  schedule: GrabInterviewScheduleRule,
+): { ok: true } | { ok: false; message: string } {
+  const normalized = normalizeGrabInterviewScheduleRule(schedule)
+  if (!normalized.weekdays.length) {
+    return { ok: false, message: '请选择可面试的日期' }
+  }
+  const mode = normalized.scheduleMode ?? 'unified'
+  if (mode === 'unified') {
+    if (
+      !normalized.timeSlots.length ||
+      !normalized.timeSlots.every((s) => s.start && s.end && s.start < s.end)
+    ) {
+      return { ok: false, message: '请完善统一面试时间段（开始须早于结束）' }
+    }
+  } else {
+    for (const d of normalized.weekdays) {
+      const list = normalized.dayTimeSlots?.[d] ?? []
+      if (!list.length || !list.every((s) => s.start && s.end && s.start < s.end)) {
+        return { ok: false, message: `请完善${grabInterviewWeekdayMap[d]}的时间段` }
+      }
+    }
+  }
+  if (!normalized.seatsPerUnit || normalized.seatsPerUnit < 1) {
+    return { ok: false, message: '请填写面试席位人数' }
+  }
+  return { ok: true }
 }
 
 function toMinutes(t: string) {

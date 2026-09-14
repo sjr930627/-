@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ArrowDown } from '@element-plus/icons-vue'
 import { useEnterpriseScope } from '@/composables/useEnterpriseScope'
 import EnterpriseScopeSelect from '@/components/platform/EnterpriseScopeSelect.vue'
 import AttendanceDailyPanel from './AttendanceDailyView.vue'
@@ -10,6 +11,8 @@ import type { AttendanceAssignmentSource } from '@/services/attendance'
 const route = useRoute()
 const router = useRouter()
 const activeTab = ref<'daily' | 'monthly'>('daily')
+const dailyPanelRef = ref<{ exportCsv: () => void } | null>(null)
+const monthlyPanelRef = ref<{ exportCsv: () => void } | null>(null)
 const { enterpriseFilter, activeEnterpriseId, showEnterpriseControl } = useEnterpriseScope('switch')
 
 const assignmentSource = computed<AttendanceAssignmentSource>(() =>
@@ -44,6 +47,14 @@ watch(activeTab, (tab) => {
   }
 })
 
+function onExportCommand(command: 'daily' | 'monthly') {
+  if (command === 'daily') {
+    dailyPanelRef.value?.exportCsv()
+    return
+  }
+  monthlyPanelRef.value?.exportCsv()
+}
+
 onMounted(() => syncTabFromRoute())
 </script>
 
@@ -56,17 +67,32 @@ onMounted(() => syncTabFromRoute())
           {{ sourceLabel }}来源 · 按日查看打卡明细、确认/矫正工时，或按月汇总出勤统计
         </p>
       </div>
-      <EnterpriseScopeSelect
-        v-if="showEnterpriseControl"
-        v-model="enterpriseFilter"
-        mode="switch"
-        width="240px"
-      />
+      <div class="header-actions">
+        <EnterpriseScopeSelect
+          v-if="showEnterpriseControl"
+          v-model="enterpriseFilter"
+          mode="switch"
+          width="240px"
+        />
+        <el-dropdown trigger="click" @command="onExportCommand">
+          <el-button type="primary">
+            导出
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="daily">导出日考勤</el-dropdown-item>
+              <el-dropdown-item command="monthly">导出月考勤</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
     </div>
 
     <el-tabs v-model="activeTab">
       <el-tab-pane label="日考勤" name="daily">
         <AttendanceDailyPanel
+          ref="dailyPanelRef"
           embedded
           :enterprise-id="activeEnterpriseId"
           :assignment-source="assignmentSource"
@@ -76,6 +102,7 @@ onMounted(() => syncTabFromRoute())
       </el-tab-pane>
       <el-tab-pane label="月考勤" name="monthly">
         <AttendanceMonthlyPanel
+          ref="monthlyPanelRef"
           embedded
           :enterprise-id="activeEnterpriseId"
           :assignment-source="assignmentSource"
@@ -94,5 +121,12 @@ onMounted(() => syncTabFromRoute())
   align-items: flex-start;
   gap: 16px;
   margin-bottom: 8px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 </style>

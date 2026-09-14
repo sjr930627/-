@@ -264,20 +264,18 @@ export function listOpenGrabInterviewPosts(
     : undefined
 
   for (const cfg of store.grabInterviewConfigs) {
-    if (!cfg.requireInterview) continue
     const enterprise = store.enterprises.find((e) => e.id === cfg.enterpriseId)
     const brand = enterprise?.name?.replace(/中国移动|分公司|有限公司/g, '') || '企业'
 
     for (const rawDept of cfg.deptRules) {
-      const dept = normalizeDeptInterviewRule(rawDept)
+      const dept = normalizeDeptInterviewRule(rawDept, {
+        fallbackRequireInterview: cfg.requireInterview,
+      })
+      if (!dept.requireInterview) continue
       if (
         employeeId &&
         !isGrabInterviewVisibleToWorker(
-          {
-            enterpriseId: cfg.enterpriseId,
-            departmentId: dept.departmentId,
-            publishScope: dept.publishScope,
-          },
+          { enterpriseId: cfg.enterpriseId },
           worker,
           store.departments,
         )

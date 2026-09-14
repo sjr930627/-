@@ -152,13 +152,14 @@ function buildPosition(
   data: Omit<EnterprisePosition, 'id' | 'enterpriseId' | 'updatedAt'>,
   updatedAt = '2026-08-10T09:00:00.000Z',
 ): EnterprisePosition {
+  const positionName = data.profile.positionName || data.name
   return {
     id,
     enterpriseId,
-    name: data.name,
+    name: positionName,
     profile: {
       ...data.profile,
-      positionName: data.profile.positionName || data.name,
+      positionName,
     },
     schedule: data.schedule,
     updatedAt,

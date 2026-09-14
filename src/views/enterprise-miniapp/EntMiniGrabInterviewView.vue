@@ -8,31 +8,27 @@ import {
   cloneSchedule,
   emptyPositionProfile,
   emptyScheduleRule,
-  formatSeatRuleLabel,
+  formatSchedulePreviewText,
   grabInterviewRegStatusMap,
-  grabInterviewSeatUnitOptions,
-  grabInterviewWeekdayMap,
-  grabInterviewWeekdayOptions,
   normalizeDeptInterviewRule,
-  normalizeGrabInterviewScheduleRule,
   profileFromTemplate,
+  validateInterviewSchedule,
+  deptRequiresInterview,
 } from '@/constants/grabInterview'
+import GrabInterviewScheduleEditor from '@/components/schedule/GrabInterviewScheduleEditor.vue'
 import {
   isEnterpriseRootDepartment,
+  isLeafDepartment,
   isUnassignedDepartment,
 } from '@/constants/department'
 import { JOB_TYPE_OPTIONS } from '@/constants/recruitment'
-import { grabShiftPositionOptions } from '@/services/grabShift'
-import { generateId, getDepartmentName } from '@/utils'
+import { generateId, getDepartmentName, getDepartmentPath } from '@/utils'
 import type {
   GrabInterviewDeptPosition,
   GrabInterviewDeptRule,
   GrabInterviewRegStatus,
   GrabInterviewRegistration,
   GrabInterviewScheduleRule,
-  GrabInterviewSeatUnitMinutes,
-  GrabInterviewTimeSlot,
-  GrabInterviewWeekday,
 } from '@/types'
 
 const store = useAppStore()
@@ -60,20 +56,21 @@ watch(
   { deep: true },
 )
 
-const requireInterview = computed({
-  get: () => config.value.requireInterview,
-  set: (v: boolean) => {
-    store.updateGrabInterviewConfig(enterpriseId.value, { requireInterview: v })
-    config.value = store.ensureGrabInterviewConfig(enterpriseId.value)
-  },
-})
-
 const positionTemplates = computed(() => store.getEnterprisePositions(enterpriseId.value))
 
 const scopedDepartments = computed(() =>
   store
     .getDepartmentsByEnterprise(enterpriseId.value)
-    .filter((d) => !isUnassignedDepartment(d.id) && !isEnterpriseRootDepartment(d)),
+    .filter(
+      (d) =>
+        !isUnassignedDepartment(d.id) &&
+        !isEnterpriseRootDepartment(d) &&
+        isLeafDepartment(d),
+    )
+    .map((d) => ({
+      ...d,
+      pathLabel: getDepartmentPath(store.departments, d.id),
+    })),
 )
 
 const selectedDeptId = ref('')
@@ -95,132 +92,146 @@ function emptyPosition(): GrabInterviewDeptPosition {
   return {
     id: generateId('gip'),
     templateId: null,
-    profile: emptyPositionProfile(grabShiftPositionOptions[0] || ''),
-    ruleScope: 'department',
-    schedule: undefined,
+    scheduleTemplateId: null,
+    profile: emptyPositionProfile(),
+    ruleScope: 'position',
+    schedule: emptyScheduleRule(),
   }
 }
 
 function emptyDeptRule(departmentId: string): GrabInterviewDeptRule {
   return {
     departmentId,
-    publishScope: 'global',
+    requireInterview: false,
     positions: [],
-    departmentSchedule: emptyScheduleRule(),
   }
 }
 
 const ruleForm = reactive<GrabInterviewDeptRule>(emptyDeptRule(''))
-const selectedPositionId = ref('')
 const editSheetOpen = ref(false)
-const scheduleSheetOpen = ref(false)
+const editingPosition = ref<GrabInterviewDeptPosition | null>(null)
+const editingIsNew = ref(false)
 
-const activePosition = computed(
-  () => ruleForm.positions.find((p) => p.id === selectedPositionId.value) ?? null,
+const scheduleTemplates = computed(() =>
+  store.getGrabInterviewScheduleTemplates(enterpriseId.value),
 )
 
 watch(
   [selectedDeptId, () => config.value.deptRules],
   () => {
-    if (!selectedDeptId.value) return
+    if (!selectedDeptId.value || editSheetOpen.value) return
     const existing = config.value.deptRules.find((r) => r.departmentId === selectedDeptId.value)
     const next = normalizeDeptInterviewRule(
       existing ? JSON.parse(JSON.stringify(existing)) : emptyDeptRule(selectedDeptId.value),
+      { fallbackRequireInterview: config.value.requireInterview },
     )
     Object.assign(ruleForm, {
       departmentId: next.departmentId,
-      publishScope: next.publishScope ?? 'global',
+      requireInterview: next.requireInterview ?? false,
       positions: next.positions,
-      departmentSchedule: next.departmentSchedule ?? emptyScheduleRule(),
     })
-    selectedPositionId.value = ruleForm.positions[0]?.id ?? ''
   },
   { immediate: true },
 )
 
-const skillOptions = computed(() => store.skillLibraryNames)
+const skillCatalog = computed(() => store.skillLibraryCatalog)
 
 function configuredPositionCount(departmentId: string) {
   const rule = config.value.deptRules.find((r) => r.departmentId === departmentId)
   if (!rule) return 0
-  return normalizeDeptInterviewRule(rule).positions.length
+  return normalizeDeptInterviewRule(rule, {
+    fallbackRequireInterview: config.value.requireInterview,
+  }).positions.length
 }
 
-function weekdayLabels(days: GrabInterviewWeekday[]) {
-  return days.map((d) => grabInterviewWeekdayMap[d]).join('、') || '—'
+function deptNeedsInterview(departmentId: string) {
+  const rule = config.value.deptRules.find((r) => r.departmentId === departmentId)
+  return deptRequiresInterview(rule, config.value.requireInterview)
 }
 
 function schedulePreviewText(schedule?: GrabInterviewScheduleRule | null) {
-  const normalized = normalizeGrabInterviewScheduleRule(schedule)
-  const seat = formatSeatRuleLabel(
-    (normalized.seatUnitMinutes ?? 30) as GrabInterviewSeatUnitMinutes,
-    normalized.seatsPerUnit ?? 1,
-  )
-  const slots = normalized.timeSlots.map((s) => `${s.start}-${s.end}`).join('、') || '—'
-  return `${weekdayLabels(normalized.weekdays)} · ${slots} · ${seat}`
+  return formatSchedulePreviewText(schedule ?? emptyScheduleRule())
 }
 
 function positionSchedulePreview(pos: GrabInterviewDeptPosition) {
-  if (pos.ruleScope === 'department') {
-    return `沿用部门统一 · ${schedulePreviewText(ruleForm.departmentSchedule)}`
-  }
   return schedulePreviewText(pos.schedule)
 }
 
 function validateSchedule(schedule: GrabInterviewScheduleRule, label: string) {
-  const normalized = normalizeGrabInterviewScheduleRule(schedule)
-  if (!normalized.weekdays.length) {
-    ElMessage.warning(`${label}：请选择可面试的星期`)
-    return false
-  }
-  if (
-    !normalized.timeSlots.length ||
-    !normalized.timeSlots.every((s) => s.start && s.end && s.start < s.end)
-  ) {
-    ElMessage.warning(`${label}：请完善时间段（开始须早于结束）`)
-    return false
-  }
-  if (!normalized.seatsPerUnit || normalized.seatsPerUnit < 1) {
-    ElMessage.warning(`${label}：请填写面试席位人数`)
+  const result = validateInterviewSchedule(schedule)
+  if (!result.ok) {
+    ElMessage.warning(`${label}：${result.message}`)
     return false
   }
   return true
 }
 
-function addPosition(fromTemplateId?: string) {
-  const pos = emptyPosition()
-  if (fromTemplateId) {
-    const tpl = positionTemplates.value.find((t) => t.id === fromTemplateId)
-    if (tpl) {
-      pos.templateId = tpl.id
-      pos.profile = profileFromTemplate(tpl)
-      if (tpl.schedule) {
-        pos.ruleScope = 'position'
-        pos.schedule = cloneSchedule(tpl.schedule)
-      }
-    }
+function clonePosition(pos: GrabInterviewDeptPosition): GrabInterviewDeptPosition {
+  return JSON.parse(JSON.stringify(pos))
+}
+
+function persistDeptRule(message?: string) {
+  if (!selectedDeptId.value) return
+  store.upsertGrabInterviewDeptRule(enterpriseId.value, {
+    departmentId: selectedDeptId.value,
+    requireInterview: ruleForm.requireInterview,
+    positions: JSON.parse(JSON.stringify(ruleForm.positions)),
+  })
+  config.value = store.ensureGrabInterviewConfig(enterpriseId.value)
+  if (message) ElMessage.success(message)
+}
+
+function onRequireInterviewChange() {
+  if (!ruleForm.requireInterview) {
+    persistDeptRule('已保存：本部门不需要面试')
+    return
   }
-  ruleForm.positions.push(pos)
-  selectedPositionId.value = pos.id
+  persistDeptRule('已开启本部门面试')
+}
+
+function addPosition() {
+  if (!ruleForm.requireInterview) {
+    ElMessage.warning('请先开启「本部门是否需要面试」')
+    return
+  }
+  editingIsNew.value = true
+  editingPosition.value = emptyPosition()
   editSheetOpen.value = true
 }
 
 function openEditPosition(pos: GrabInterviewDeptPosition) {
-  selectedPositionId.value = pos.id
+  editingIsNew.value = false
+  const draft = clonePosition(pos)
+  if (!draft.schedule) draft.schedule = emptyScheduleRule()
+  editingPosition.value = draft
   editSheetOpen.value = true
 }
 
-function removePosition(pos: GrabInterviewDeptPosition) {
-  const idx = ruleForm.positions.findIndex((p) => p.id === pos.id)
-  if (idx < 0) return
-  ruleForm.positions.splice(idx, 1)
-  if (selectedPositionId.value === pos.id) {
-    selectedPositionId.value = ruleForm.positions[0]?.id ?? ''
+function closeEditSheet() {
+  editSheetOpen.value = false
+  editingPosition.value = null
+  editingIsNew.value = false
+}
+
+async function removePosition(pos: GrabInterviewDeptPosition) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除岗位「${pos.profile.positionName || '未命名岗位'}」？`,
+      '提示',
+      { type: 'warning' },
+    )
+    const idx = ruleForm.positions.findIndex((p) => p.id === pos.id)
+    if (idx < 0) return
+    ruleForm.positions.splice(idx, 1)
+    if (editingPosition.value?.id === pos.id) closeEditSheet()
+    persistDeptRule('岗位已删除')
+  } catch {
+    /* cancel */
   }
 }
 
 function toggleSkill(skill: string) {
-  const pos = activePosition.value
+  const pos = editingPosition.value
   if (!pos) return
   const list = pos.profile.skills ?? (pos.profile.skills = [])
   const idx = list.indexOf(skill)
@@ -229,129 +240,97 @@ function toggleSkill(skill: string) {
 }
 
 function applyTemplate(templateId: string) {
-  const pos = activePosition.value
+  const pos = editingPosition.value
   const tpl = positionTemplates.value.find((t) => t.id === templateId)
   if (!pos || !tpl) return
   pos.templateId = tpl.id
   pos.profile = profileFromTemplate(tpl)
   if (tpl.schedule) {
-    pos.ruleScope = 'position'
     pos.schedule = cloneSchedule(tpl.schedule)
-  }
-  ElMessage.success(`已应用「${tpl.name}」`)
-}
-
-function onRuleScopeChange(scope: 'position' | 'department') {
-  const pos = activePosition.value
-  if (!pos) return
-  pos.ruleScope = scope
-  if (scope === 'position') {
-    if (!pos.schedule) {
-      pos.schedule = cloneSchedule(ruleForm.departmentSchedule ?? emptyScheduleRule())
-    }
-  } else {
-    pos.schedule = undefined
+    pos.scheduleTemplateId = null
   }
 }
 
-const editingSchedule = computed(() => {
-  if (!ruleForm.departmentSchedule) ruleForm.departmentSchedule = emptyScheduleRule()
-  return ruleForm.departmentSchedule
-})
-
-function openDeptSchedule() {
-  if (!ruleForm.departmentSchedule) ruleForm.departmentSchedule = emptyScheduleRule()
-  // force unified for mini simplicity
-  ruleForm.departmentSchedule.scheduleMode = 'unified'
-  scheduleSheetOpen.value = true
+function applyScheduleTemplate(templateId: string) {
+  const pos = editingPosition.value
+  const tpl = scheduleTemplates.value.find((t) => t.id === templateId)
+  if (!pos || !tpl) return
+  pos.schedule = cloneSchedule(tpl.schedule)
+  pos.scheduleTemplateId = tpl.id
+  ElMessage.success(`已套用时间模版「${tpl.name}」`)
 }
 
-function toggleWeekday(day: GrabInterviewWeekday) {
-  const schedule = editingSchedule.value
-  const idx = schedule.weekdays.indexOf(day)
-  if (idx >= 0) schedule.weekdays.splice(idx, 1)
-  else schedule.weekdays.push(day)
-  schedule.weekdays.sort((a, b) => a - b)
-}
-
-function addTimeSlot() {
-  const schedule = editingSchedule.value
-  const slot: GrabInterviewTimeSlot = {
-    id: generateId('slot'),
-    start: '14:00',
-    end: '15:00',
-  }
-  schedule.timeSlots.push(slot)
-}
-
-function removeTimeSlot(idx: number) {
-  const schedule = editingSchedule.value
-  if (schedule.timeSlots.length <= 1) {
-    ElMessage.warning('至少保留一个时间段')
+async function saveCurrentAsScheduleTemplate() {
+  const pos = editingPosition.value
+  if (!pos?.schedule) {
+    ElMessage.warning('请先配置面试时间')
     return
   }
-  schedule.timeSlots.splice(idx, 1)
-}
-
-function saveDeptRule() {
-  if (!selectedDeptId.value) return
-  if (!ruleForm.positions.length) {
-    ElMessage.warning('请至少添加一个岗位')
-    return
-  }
-  if (!validateSchedule(ruleForm.departmentSchedule ?? emptyScheduleRule(), '部门统一面试规则')) {
-    return
-  }
-  for (const pos of ruleForm.positions) {
-    if (!pos.profile.positionName?.trim()) {
-      ElMessage.warning('请填写每个岗位的名称')
+  if (!validateSchedule(pos.schedule, '当前面试时间')) return
+  try {
+    const { value } = await ElMessageBox.prompt('请输入模版名称', '保存为面试时间模版', {
+      inputValue: `${pos.profile.positionName || '面试'}时间`,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+    })
+    const name = (value || '').trim()
+    if (!name) {
+      ElMessage.warning('请填写模版名称')
       return
     }
-    if (pos.ruleScope === 'position') {
-      if (!validateSchedule(pos.schedule ?? emptyScheduleRule(), `岗位「${pos.profile.positionName}」`)) {
-        return
-      }
-    }
-  }
-  const names = ruleForm.positions.map((p) => p.profile.positionName.trim())
-  if (new Set(names).size !== names.length) {
-    ElMessage.warning('同一部门下岗位名称不可重复')
-    return
-  }
-  store.upsertGrabInterviewDeptRule(enterpriseId.value, {
-    departmentId: selectedDeptId.value,
-    publishScope: ruleForm.publishScope === 'department' ? 'department' : 'global',
-    positions: JSON.parse(JSON.stringify(ruleForm.positions)),
-    departmentSchedule: JSON.parse(
-      JSON.stringify(ruleForm.departmentSchedule ?? emptyScheduleRule()),
-    ),
-  })
-  config.value = store.ensureGrabInterviewConfig(enterpriseId.value)
-  editSheetOpen.value = false
-  scheduleSheetOpen.value = false
-  ElMessage.success('部门面试配置已保存')
-}
-
-async function clearDeptRule() {
-  if (!selectedDeptId.value) return
-  try {
-    await ElMessageBox.confirm('确定清除该部门的全部岗位与面试规则？', '提示', { type: 'warning' })
-    store.removeGrabInterviewDeptRule(enterpriseId.value, selectedDeptId.value)
-    Object.assign(ruleForm, emptyDeptRule(selectedDeptId.value))
-    selectedPositionId.value = ''
-    config.value = store.ensureGrabInterviewConfig(enterpriseId.value)
-    ElMessage.success('已清除')
+    const saved = store.upsertGrabInterviewScheduleTemplate(enterpriseId.value, {
+      id: generateId('gist'),
+      name,
+      schedule: cloneSchedule(pos.schedule),
+    })
+    pos.scheduleTemplateId = saved.id
+    ElMessage.success('面试时间模版已保存')
   } catch {
     /* cancel */
   }
 }
 
-function closeEditSheet() {
-  editSheetOpen.value = false
+function validatePosition(pos: GrabInterviewDeptPosition) {
+  if (!pos.templateId || !pos.profile.positionName?.trim()) {
+    ElMessage.warning('请从岗位管理库选择岗位')
+    return false
+  }
+  if (!pos.profile.description?.trim()) {
+    ElMessage.warning('请填写岗位描述')
+    return false
+  }
+  if (!pos.schedule) pos.schedule = emptyScheduleRule()
+  if (!validateSchedule(pos.schedule, `岗位「${pos.profile.positionName}」面试时间`)) {
+    return false
+  }
+  return true
 }
 
-function closeScheduleSheet() {
-  scheduleSheetOpen.value = false
+function savePosition() {
+  const pos = editingPosition.value
+  if (!pos || !selectedDeptId.value) return
+  if (!ruleForm.requireInterview) {
+    ElMessage.warning('请先开启「本部门是否需要面试」')
+    return
+  }
+  if (!validatePosition(pos)) return
+
+  const name = pos.profile.positionName.trim()
+  const duplicated = ruleForm.positions.some(
+    (p) => p.id !== pos.id && p.profile.positionName.trim() === name,
+  )
+  if (duplicated) {
+    ElMessage.warning('同一部门下岗位名称不可重复')
+    return
+  }
+
+  const saved = clonePosition(pos)
+  const idx = ruleForm.positions.findIndex((p) => p.id === saved.id)
+  if (idx >= 0) ruleForm.positions[idx] = saved
+  else ruleForm.positions.push(saved)
+
+  persistDeptRule(editingIsNew.value ? '岗位已添加' : '岗位已保存')
+  closeEditSheet()
 }
 
 /** —— 报名管理 —— */
@@ -425,17 +404,6 @@ function markNoShow(row: GrabInterviewRegistration) {
   <div class="mini-page">
     <EntMiniNavBar title="抢班面试配置" back-to="/enterprise-miniapp/attendance" />
 
-    <div class="switch-card">
-      <div>
-        <strong>抢班是否需要面试</strong>
-        <p>开启后按部门配置岗位与面试时段，发布抢班将引用这些岗位</p>
-      </div>
-      <label class="switch">
-        <input v-model="requireInterview" type="checkbox">
-        <span>{{ requireInterview ? '需要' : '不需要' }}</span>
-      </label>
-    </div>
-
     <div class="tabs">
       <button type="button" :class="{ active: tab === 'config' }" @click="tab = 'config'">
         面试配置
@@ -445,8 +413,8 @@ function markNoShow(row: GrabInterviewRegistration) {
       </button>
     </div>
 
-    <section v-if="tab === 'config'" class="panel" :class="{ dimmed: !requireInterview }">
-      <p class="hint">选择部门后配置岗位；保存后可在「抢班管理」发布对应抢班需求</p>
+    <section v-if="tab === 'config'" class="panel">
+      <p class="hint">选择部门后配置「是否需要面试」与岗位；岗位卡片可编辑、保存、删除</p>
 
       <div class="dept-scroll">
         <button
@@ -457,7 +425,8 @@ function markNoShow(row: GrabInterviewRegistration) {
           :class="{ active: selectedDeptId === d.id }"
           @click="selectedDeptId = d.id"
         >
-          {{ d.name }}
+          {{ d.pathLabel }}
+          <em v-if="deptNeedsInterview(d.id)">面</em>
           <em v-if="configuredPositionCount(d.id)">{{ configuredPositionCount(d.id) }}</em>
         </button>
       </div>
@@ -465,46 +434,24 @@ function markNoShow(row: GrabInterviewRegistration) {
       <template v-if="selectedDeptId">
         <div class="section-card">
           <div class="section-head">
-            <strong>发布范围</strong>
+            <strong>本部门是否需要面试</strong>
           </div>
-          <div class="scope-row">
-            <label class="radio">
-              <input v-model="ruleForm.publishScope" type="radio" value="global" />
-              全局
-            </label>
-            <label class="radio">
-              <input v-model="ruleForm.publishScope" type="radio" value="department" />
-              部门
-            </label>
-          </div>
-          <p class="preview">全局限企业抢班池；部门限该部门抢班池</p>
+          <label class="switch">
+            <input
+              v-model="ruleForm.requireInterview"
+              type="checkbox"
+              @change="onRequireInterviewChange"
+            />
+            <span>{{ ruleForm.requireInterview ? '需要' : '不需要' }}</span>
+          </label>
+          <p class="preview">仅对本部门生效；关闭后该部门抢班直面不对灵工开放</p>
         </div>
 
-        <div class="section-card">
-          <div class="section-head">
-            <strong>部门统一面试规则</strong>
-            <button type="button" class="link" @click="openDeptSchedule">编辑时段</button>
-          </div>
-          <p class="preview">{{ schedulePreviewText(ruleForm.departmentSchedule) }}</p>
-        </div>
-
+        <div :class="{ dimmed: !ruleForm.requireInterview }">
         <div class="section-head row">
           <strong>岗位列表</strong>
           <div class="head-actions">
-            <select
-              v-if="positionTemplates.length"
-              class="tpl-select"
-              @change="
-                addPosition(($event.target as HTMLSelectElement).value);
-                ($event.target as HTMLSelectElement).value = ''
-              "
-            >
-              <option value="">从模板添加</option>
-              <option v-for="t in positionTemplates" :key="t.id" :value="t.id">
-                {{ t.name }}
-              </option>
-            </select>
-            <button type="button" class="soft-btn" @click="addPosition()">新增岗位</button>
+            <button type="button" class="soft-btn" @click="addPosition">新增岗位</button>
           </div>
         </div>
 
@@ -521,11 +468,7 @@ function markNoShow(row: GrabInterviewRegistration) {
             </div>
           </div>
         </article>
-        <div v-if="!ruleForm.positions.length" class="empty">暂无岗位，请新增或从模板添加</div>
-
-        <div class="footer-actions">
-          <button type="button" class="ghost" @click="clearDeptRule">清除配置</button>
-          <button type="button" class="primary" @click="saveDeptRule">保存配置</button>
+        <div v-if="!ruleForm.positions.length" class="empty">暂无岗位，请点击「新增岗位」</div>
         </div>
       </template>
       <div v-else class="empty">请先选择部门</div>
@@ -562,136 +505,86 @@ function markNoShow(row: GrabInterviewRegistration) {
     </section>
 
     <!-- 编辑岗位 -->
-    <div v-if="editSheetOpen && activePosition" class="sheet-mask" @click.self="closeEditSheet">
+    <div v-if="editSheetOpen && editingPosition" class="sheet-mask" @click.self="closeEditSheet">
       <div class="sheet">
         <header>
-          <strong>编辑岗位</strong>
+          <strong>{{ editingIsNew ? '添加岗位' : '编辑岗位' }}</strong>
           <button type="button" class="close" @click="closeEditSheet">×</button>
         </header>
 
-        <label v-if="positionTemplates.length">套用模板</label>
-        <select
-          v-if="positionTemplates.length"
-          :value="activePosition.templateId || ''"
-          @change="applyTemplate(($event.target as HTMLSelectElement).value)"
-        >
-          <option value="">不套用</option>
-          <option v-for="t in positionTemplates" :key="t.id" :value="t.id">{{ t.name }}</option>
-        </select>
-
         <label>岗位名称</label>
-        <input
-          v-model="activePosition.profile.positionName"
-          type="text"
-          list="grab-interview-positions"
-          maxlength="30"
-          placeholder="选择或输入岗位名称"
-        >
-        <datalist id="grab-interview-positions">
-          <option v-for="p in grabShiftPositionOptions" :key="p" :value="p" />
-        </datalist>
+        <div class="name-row">
+          <select
+            :value="editingPosition.templateId || ''"
+            @change="applyTemplate(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="" disabled>从岗位管理库选择</option>
+            <option v-for="t in positionTemplates" :key="t.id" :value="t.id">
+              {{ t.profile.positionName || t.name }}
+            </option>
+          </select>
+        </div>
 
         <label>工种</label>
-        <select v-model="activePosition.profile.jobType">
+        <select v-model="editingPosition.profile.jobType">
           <option value="">请选择</option>
           <option v-for="j in JOB_TYPE_OPTIONS" :key="j" :value="j">{{ j }}</option>
         </select>
 
         <label>技能要求</label>
-        <div class="skill-tags">
-          <button
-            v-for="sk in skillOptions"
-            :key="sk"
-            type="button"
-            class="skill"
-            :class="{ on: activePosition.profile.skills?.includes(sk) }"
-            @click="toggleSkill(sk)"
-          >
-            {{ sk }}
-          </button>
+        <p class="preview">从技能库选择</p>
+        <div v-for="category in skillCatalog" :key="category.title" class="skill-category">
+          <p class="skill-category-title">{{ category.title }}</p>
+          <div class="skill-tags">
+            <button
+              v-for="item in category.items"
+              :key="item.id"
+              type="button"
+              class="skill"
+              :class="{ on: editingPosition.profile.skills?.includes(item.name) }"
+              @click="toggleSkill(item.name)"
+            >
+              {{ item.name }}
+            </button>
+          </div>
         </div>
 
         <label>岗位要求</label>
-        <textarea v-model="activePosition.profile.requirements" rows="2" placeholder="任职要求" />
+        <textarea v-model="editingPosition.profile.requirements" rows="2" placeholder="任职要求" />
 
-        <label>岗位说明</label>
-        <textarea v-model="activePosition.profile.description" rows="2" placeholder="工作内容说明" />
+        <label>岗位描述 <em class="required">*</em></label>
+        <textarea
+          v-model="editingPosition.profile.description"
+          rows="2"
+          placeholder="工作内容说明（必填）"
+        />
 
-        <label>面试规则</label>
-        <div class="scope-row">
-          <button
-            type="button"
-            :class="{ on: activePosition.ruleScope === 'department' }"
-            @click="onRuleScopeChange('department')"
-          >
-            应用部门统一
-          </button>
-          <button
-            type="button"
-            :class="{ on: activePosition.ruleScope === 'position' }"
-            @click="onRuleScopeChange('position')"
-          >
-            岗位独立规则
-          </button>
-        </div>
-        <p class="preview">{{ positionSchedulePreview(activePosition) }}</p>
+        <label>套用面试时间模版</label>
+        <select
+          v-if="scheduleTemplates.length"
+          :value="editingPosition.scheduleTemplateId || ''"
+          @change="
+            ($event.target as HTMLSelectElement).value &&
+              applyScheduleTemplate(($event.target as HTMLSelectElement).value)
+          "
+        >
+          <option value="">不套用</option>
+          <option v-for="t in scheduleTemplates" :key="t.id" :value="t.id">{{ t.name }}</option>
+        </select>
+        <p v-else class="preview">暂无时间模版，可配置后保存</p>
 
-        <button type="button" class="submit" @click="saveDeptRule">保存到部门配置</button>
-      </div>
-    </div>
+        <label>面试时间</label>
+        <GrabInterviewScheduleEditor
+          v-if="editingPosition.schedule"
+          v-model="editingPosition.schedule"
+          compact
+        />
+        <p class="preview">{{ positionSchedulePreview(editingPosition) }}</p>
+        <button type="button" class="soft-btn" @click="saveCurrentAsScheduleTemplate">
+          保存为面试时间模版
+        </button>
 
-    <!-- 编辑部门时段 -->
-    <div v-if="scheduleSheetOpen" class="sheet-mask" @click.self="closeScheduleSheet">
-      <div class="sheet">
-        <header>
-          <strong>部门统一面试时段</strong>
-          <button type="button" class="close" @click="closeScheduleSheet">×</button>
-        </header>
-
-        <label>可面试星期</label>
-        <div class="weekday-row">
-          <button
-            v-for="opt in grabInterviewWeekdayOptions"
-            :key="opt.value"
-            type="button"
-            class="weekday"
-            :class="{ on: editingSchedule.weekdays.includes(opt.value) }"
-            @click="toggleWeekday(opt.value)"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-
-        <label>时间段</label>
-        <div v-for="(slot, idx) in editingSchedule.timeSlots" :key="slot.id" class="slot-row">
-          <input v-model="slot.start" type="time">
-          <span>—</span>
-          <input v-model="slot.end" type="time">
-          <button type="button" class="danger-link" @click="removeTimeSlot(idx)">删</button>
-        </div>
-        <button type="button" class="soft-btn" @click="addTimeSlot">添加时间段</button>
-
-        <label>席位规则</label>
-        <div class="seat-row">
-          <select v-model.number="editingSchedule.seatUnitMinutes">
-            <option
-              v-for="opt in grabInterviewSeatUnitOptions"
-              :key="opt.value"
-              :value="opt.value"
-            >
-              {{ opt.label }}
-            </option>
-          </select>
-          <input
-            v-model.number="editingSchedule.seatsPerUnit"
-            type="number"
-            min="1"
-            placeholder="人数"
-          >
-          <span class="seat-unit">人</span>
-        </div>
-
-        <button type="button" class="submit" @click="saveDeptRule">保存配置</button>
+        <button type="button" class="submit" @click="savePosition">保存</button>
       </div>
     </div>
 
@@ -792,7 +685,8 @@ function markNoShow(row: GrabInterviewRegistration) {
 .panel {
   padding: 12px 16px 28px;
 }
-.panel.dimmed {
+.panel.dimmed,
+.dimmed {
   opacity: 0.55;
   pointer-events: none;
 }
@@ -858,14 +752,6 @@ function markNoShow(row: GrabInterviewRegistration) {
   display: flex;
   gap: 6px;
   align-items: center;
-}
-.tpl-select {
-  max-width: 120px;
-  height: 30px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  font-size: 12px;
-  padding: 0 6px;
 }
 .preview {
   margin: 6px 0 0;
@@ -1026,6 +912,15 @@ function markNoShow(row: GrabInterviewRegistration) {
   font-size: 22px;
   color: #9ca3af;
 }
+.name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.name-row select {
+  flex: 1;
+  min-width: 0;
+}
 .sheet label {
   font-size: 12px;
   color: #6b7280;
@@ -1038,6 +933,18 @@ function markNoShow(row: GrabInterviewRegistration) {
   border-radius: 8px;
   padding: 10px;
   font-size: 14px;
+}
+.skill-category {
+  margin-bottom: 8px;
+}
+.skill-category-title {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+.sheet label .required {
+  color: #ef4444;
+  font-style: normal;
 }
 .skill-tags {
   display: flex;

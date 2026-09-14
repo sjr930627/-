@@ -1,4 +1,5 @@
-import type { Employee } from '@/types'
+import type { Department, Employee } from '@/types'
+import { getDepartmentName } from '@/utils'
 
 export const PAYROLL_IMPORT_DRAFT_KEY = 'payrollImportDraft'
 
@@ -10,11 +11,15 @@ export interface PayrollImportDraftLine {
   employeeId?: string
   employeeNo?: string
   departmentName?: string
+  /** 匹配到员工时的实名状态；未匹配视为未实名 */
+  realNameVerified?: boolean
 }
 
 export interface PayrollImportDraft {
   enterpriseId: string
   enterpriseName: string
+  serviceProviderId: string
+  serviceProviderName: string
   fileName?: string
   lines: PayrollImportDraftLine[]
 }
@@ -90,8 +95,12 @@ function enrichLine(
   line: Omit<PayrollImportDraftLine, 'id'> & { id?: string },
   employees: Employee[],
   enterpriseId: string,
+  departments: Department[] = [],
 ): PayrollImportDraftLine {
   const matched = matchEmployeeByPhone(employees, line.phone, enterpriseId)
+  const departmentName =
+    line.departmentName?.trim() ||
+    (matched ? getDepartmentName(departments, matched.departmentId) : '')
   return {
     id: line.id ?? `pil_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     phone: normalizePhone(line.phone),
@@ -99,7 +108,8 @@ function enrichLine(
     amount: line.amount,
     employeeId: matched?.id ?? line.employeeId,
     employeeNo: matched?.employeeNo ?? line.employeeNo,
-    departmentName: line.departmentName,
+    departmentName: departmentName || undefined,
+    realNameVerified: matched?.realNameVerified ?? line.realNameVerified ?? false,
   }
 }
 
@@ -107,6 +117,7 @@ export function parsePayrollImportCsv(
   text: string,
   employees: Employee[],
   enterpriseId: string,
+  departments: Department[] = [],
 ): PayrollImportDraftLine[] {
   const lines = text
     .replace(/^\uFEFF/, '')
@@ -119,6 +130,7 @@ export function parsePayrollImportCsv(
   const phoneIdx = findColumnIndex(headers, ['手机号', '手机', 'phone', 'mobile'])
   const nameIdx = findColumnIndex(headers, ['姓名', '名称', 'name'])
   const amountIdx = findColumnIndex(headers, ['发薪金额', '金额', 'amount', 'payroll'])
+  const deptIdx = findColumnIndex(headers, ['部门', 'department'])
   if (phoneIdx < 0 || nameIdx < 0 || amountIdx < 0) {
     throw new Error('表头需包含：手机号、姓名、发薪金额（或金额）')
   }
@@ -129,11 +141,14 @@ export function parsePayrollImportCsv(
     const phone = cells[phoneIdx] ?? ''
     const employeeName = cells[nameIdx] ?? ''
     const amountRaw = cells[amountIdx] ?? ''
+    const departmentName = deptIdx >= 0 ? (cells[deptIdx] ?? '') : ''
     if (!phone && !employeeName && !amountRaw) continue
     if (!phone) throw new Error(`第 ${i + 1} 行缺少手机号`)
     if (!employeeName) throw new Error(`第 ${i + 1} 行缺少姓名`)
     const amount = parseAmount(amountRaw)
-    rows.push(enrichLine({ phone, employeeName, amount }, employees, enterpriseId))
+    rows.push(
+      enrichLine({ phone, employeeName, amount, departmentName }, employees, enterpriseId, departments),
+    )
   }
   if (!rows.length) throw new Error('未解析到有效发薪明细')
   return rows
@@ -143,6 +158,7 @@ export function parsePayrollImportCsv(
 export function buildDemoPayrollImportLines(
   employees: Employee[],
   enterpriseId: string,
+  departments: Department[] = [],
 ): PayrollImportDraftLine[] {
   const scoped = employees.filter(
     (e) => !e.enterpriseId || e.enterpriseId === enterpriseId,
@@ -151,14 +167,16 @@ export function buildDemoPayrollImportLines(
   if (!pool.length) {
     return [
       enrichLine(
-        { phone: '13800000001', employeeName: '示例人员甲', amount: 1200 },
+        { phone: '13800000001', employeeName: '示例人员甲', amount: 1200, departmentName: '生产一车间' },
         employees,
         enterpriseId,
+        departments,
       ),
       enrichLine(
-        { phone: '13800000002', employeeName: '示例人员乙', amount: 980 },
+        { phone: '13800000002', employeeName: '示例人员乙', amount: 980, departmentName: '物流部' },
         employees,
         enterpriseId,
+        departments,
       ),
     ]
   }
@@ -173,6 +191,7 @@ export function buildDemoPayrollImportLines(
       },
       employees,
       enterpriseId,
+      departments,
     ),
   )
 }
@@ -181,18 +200,19 @@ export async function parsePayrollImportFile(
   file: File,
   employees: Employee[],
   enterpriseId: string,
+  departments: Department[] = [],
 ): Promise<PayrollImportDraftLine[]> {
   const ext = file.name.split('.').pop()?.toLowerCase()
   if (ext === 'csv') {
     const text = await file.text()
-    return parsePayrollImportCsv(text, employees, enterpriseId)
+    return parsePayrollImportCsv(text, employees, enterpriseId, departments)
   }
   // xlsx/xls：本地无解析库，生成与企业匹配的演示数据便于联调
-  return buildDemoPayrollImportLines(employees, enterpriseId)
+  return buildDemoPayrollImportLines(employees, enterpriseId, departments)
 }
 
 export function downloadPayrollImportTemplate() {
-  const content = '\uFEFF手机号,姓名,发薪金额\n13800138000,张三,1500.00\n13900139000,李四,1200.50\n'
+  const content = '\uFEFF手机号,姓名,部门,发薪金额\n13800138000,张三,生产一车间,1500.00\n13900139000,李四,物流部,1200.50\n'
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

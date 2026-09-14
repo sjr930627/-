@@ -207,7 +207,7 @@ function clearDeptWorkerPrice() {
     weekend: undefined,
     holiday: undefined,
   })
-  ElMessage.success('已清除部门结算价，将沿用考勤组配置价')
+  ElMessage.success('已清除灵工结算价，将沿用考勤组配置价')
   deptDialogVisible.value = false
 }
 
@@ -309,7 +309,7 @@ function clearTaskWorkerPrice() {
     useEnterpriseDefault: true,
     unitPrice: undefined,
   })
-  ElMessage.success('已清除灵工任务结算价，将仅使用任务类型定价')
+  ElMessage.success('已清除灵工任务结算价，将仅使用任务定价')
   taskDialogVisible.value = false
 }
 
@@ -344,7 +344,7 @@ function editingDeptGroupHint() {
         <el-tab-pane :label="`工时定价 (${deptRows.length})`" name="hourly">
           <div class="tab-toolbar">
             <p class="tab-tip text-muted">
-              「考勤组配置价」来自考勤组灵工价或考勤组定价；「部门结算价」为在此单独配置的结果，未配置则沿用考勤组配置价。
+              「考勤组配置价」来自考勤组灵工价或考勤组定价；「灵工结算价」为在此单独配置的结果，未配置则沿用考勤组配置价。
             </p>
             <el-button type="primary" :disabled="!deptRows.length" @click="openBatchDialog">
               批量配置
@@ -392,7 +392,7 @@ function editingDeptGroupHint() {
                 <span v-else class="text-muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="部门结算价" min-width="220">
+            <el-table-column label="灵工结算价" min-width="220">
               <template #default="{ row }">
                 <div v-if="row.deptConfigured" class="settlement-detail-list worker-price">
                   <div v-for="item in row.deptHourlyDetails" :key="item.label" class="detail-row">
@@ -406,7 +406,7 @@ function editingDeptGroupHint() {
             <el-table-column label="状态" width="140">
               <template #default="{ row }">
                 <el-tag :type="row.deptConfigured ? 'success' : 'warning'" size="small">
-                  {{ row.deptConfigured ? '已配置部门价' : '沿用考勤组价' }}
+                  {{ row.deptConfigured ? '已配置灵工价' : '沿用考勤组价' }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -422,11 +422,11 @@ function editingDeptGroupHint() {
 
         <el-tab-pane :label="`任务定价 (${taskRows.length})`" name="task">
           <p class="tab-tip text-muted">
-            「任务类型定价」来自任务类型配置；「灵工结算价」为在此单独配置的结果，未配置则无独立灵工任务价。
+            「任务定价」来自任务配置；「灵工结算价」为在此单独配置的结果，未配置则无独立灵工任务价。
           </p>
-          <el-table :data="taskRows" border stripe empty-text="该企业暂无任务类型">
-            <el-table-column prop="taskType.name" label="任务类型" min-width="160" />
-            <el-table-column label="任务类型定价" min-width="200">
+          <el-table :data="taskRows" border stripe empty-text="该企业暂无任务">
+            <el-table-column prop="taskType.name" label="任务名称" min-width="160" />
+            <el-table-column label="任务定价" min-width="200">
               <template #default="{ row }">{{ row.basePriceLabel }}</template>
             </el-table-column>
             <el-table-column label="灵工结算价" width="140">
@@ -438,14 +438,14 @@ function editingDeptGroupHint() {
             <el-table-column label="状态" width="150">
               <template #default="{ row }">
                 <el-tag :type="row.workerConfigured ? 'success' : 'warning'" size="small">
-                  {{ row.workerConfigured ? '已配置灵工价' : '仅任务类型定价' }}
+                  {{ row.workerConfigured ? '已配置灵工价' : '仅任务定价' }}
                 </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="110" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openTaskDialog(row.taskType)">
-                  配置灵工价
+                  配置结算价
                 </el-button>
               </template>
             </el-table-column>
@@ -569,7 +569,7 @@ function editingDeptGroupHint() {
       :closable="false"
       show-icon
       class="dialog-tip"
-      :title="`参考任务类型定价：${getTaskTypeBasePriceLabel(editingTaskType)}`"
+      :title="`参考任务定价：${getTaskTypeBasePriceLabel(editingTaskType)}`"
     />
     <el-form label-width="120px">
       <el-form-item label="灵工结算价">

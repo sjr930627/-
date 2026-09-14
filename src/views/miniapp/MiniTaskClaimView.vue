@@ -14,6 +14,7 @@ import {
   resolvePricingForTask,
   taskPricingUnitMap,
 } from '@/services/miniTask'
+import { getTaskClaimableCount } from '@/services/task'
 import { getTaskHallExtra } from '@/mock/miniTaskHallSeed'
 
 const route = useRoute()
@@ -42,10 +43,9 @@ const maxClaimable = computed(() => {
   const byPerson = task.value.maxPerPerson
     ? Math.max(0, task.value.maxPerPerson - myClaimed.value)
     : 99
-  const byQuota =
-    task.value.plannedTotal != null
-      ? Math.max(0, task.value.plannedTotal - task.value.acceptedCount)
-      : 99
+  const workflow = store.taskWorkflows.find((w) => w.id === task.value!.workflowId)
+  const claimable = getTaskClaimableCount(task.value, store.taskInstances, workflow)
+  const byQuota = claimable == null ? 99 : claimable
   return Math.min(byPerson, byQuota, 99)
 })
 

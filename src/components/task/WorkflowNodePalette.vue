@@ -72,7 +72,7 @@ function onDragStart(item: WorkflowPaletteItem, e: DragEvent) {
       </div>
       <div class="palette-body">
         <p class="palette-tip">
-          {{ readonly ? '流程已绑定任务，节点只读不可拖入' : '拖入的是节点类型，名称在画布上自定义' }}
+          {{ readonly ? '只读模式，节点不可拖入' : '拖入的是节点类型，名称在画布上自定义' }}
         </p>
         <section v-for="group in grouped" :key="group.category" class="palette-group">
           <h4>{{ group.label }}</h4>

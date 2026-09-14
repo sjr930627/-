@@ -25,11 +25,14 @@ const steps = computed(() => {
     props.workflow,
   )
 
-  if (workflowStatus === 'cancelled') {
-    const cancelStep = cancelEnd ?? {
-      id: props.currentNodeId,
-      name: props.currentNodeName?.includes('取消') ? props.currentNodeName : '已取消',
-    }
+  if (workflowStatus === 'cancelled' || workflowStatus === 'ended') {
+    const terminalStep =
+      workflowStatus === 'ended'
+        ? { id: props.currentNodeId, name: '已结束' }
+        : {
+            id: cancelEnd?.id ?? props.currentNodeId,
+            name: '已结束',
+          }
     return [
       ...mainNodes.map((node) => ({
         id: node.id,
@@ -37,9 +40,9 @@ const steps = computed(() => {
         status: 'completed' as const,
       })),
       {
-        id: cancelStep.id,
-        name: cancelStep.name,
-        status: 'cancelled' as const,
+        id: terminalStep.id,
+        name: terminalStep.name,
+        status: workflowStatus === 'ended' ? ('ended' as const) : ('cancelled' as const),
       },
     ]
   }
@@ -76,7 +79,9 @@ const steps = computed(() => {
       <div class="step-track">
         <div class="step-node">
           <el-icon v-if="step.status === 'completed'" :size="14"><Check /></el-icon>
-          <el-icon v-else-if="step.status === 'cancelled'" :size="14"><Close /></el-icon>
+          <el-icon v-else-if="step.status === 'cancelled' || step.status === 'ended'" :size="14">
+            <Close />
+          </el-icon>
           <span v-else-if="step.status === 'current'" class="current-dot" />
         </div>
         <div v-if="index < steps.length - 1" class="step-line" :class="step.status" />
@@ -85,14 +90,20 @@ const steps = computed(() => {
         <div class="step-name">{{ step.name }}</div>
         <el-tag v-if="step.status === 'current'" size="small" type="primary">当前</el-tag>
         <el-tag v-else-if="step.status === 'completed'" size="small" type="success">已完成</el-tag>
-        <el-tag v-else-if="step.status === 'cancelled'" size="small" type="info">已取消</el-tag>
+        <el-tag
+          v-else-if="step.status === 'ended' || step.status === 'cancelled'"
+          size="small"
+          type="info"
+        >
+          已结束
+        </el-tag>
       </div>
     </div>
     <div class="flow-legend">
       <span><i class="dot done" /> 已完成</span>
       <span><i class="dot current" /> 当前节点</span>
       <span><i class="dot pending" /> 待执行</span>
-      <span><i class="dot cancelled" /> 已取消</span>
+      <span><i class="dot cancelled" /> 已结束</span>
     </div>
   </div>
 </template>

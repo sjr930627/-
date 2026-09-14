@@ -7,7 +7,6 @@ import { useAppStore } from '@/stores/app'
 import { usePortal } from '@/composables/usePortal'
 import { formatMoney } from '@/constants/payrollBill'
 import {
-  defaultInvoiceProfile,
   formatInvoiceBillLabel,
   invoiceApplicationsForEnterprise,
   invoiceStats,
@@ -23,6 +22,9 @@ const router = useRouter()
 const { pathPrefix, isEnterprise, isPlatform } = usePortal()
 
 const statusFilter = ref<'all' | InvoiceStatus>('all')
+const enterpriseKeyword = ref('')
+const providerKeyword = ref('')
+const applicationNoKeyword = ref('')
 const keyword = ref('')
 const uploadVisible = ref(false)
 const uploadTargetId = ref<string | null>(null)
@@ -63,20 +65,28 @@ const invoiceProfiles = computed(() =>
   profilesForEnterprise(store.enterpriseInvoiceProfiles, enterpriseId.value),
 )
 
-const defaultProfile = computed(() =>
-  defaultInvoiceProfile(store.enterpriseInvoiceProfiles, enterpriseId.value),
-)
-
 const tableData = computed(() =>
   scopedApplications.value
     .filter((item) => {
       if (statusFilter.value !== 'all' && item.status !== statusFilter.value) return false
+      if (isPlatform.value) {
+        const entKw = enterpriseKeyword.value.trim().toLowerCase()
+        if (entKw && !(item.enterpriseName ?? '').toLowerCase().includes(entKw)) return false
+        const providerKw = providerKeyword.value.trim().toLowerCase()
+        if (providerKw && !(item.serviceProviderName ?? '').toLowerCase().includes(providerKw)) {
+          return false
+        }
+        const noKw = applicationNoKeyword.value.trim().toLowerCase()
+        if (noKw && !(item.applicationNo ?? '').toLowerCase().includes(noKw)) return false
+        return true
+      }
       if (keyword.value.trim()) {
         const kw = keyword.value.trim().toLowerCase()
         const haystack = [
           item.applicationNo,
           ...item.bills.map((bill) => bill.billNo),
           item.enterpriseName,
+          item.serviceProviderName ?? '',
           item.invoiceContent,
           item.title,
         ]
@@ -92,6 +102,7 @@ const tableData = computed(() =>
       amountLabel: formatMoney(item.amount),
       categoryLabel: item.invoiceCategory ?? '—',
       billLabel: formatInvoiceBillLabel(item.bills),
+      providerLabel: item.serviceProviderName || '—',
       statusMeta: resolveInvoiceStatusMeta(item.status),
       createdLabel: new Date(item.createdAt).toLocaleString('zh-CN'),
       issuedLabel: item.issuedAt ? new Date(item.issuedAt).toLocaleString('zh-CN') : '—',
@@ -290,8 +301,8 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
       </el-col>
     </el-row>
 
-    <el-row :gutter="16" class="middle-row">
-      <el-col v-if="isEnterprise" :span="14">
+    <el-row v-if="isEnterprise" :gutter="16" class="middle-row">
+      <el-col :span="14">
         <div class="panel-card">
           <div class="panel-title">发票单进度</div>
           <div class="progress-bar">
@@ -311,59 +322,43 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
           </div>
         </div>
       </el-col>
-      <el-col :span="isEnterprise ? 10 : 24">
+      <el-col :span="10">
         <div class="panel-card">
           <div class="panel-title-row">
             <div class="panel-title">开票抬头（付款主体）</div>
-            <el-button
-              v-if="isEnterprise"
-              link
-              type="primary"
-              @click="openCreateProfile"
-            >
+            <el-button link type="primary" @click="openCreateProfile">
               新增抬头
             </el-button>
           </div>
-          <template v-if="isEnterprise">
-            <el-table
-              :data="invoiceProfiles"
-              size="small"
-              border
-              empty-text="暂无开票抬头，请先新增"
-            >
-              <el-table-column prop="title" label="付款主体/抬头" min-width="140" show-overflow-tooltip />
-              <el-table-column prop="taxNo" label="信用代码" min-width="140" show-overflow-tooltip />
-              <el-table-column label="默认" width="70" align="center">
-                <template #default="{ row }">
-                  <el-tag v-if="row.isDefault" size="small" type="success">默认</el-tag>
-                  <span v-else class="text-muted">—</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="150" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openEditProfile(row)">编辑</el-button>
-                  <el-button
-                    v-if="!row.isDefault"
-                    link
-                    type="primary"
-                    @click="setDefaultProfile(row)"
-                  >
-                    默认
-                  </el-button>
-                  <el-button link type="danger" @click="removeProfile(row)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </template>
-          <template v-else-if="defaultProfile">
-            <dl class="profile-inline">
-              <div><dt>企业名称</dt><dd>{{ defaultProfile.title }}</dd></div>
-              <div><dt>纳税人识别号</dt><dd>{{ defaultProfile.taxNo }}</dd></div>
-              <div><dt>默认发票类型</dt><dd>{{ invoiceTypeMap[normalizeInvoiceType(defaultProfile.defaultInvoiceType)] }}</dd></div>
-              <div><dt>开户银行</dt><dd>{{ defaultProfile.bankName }}</dd></div>
-              <div><dt>银行账号</dt><dd>{{ defaultProfile.bankAccount }}</dd></div>
-            </dl>
-          </template>
+          <el-table
+            :data="invoiceProfiles"
+            size="small"
+            border
+            empty-text="暂无开票抬头，请先新增"
+          >
+            <el-table-column prop="title" label="付款主体/抬头" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="taxNo" label="信用代码" min-width="140" show-overflow-tooltip />
+            <el-table-column label="默认" width="70" align="center">
+              <template #default="{ row }">
+                <el-tag v-if="row.isDefault" size="small" type="success">默认</el-tag>
+                <span v-else class="text-muted">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openEditProfile(row)">编辑</el-button>
+                <el-button
+                  v-if="!row.isDefault"
+                  link
+                  type="primary"
+                  @click="setDefaultProfile(row)"
+                >
+                  默认
+                </el-button>
+                <el-button link type="danger" @click="removeProfile(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </div>
       </el-col>
     </el-row>
@@ -377,9 +372,31 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
         <el-radio-button value="issued">已开票</el-radio-button>
         <el-radio-button value="rejected">已驳回</el-radio-button>
       </el-radio-group>
+      <template v-if="isPlatform">
+        <el-input
+          v-model="enterpriseKeyword"
+          placeholder="企业名称（模糊）"
+          clearable
+          style="width: 180px"
+        />
+        <el-input
+          v-model="providerKeyword"
+          placeholder="服务商名称（模糊）"
+          clearable
+          style="width: 180px"
+        />
+        <el-input
+          v-model="applicationNoKeyword"
+          placeholder="开票单号（模糊）"
+          clearable
+          prefix-icon="Search"
+          style="width: 200px"
+        />
+      </template>
       <el-input
+        v-else
         v-model="keyword"
-        placeholder="搜索发票单号、结算单号、企业"
+        placeholder="搜索发票单号、结算单号"
         clearable
         prefix-icon="Search"
         style="width: 260px"
@@ -398,6 +415,7 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
       <el-table-column prop="billLabel" label="关联账单" min-width="180" />
       <el-table-column prop="amountLabel" label="开票金额" width="130" align="right" />
       <el-table-column v-if="isPlatform" prop="enterpriseName" label="企业" min-width="160" />
+      <el-table-column v-if="isPlatform" prop="providerLabel" label="服务商" min-width="160" show-overflow-tooltip />
       <el-table-column prop="title" label="发票抬头" min-width="160" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">

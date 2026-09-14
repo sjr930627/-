@@ -29,13 +29,8 @@ const existing = computed(() =>
 const form = ref({
   name: '',
   shortName: '',
-  contact: '',
-  phone: '',
-  email: '',
   address: '',
-  businessScope: '',
   cooperationStartDate: new Date().toISOString().slice(0, 10),
-  rating: 4.5,
   remark: '',
   esignPlatform: 'fadada' as ESignPlatform,
   esignAppId: '',
@@ -70,13 +65,8 @@ function loadForm() {
     form.value = {
       name: p.name,
       shortName: p.shortName ?? '',
-      contact: p.contact,
-      phone: p.phone,
-      email: p.email ?? '',
       address: p.address ?? '',
-      businessScope: p.businessScope,
       cooperationStartDate: p.cooperationStartDate,
-      rating: p.rating ?? 4.5,
       remark: p.remark ?? '',
       esignPlatform: p.esignPlatform ?? 'fadada',
       esignAppId: p.esignAppId ?? '',
@@ -103,18 +93,6 @@ function validate() {
     ElMessage.warning('请填写服务商名称')
     return false
   }
-  if (!form.value.contact.trim()) {
-    ElMessage.warning('请填写联系人')
-    return false
-  }
-  if (!/^1\d{10}$/.test(form.value.phone.trim())) {
-    ElMessage.warning('请填写正确的 11 位联系电话')
-    return false
-  }
-  if (!form.value.businessScope.trim()) {
-    ElMessage.warning('请填写业务范围')
-    return false
-  }
   for (const tpl of signTemplates.value) {
     if (!tpl.templateId.trim()) {
       ElMessage.warning(`请填写「${tpl.name}」的合同模板 ID`)
@@ -128,13 +106,13 @@ function buildPayload() {
   return {
     name: form.value.name.trim(),
     shortName: form.value.shortName.trim() || undefined,
-    contact: form.value.contact.trim(),
-    phone: form.value.phone.trim(),
-    email: form.value.email.trim() || undefined,
+    contact: existing.value?.contact ?? '',
+    phone: existing.value?.phone ?? '',
+    email: existing.value?.email,
     address: form.value.address.trim() || undefined,
-    businessScope: form.value.businessScope.trim(),
+    businessScope: existing.value?.businessScope ?? '',
     cooperationStartDate: form.value.cooperationStartDate,
-    rating: form.value.rating,
+    rating: existing.value?.rating,
     remark: form.value.remark.trim() || undefined,
     esignPlatform: form.value.esignPlatform,
     esignAppId: form.value.esignAppId.trim() || undefined,
@@ -274,7 +252,7 @@ function contractTypeLabel(type: ProviderSignContractType) {
             <div class="section-icon">服</div>
             <div>
               <h3>服务商基础信息</h3>
-              <p>填写服务商主体信息与联系方式，用于平台合作签约</p>
+              <p>填写服务商主体信息，用于平台合作签约</p>
             </div>
           </div>
 
@@ -310,55 +288,8 @@ function contractTypeLabel(type: ProviderSignContractType) {
               </el-col>
             </el-row>
 
-            <el-form-item label="联系人" required>
-              <el-row :gutter="12">
-                <el-col :span="12">
-                  <el-input v-model="form.contact" :disabled="isDetail" placeholder="联系人姓名" />
-                </el-col>
-                <el-col :span="12">
-                  <el-input
-                    v-model="form.phone"
-                    :disabled="isDetail"
-                    maxlength="11"
-                    placeholder="联系人手机号"
-                  />
-                </el-col>
-              </el-row>
-            </el-form-item>
-
-            <el-row :gutter="16">
-              <el-col :span="12">
-                <el-form-item label="联系邮箱">
-                  <el-input v-model="form.email" :disabled="isDetail" placeholder="service@example.com" />
-                </el-form-item>
-              </el-col>
-              <el-col :span="12">
-                <el-form-item label="服务评分">
-                  <el-input-number
-                    v-model="form.rating"
-                    :disabled="isDetail"
-                    :min="1"
-                    :max="5"
-                    :step="0.1"
-                    :precision="1"
-                    style="width: 100%"
-                  />
-                </el-form-item>
-              </el-col>
-            </el-row>
-
             <el-form-item label="联系地址">
               <el-input v-model="form.address" :disabled="isDetail" placeholder="请输入联系地址" />
-            </el-form-item>
-
-            <el-form-item label="业务范围" required>
-              <el-input
-                v-model="form.businessScope"
-                :disabled="isDetail"
-                type="textarea"
-                :rows="3"
-                placeholder="描述服务商可提供的服务类型，如灵活用工、物流仓储等"
-              />
             </el-form-item>
 
             <el-form-item label="备注说明">

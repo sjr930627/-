@@ -31,12 +31,18 @@ export function parseSettlementLineKey(key: string): { orderId: string; lineId: 
   return { orderId, lineId }
 }
 
+export function settleGroupKey(enterpriseId: string, serviceProviderId?: string): string {
+  return `${enterpriseId}::${serviceProviderId || 'none'}`
+}
+
 export interface PendingSettlementLineRow {
   key: string
   orderId: string
   lineId: string
   enterpriseId: string
   enterpriseName: string
+  serviceProviderId?: string
+  serviceProviderName?: string
   orderNo: string
   orderName: string
   orderLabel: string
@@ -48,6 +54,7 @@ export interface PendingSettlementLineRow {
   employeeId: string
   employeeName: string
   employeeNo?: string
+  phone?: string
   departmentName?: string
   quantity: number
   unitPrice: number
@@ -55,13 +62,20 @@ export interface PendingSettlementLineRow {
   type: SettlementManageType
 }
 
-export interface PendingEnterpriseGroup {
+/** 待结算按企业+服务商聚合 */
+export interface PendingSettleGroup {
+  key: string
   enterpriseId: string
   enterpriseName: string
+  serviceProviderId?: string
+  serviceProviderName?: string
   lines: PendingSettlementLineRow[]
   workerCount: number
   totalAmount: number
 }
+
+/** @deprecated 兼容旧名 */
+export type PendingEnterpriseGroup = PendingSettleGroup
 
 export function resolveOrderStatus(order: SettlementManageOrder): SettlementManageStatus {
   if (!order.workerLines.length) return 'pending_settlement'
@@ -95,6 +109,8 @@ export function collectPendingLines(
         lineId: line.id,
         enterpriseId: order.enterpriseId,
         enterpriseName: order.enterpriseName,
+        serviceProviderId: order.serviceProviderId,
+        serviceProviderName: order.serviceProviderName,
         orderNo: order.orderNo,
         orderName: order.orderName,
         orderLabel: order.orderName,
@@ -121,20 +137,26 @@ export function collectPendingLines(
   )
 }
 
-export function groupPendingByEnterprise(lines: PendingSettlementLineRow[]): PendingEnterpriseGroup[] {
-  const map = new Map<string, PendingEnterpriseGroup & { employeeIds: Set<string> }>()
+export function groupPendingByEnterpriseAndProvider(
+  lines: PendingSettlementLineRow[],
+): PendingSettleGroup[] {
+  const map = new Map<string, PendingSettleGroup & { employeeIds: Set<string> }>()
   for (const line of lines) {
-    let group = map.get(line.enterpriseId)
+    const key = settleGroupKey(line.enterpriseId, line.serviceProviderId)
+    let group = map.get(key)
     if (!group) {
       group = {
+        key,
         enterpriseId: line.enterpriseId,
         enterpriseName: line.enterpriseName,
+        serviceProviderId: line.serviceProviderId,
+        serviceProviderName: line.serviceProviderName,
         lines: [],
         workerCount: 0,
         totalAmount: 0,
         employeeIds: new Set(),
       }
-      map.set(line.enterpriseId, group)
+      map.set(key, group)
     }
     group.lines.push(line)
     group.employeeIds.add(line.employeeId)
@@ -145,13 +167,33 @@ export function groupPendingByEnterprise(lines: PendingSettlementLineRow[]): Pen
       ...group,
       workerCount: employeeIds.size,
     }))
-    .sort((a, b) => a.enterpriseName.localeCompare(b.enterpriseName, 'zh-CN'))
+    .sort(
+      (a, b) =>
+        a.enterpriseName.localeCompare(b.enterpriseName, 'zh-CN') ||
+        (a.serviceProviderName ?? '').localeCompare(b.serviceProviderName ?? '', 'zh-CN'),
+    )
+}
+
+/** @deprecated 使用 groupPendingByEnterpriseAndProvider */
+export function groupPendingByEnterprise(lines: PendingSettlementLineRow[]): PendingSettleGroup[] {
+  return groupPendingByEnterpriseAndProvider(lines)
 }
 
 export function slipEnterpriseLabel(slip: SettlementSlip): string {
+  if (slip.enterpriseName) return slip.enterpriseName
   const names = [...new Set(slip.lines.map((line) => line.enterpriseName))]
   if (names.length === 1) return names[0]
   return `${names.length} 家企业`
+}
+
+export function slipProviderLabel(slip: SettlementSlip): string {
+  if (slip.serviceProviderName) return slip.serviceProviderName
+  const names = [
+    ...new Set(slip.lines.map((line) => line.serviceProviderName).filter(Boolean)),
+  ] as string[]
+  if (!names.length) return '—'
+  if (names.length === 1) return names[0]
+  return `${names.length} 家服务商`
 }
 
 export function formatSettlementQuantity(type: SettlementManageType, quantity: number): string {

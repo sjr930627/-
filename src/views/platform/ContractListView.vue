@@ -4,7 +4,6 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
-  billingRuleTypeMap,
   contractApprovalStatusMap,
   contractRenewPeriodOptions,
   contractStatusMap,
@@ -17,28 +16,34 @@ import {
   type ContractRenewPeriod,
 } from '@/constants/partnership'
 import {
-  contractHasBillingType,
   formatContractBillingSummary,
   getContractBillingListItems,
 } from '@/services/contractBilling'
 import { getEffectiveVersion } from '@/services/contractVersion'
 import type {
   ContractApprovalStatus,
-  ContractBillingRuleType,
   ServiceContract,
   ServiceContractStatus,
 } from '@/types'
 
-type BillingFilter = 'all' | ContractBillingRuleType | 'both'
-
 const store = useAppStore()
 const router = useRouter()
 
-const keyword = ref('')
+const contractNo = ref('')
+const enterpriseName = ref('')
+const providerName = ref('')
 const statusFilter = ref<'all' | ServiceContractStatus>('all')
 const approvalFilter = ref<'all' | ContractApprovalStatus>('all')
-const billingFilter = ref<BillingFilter>('all')
-const dateRange = ref<[string, string] | null>(null)
+const createdRange = ref<[string, string] | null>(null)
+
+/** 点击「查询」后生效 */
+const appliedContractNo = ref('')
+const appliedEnterpriseName = ref('')
+const appliedProviderName = ref('')
+const appliedStatus = ref<'all' | ServiceContractStatus>('all')
+const appliedApproval = ref<'all' | ContractApprovalStatus>('all')
+const appliedCreatedRange = ref<[string, string] | null>(null)
+
 const page = ref(1)
 const pageSize = ref(8)
 const selectedIds = ref<string[]>([])
@@ -62,6 +67,26 @@ function avatarColor(name: string) {
 function formatDateTime(iso?: string) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('zh-CN')
+}
+
+/** 创建时间取年月日，兼容 ISO 与 YYYY-MM-DD */
+function createdDateOnly(iso?: string) {
+  if (!iso) return ''
+  return iso.slice(0, 10)
+}
+
+function onCreatedRangeChange(val: [string, string] | null) {
+  if (!val) {
+    createdRange.value = null
+    return
+  }
+  const [from, to] = val
+  if (from && to && to < from) {
+    ElMessage.warning('结束时间不能早于开始时间')
+    createdRange.value = [from, from]
+    return
+  }
+  createdRange.value = val
 }
 
 const approveDetail = computed(() => {
@@ -94,15 +119,16 @@ const approveDetail = computed(() => {
 
 const tableData = computed(() => {
   const seen = new Set<string>()
+  const noKw = appliedContractNo.value.trim()
+  const entKw = appliedEnterpriseName.value.trim().toLowerCase()
+  const providerKw = appliedProviderName.value.trim().toLowerCase()
+
   return store.serviceContracts
     .map((c) => {
       const enterprise = store.enterprises.find((e) => e.id === c.enterpriseId)
       const provider = store.serviceProviders.find((p) => p.id === c.providerId)
       const displayStatus = resolveContractDisplayStatus(c)
       const approvalStatus = resolveContractApprovalStatus(c)
-      const hasHourly = contractHasBillingType(c, 'hourly')
-      const hasTask = contractHasBillingType(c, 'task')
-      const hasBoth = hasHourly && hasTask
       return {
         ...c,
         enterpriseName: enterprise?.name ?? '-',
@@ -111,9 +137,6 @@ const tableData = computed(() => {
         statusMeta: contractStatusMap[displayStatus],
         approvalStatus,
         approvalMeta: contractApprovalStatusMap[approvalStatus],
-        hasHourly,
-        hasTask,
-        hasBoth,
         billingItems: getContractBillingListItems(c),
         expiryLabel: formatContractExpiry(c.expiryDate, c.contractTerm),
         versionLabel: c.currentVersion ? `V${c.currentVersion}` : '—',
@@ -133,23 +156,19 @@ const tableData = computed(() => {
       return true
     })
     .filter((row) => {
-      if (statusFilter.value !== 'all' && row.displayStatus !== statusFilter.value) return false
-      if (approvalFilter.value !== 'all' && row.approvalStatus !== approvalFilter.value) return false
-      if (billingFilter.value === 'hourly' && !row.hasHourly) return false
-      if (billingFilter.value === 'task' && !row.hasTask) return false
-      if (billingFilter.value === 'both' && !row.hasBoth) return false
-      if (dateRange.value) {
-        const [from, to] = dateRange.value
-        if (row.effectiveDate < from || row.effectiveDate > to) return false
+      if (noKw && row.contractNo !== noKw) return false
+      if (entKw && !row.enterpriseName.toLowerCase().includes(entKw)) return false
+      if (providerKw && !row.providerName.toLowerCase().includes(providerKw)) return false
+      if (appliedStatus.value !== 'all' && row.displayStatus !== appliedStatus.value) return false
+      if (appliedApproval.value !== 'all' && row.approvalStatus !== appliedApproval.value) {
+        return false
       }
-      if (!keyword.value.trim()) return true
-      const kw = keyword.value.trim().toLowerCase()
-      return (
-        row.contractNo.toLowerCase().includes(kw) ||
-        row.enterpriseName.toLowerCase().includes(kw) ||
-        row.providerName.toLowerCase().includes(kw) ||
-        row.name.toLowerCase().includes(kw)
-      )
+      if (appliedCreatedRange.value) {
+        const [from, to] = appliedCreatedRange.value
+        const created = createdDateOnly(row.createdAt)
+        if (!created || created < from || created > to) return false
+      }
+      return true
     })
     .sort((a, b) => b.effectiveDate.localeCompare(a.effectiveDate))
 })
@@ -161,12 +180,36 @@ const pagedData = computed(() => {
 
 const totalCount = computed(() => tableData.value.length)
 
+function runQuery() {
+  if (createdRange.value) {
+    const [from, to] = createdRange.value
+    if (from && to && to < from) {
+      ElMessage.warning('结束时间不能早于开始时间')
+      return
+    }
+  }
+  appliedContractNo.value = contractNo.value
+  appliedEnterpriseName.value = enterpriseName.value
+  appliedProviderName.value = providerName.value
+  appliedStatus.value = statusFilter.value
+  appliedApproval.value = approvalFilter.value
+  appliedCreatedRange.value = createdRange.value ? [...createdRange.value] : null
+  page.value = 1
+}
+
 function resetFilters() {
-  keyword.value = ''
+  contractNo.value = ''
+  enterpriseName.value = ''
+  providerName.value = ''
   statusFilter.value = 'all'
   approvalFilter.value = 'all'
-  billingFilter.value = 'all'
-  dateRange.value = null
+  createdRange.value = null
+  appliedContractNo.value = ''
+  appliedEnterpriseName.value = ''
+  appliedProviderName.value = ''
+  appliedStatus.value = 'all'
+  appliedApproval.value = 'all'
+  appliedCreatedRange.value = null
   page.value = 1
 }
 
@@ -178,13 +221,6 @@ function openDetail(row: ServiceContract) {
   router.push(`/contracts/${row.id}`)
 }
 
-function canSubmit(row: { approvalStatus: ContractApprovalStatus; displayStatus: ServiceContractStatus }) {
-  return (
-    row.displayStatus !== 'terminated' &&
-    (row.approvalStatus === 'draft' || row.approvalStatus === 'rejected')
-  )
-}
-
 function canApprove(row: { approvalStatus: ContractApprovalStatus }) {
   return row.approvalStatus === 'pending'
 }
@@ -193,11 +229,18 @@ function canRenew(row: { displayStatus: ServiceContractStatus }) {
   return row.displayStatus === 'expiring' || row.displayStatus === 'expired'
 }
 
-function canTerminate(row: {
+function canTerminate(row: { displayStatus: ServiceContractStatus }) {
+  return row.displayStatus === 'active' || row.displayStatus === 'expiring'
+}
+
+function canDelete(row: {
   displayStatus: ServiceContractStatus
   approvalStatus: ContractApprovalStatus
 }) {
-  return row.displayStatus !== 'terminated' && row.approvalStatus === 'approved'
+  return (
+    row.displayStatus === 'draft' &&
+    (row.approvalStatus === 'draft' || row.approvalStatus === 'rejected')
+  )
 }
 
 function canRestore(row: { displayStatus: ServiceContractStatus; expiryDate: string }) {
@@ -211,21 +254,6 @@ const renewPreviewExpiry = computed(() => {
   const base = resolveContractRenewBaseDate(renewTarget.value.expiryDate)
   return addContractRenewPeriod(base, renewPeriod.value)
 })
-
-async function submitApproval(row: ServiceContract & { enterpriseName: string }) {
-  try {
-    await ElMessageBox.confirm(
-      `确定提交「${row.enterpriseName}」合同 ${row.contractNo} 给负责人审批？`,
-      '提交审批',
-      { type: 'info' },
-    )
-    store.submitServiceContractForApproval(row.id)
-    ElMessage.success('已提交审批')
-  } catch (e) {
-    if (e === 'cancel' || e === 'close') return
-    ElMessage.warning(e instanceof Error ? e.message : '提交失败')
-  }
-}
 
 function openApprove(row: ServiceContract & { enterpriseName?: string; providerName?: string }) {
   approveTarget.value = row
@@ -258,7 +286,7 @@ function confirmApprove() {
 async function terminate(row: ServiceContract & { enterpriseName: string }) {
   try {
     await ElMessageBox.confirm(
-      `确认终止「${row.enterpriseName}」的合同 ${row.contractNo} 吗？终止后合同将不再生效。`,
+      `是否终止合同「${row.contractNo}」（${row.enterpriseName}）？终止后合同将不再生效。`,
       '确认终止',
       {
         type: 'warning',
@@ -271,6 +299,25 @@ async function terminate(row: ServiceContract & { enterpriseName: string }) {
   } catch (e) {
     if (e === 'cancel' || e === 'close') return
     ElMessage.warning(e instanceof Error ? e.message : '终止失败')
+  }
+}
+
+async function removeContract(row: ServiceContract & { enterpriseName: string }) {
+  try {
+    await ElMessageBox.confirm(
+      `是否删除合同「${row.contractNo}」（${row.enterpriseName}）？删除后不可恢复。`,
+      '确认删除',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+      },
+    )
+    store.deleteServiceContract(row.id)
+    ElMessage.success('合同已删除')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.warning(e instanceof Error ? e.message : '删除失败')
   }
 }
 
@@ -321,50 +368,59 @@ async function restore(row: ServiceContract & { enterpriseName: string }) {
     </div>
 
     <div class="page-card filter-card">
-      <div class="filter-row">
+      <div class="filter-grid">
         <el-input
-          v-model="keyword"
-          placeholder="搜索合同编号、企业名称、服务商名称..."
+          v-model="contractNo"
+          placeholder="合同编号（精确）"
           clearable
-          prefix-icon="Search"
-          class="search-input"
+          @keyup.enter="runQuery"
         />
-        <el-select v-model="billingFilter" placeholder="计费方式" style="width: 160px">
-          <el-option label="全部方式" value="all" />
-          <el-option :label="billingRuleTypeMap.hourly.label" value="hourly" />
-          <el-option :label="billingRuleTypeMap.task.label" value="task" />
-          <el-option label="工时 + 任务" value="both" />
-        </el-select>
-        <el-select v-model="approvalFilter" placeholder="审批状态" style="width: 140px" @change="page = 1">
+        <el-input
+          v-model="enterpriseName"
+          placeholder="企业名称（模糊）"
+          clearable
+          @keyup.enter="runQuery"
+        />
+        <el-input
+          v-model="providerName"
+          placeholder="服务商名称（模糊）"
+          clearable
+          @keyup.enter="runQuery"
+        />
+        <el-select v-model="approvalFilter" placeholder="审批状态">
           <el-option label="全部审批" value="all" />
           <el-option label="待提交" value="draft" />
           <el-option label="待审批" value="pending" />
           <el-option label="已通过" value="approved" />
           <el-option label="已驳回" value="rejected" />
         </el-select>
+        <el-select v-model="statusFilter" placeholder="合同状态">
+          <el-option label="全部" value="all" />
+          <el-option label="生效中" value="active" />
+          <el-option label="即将到期" value="expiring" />
+          <el-option label="已到期" value="expired" />
+          <el-option label="草稿" value="draft" />
+          <el-option label="已终止" value="terminated" />
+        </el-select>
         <el-date-picker
-          v-model="dateRange"
+          :model-value="createdRange"
           type="daterange"
           range-separator="至"
-          start-placeholder="合同日期"
-          end-placeholder="结束日期"
+          start-placeholder="创建开始"
+          end-placeholder="创建结束"
+          format="YYYY-MM-DD"
           value-format="YYYY-MM-DD"
-          style="width: 260px"
+          style="width: 100%"
+          @update:model-value="onCreatedRangeChange"
         />
-        <el-button text @click="resetFilters">
-          <el-icon><RefreshLeft /></el-icon>
-          重置筛选
-        </el-button>
+        <div class="filter-actions">
+          <el-button type="primary" @click="runQuery">查询</el-button>
+          <el-button text @click="resetFilters">
+            <el-icon><RefreshLeft /></el-icon>
+            重置筛选
+          </el-button>
+        </div>
       </div>
-
-      <el-radio-group v-model="statusFilter" class="status-tabs" @change="page = 1">
-        <el-radio-button value="all">全部</el-radio-button>
-        <el-radio-button value="active">生效中</el-radio-button>
-        <el-radio-button value="expiring">即将到期</el-radio-button>
-        <el-radio-button value="expired">已到期</el-radio-button>
-        <el-radio-button value="draft">草稿</el-radio-button>
-        <el-radio-button value="terminated">已终止</el-radio-button>
-      </el-radio-group>
     </div>
 
     <div class="page-card table-card">
@@ -389,7 +445,9 @@ async function restore(row: ServiceContract & { enterpriseName: string }) {
               <span class="name-avatar" :style="{ background: avatarColor(row.enterpriseName) }">
                 {{ row.enterpriseName.charAt(0) }}
               </span>
-              <span>{{ row.enterpriseName }}</span>
+              <el-button link type="primary" class="name-link" @click="openDetail(row)">
+                {{ row.enterpriseName }}
+              </el-button>
             </div>
           </template>
         </el-table-column>
@@ -439,7 +497,7 @@ async function restore(row: ServiceContract & { enterpriseName: string }) {
             <el-tag :type="row.approvalMeta.type" size="small">{{ row.approvalMeta.label }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="340" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">查看</el-button>
             <el-button
@@ -449,14 +507,6 @@ async function restore(row: ServiceContract & { enterpriseName: string }) {
               @click="router.push(`/contracts/${row.id}/edit`)"
             >
               编辑
-            </el-button>
-            <el-button
-              v-if="canSubmit(row)"
-              link
-              type="warning"
-              @click="submitApproval(row)"
-            >
-              提交审批
             </el-button>
             <el-button
               v-if="canApprove(row)"
@@ -481,6 +531,14 @@ async function restore(row: ServiceContract & { enterpriseName: string }) {
               @click="terminate(row)"
             >
               终止
+            </el-button>
+            <el-button
+              v-if="canDelete(row)"
+              link
+              type="danger"
+              @click="removeContract(row)"
+            >
+              删除
             </el-button>
             <el-button
               v-if="canRestore(row)"
@@ -662,20 +720,24 @@ async function restore(row: ServiceContract & { enterpriseName: string }) {
   padding: 16px 20px;
 }
 
-.filter-row {
-  display: flex;
-  flex-wrap: wrap;
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
   gap: 12px;
   align-items: center;
 }
 
-.search-input {
-  flex: 1;
-  min-width: 280px;
+.filter-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
-.status-tabs {
-  margin-top: 14px;
+@media (max-width: 1100px) {
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+  }
 }
 
 .table-card {
@@ -718,6 +780,12 @@ async function restore(row: ServiceContract & { enterpriseName: string }) {
   justify-content: center;
   font-size: 13px;
   flex-shrink: 0;
+}
+
+.name-link {
+  padding: 0;
+  height: auto;
+  font-weight: 500;
 }
 
 .billing-config-cell {

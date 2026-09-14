@@ -1166,7 +1166,7 @@ const attendanceGroupRank = computed(() => {
     <EntMiniPageHeader title="统计">
       <div class="tabs">
         <button type="button" :class="{ active: topTab === 'recruitment' }" @click="topTab = 'recruitment'">
-          招聘统计
+          入职统计
         </button>
         <button type="button" :class="{ active: topTab === 'hours' }" @click="topTab = 'hours'">
           工时统计
@@ -1184,77 +1184,8 @@ const attendanceGroupRank = computed(() => {
     </EntMiniPageHeader>
 
     <div class="body">
-      <!-- 招聘统计 -->
+      <!-- 入职统计 -->
       <template v-if="topTab === 'recruitment'">
-        <section class="card overview-card">
-          <div class="card-title">
-            <h3>招聘概览</h3>
-            <div class="trend-tools">
-              <button type="button" :class="{ active: recruitPeriod === 'month' }" @click="recruitPeriod = 'month'">本月</button>
-              <button type="button" :class="{ active: recruitPeriod === 'week' }" @click="recruitPeriod = 'week'">本周</button>
-              <button type="button" :class="{ active: recruitPeriod === 'day' }" @click="recruitPeriod = 'day'">本日</button>
-            </div>
-          </div>
-          <div class="overview-tools">
-            <input v-model="recruitAnchor" type="date">
-            <select v-model="recruitJobId">
-              <option v-for="j in jobOptions" :key="j.id" :value="j.id">{{ j.title }}</option>
-            </select>
-          </div>
-          <div class="ov-kpi">
-            <div class="ov-item">
-              <div class="ov-top">
-                <span>总需求人数</span>
-                <i class="kpi-ico" />
-              </div>
-              <strong>{{ recruitOverview.demand }}</strong>
-              <em :class="recruitOverview.demandDelta >= 0 ? 'up-pill' : 'down-pill'">
-                {{ recruitOverview.demandDelta >= 0 ? '↑' : '↓' }} {{ Math.abs(recruitOverview.demandDelta) }}%
-              </em>
-            </div>
-            <div class="ov-item">
-              <div class="ov-top">
-                <span>已录用人数</span>
-                <i class="kpi-ico" />
-              </div>
-              <strong>{{ recruitOverview.hired }}</strong>
-              <em :class="recruitOverview.hiredDelta >= 0 ? 'up-pill' : 'down-pill'">
-                {{ recruitOverview.hiredDelta >= 0 ? '↑' : '↓' }} {{ Math.abs(recruitOverview.hiredDelta) }}%
-              </em>
-            </div>
-            <div class="ov-item">
-              <div class="ov-top">
-                <span>面试中人数</span>
-                <i class="kpi-ico" />
-              </div>
-              <strong>{{ recruitOverview.interviewing }}</strong>
-              <em :class="recruitOverview.interviewDelta >= 0 ? 'up-pill' : 'down-pill'">
-                {{ recruitOverview.interviewDelta >= 0 ? '↑' : '↓' }} {{ Math.abs(recruitOverview.interviewDelta) }}%
-              </em>
-            </div>
-            <div class="ov-item">
-              <div class="ov-top">
-                <span>招聘完成率</span>
-                <i class="kpi-ico" />
-              </div>
-              <strong>{{ recruitOverview.completion }}%</strong>
-              <em :class="recruitOverview.completionDelta >= 0 ? 'up-pill' : 'down-pill'">
-                {{ recruitOverview.completionDelta >= 0 ? '↑' : '↓' }} {{ Math.abs(recruitOverview.completionDelta) }}%
-              </em>
-            </div>
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="card-title">
-            <h3>招聘趋势</h3>
-            <span class="period-tag">录用率较{{ recruitPrevLabel }}
-              <b :class="hireRateWow >= 0 ? 'up' : 'down'">{{ hireRateWow >= 0 ? '+' : '' }}{{ hireRateWow }}%</b>
-            </span>
-          </div>
-          <VChart :option="recruitTrendChart" height="200px" />
-        </section>
-
         <section class="kpi-grid">
           <div class="kpi-card">
             <div class="kpi-top">
@@ -1263,14 +1194,6 @@ const attendanceGroupRank = computed(() => {
             </div>
             <strong>{{ recruitmentCore.avgFillDays }}<small>天</small></strong>
             <em>投递→入职均值</em>
-          </div>
-          <div class="kpi-card">
-            <div class="kpi-top">
-              <span>简历转化</span>
-              <i class="kpi-ico ico-doc" />
-            </div>
-            <strong>{{ recruitmentCore.resumeConversion }}%</strong>
-            <em>筛选→面试</em>
           </div>
           <div class="kpi-card">
             <div class="kpi-top">
@@ -1284,34 +1207,13 @@ const attendanceGroupRank = computed(() => {
 
         <section class="card">
           <div class="card-title">
-            <h3>招聘转化漏斗</h3>
-            <span class="period-tag">{{ recruitRange.label }}</span>
+            <h3>岗位入职周期</h3>
+            <span class="period-tag">投递→入职</span>
           </div>
-          <div class="overview-tools funnel-tools">
-            <select v-model="funnelJobId">
+          <div class="overview-tools">
+            <select v-model="recruitJobId">
               <option v-for="j in jobOptions" :key="j.id" :value="j.id">{{ j.title }}</option>
             </select>
-          </div>
-          <div class="funnel">
-            <div v-for="(row, idx) in funnelRows" :key="row.name" class="funnel-item">
-              <div
-                class="funnel-bar"
-                :style="{ width: `${row.widthPct}%`, background: row.bg, color: row.fg }"
-              >
-                <span>{{ row.name }}</span>
-                <b>{{ row.value }}</b>
-              </div>
-              <div v-if="idx > 0" class="funnel-rate">
-                转化率 {{ row.rate ?? 0 }}%
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="card-title">
-            <h3>岗位招聘周期</h3>
-            <span class="period-tag">投递→入职</span>
           </div>
           <div v-if="!jobCycleRows.length" class="empty-tip">暂无入职线索，无法计算周期</div>
           <div v-else class="cycle-list">

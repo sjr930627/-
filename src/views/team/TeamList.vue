@@ -2,7 +2,9 @@
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import { getDepartmentName } from '@/utils'
+import { getDepartmentPath } from '@/utils'
+import DepartmentLeafCascader from '@/components/employee/DepartmentLeafCascader.vue'
+import { isLeafDepartment, isUnassignedDepartment, isEnterpriseRootDepartment } from '@/constants/department'
 import type { Team } from '@/types'
 
 const store = useAppStore()
@@ -20,7 +22,7 @@ const form = ref({
 const tableData = computed(() =>
   store.teams.map((t) => ({
     ...t,
-    departmentName: getDepartmentName(store.departments, t.departmentId),
+    departmentName: getDepartmentPath(store.departments, t.departmentId),
     memberNames: t.memberIds
       .map((id) => store.employees.find((e) => e.id === id)?.name)
       .filter(Boolean)
@@ -32,11 +34,21 @@ const tableData = computed(() =>
 
 const activeEmployees = computed(() => store.activeEmployees)
 
+const defaultLeafDepartmentId = computed(
+  () =>
+    store.departments.find(
+      (d) =>
+        isLeafDepartment(d) &&
+        !isUnassignedDepartment(d.id) &&
+        !isEnterpriseRootDepartment(d),
+    )?.id ?? '',
+)
+
 function openCreate() {
   editingId.value = null
   form.value = {
     name: '',
-    departmentId: store.departments[0]?.id ?? '',
+    departmentId: defaultLeafDepartmentId.value,
     memberIds: [],
     hourlyRate: undefined,
     description: '',
@@ -121,9 +133,11 @@ async function remove(team: Team) {
           <el-input v-model="form.name" placeholder="如：一车间早班组" />
         </el-form-item>
         <el-form-item label="所属部门" required>
-          <el-select v-model="form.departmentId" style="width: 100%">
-            <el-option v-for="d in store.departments" :key="d.id" :label="d.name" :value="d.id" />
-          </el-select>
+          <DepartmentLeafCascader
+            v-model="form.departmentId"
+            :departments="store.departments"
+            :allow-ids="form.departmentId ? [form.departmentId] : []"
+          />
         </el-form-item>
         <el-form-item label="组时薪">
           <el-input-number

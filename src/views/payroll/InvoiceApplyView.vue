@@ -359,6 +359,8 @@ function buildPayload() {
     bills: billRefs,
     enterpriseId: firstBill.enterpriseId,
     enterpriseName: firstBill.enterpriseName,
+    serviceProviderId: firstBill.serviceProviderId,
+    serviceProviderName: firstBill.serviceProviderName,
     invoiceProfileId: profile.id,
     invoiceType: form.value.invoiceType,
     invoiceContent: form.value.invoiceContent.trim(),
@@ -602,6 +604,9 @@ function downloadInvoice() {
             <el-form-item v-if="isReadonly && application" label="企业">
               <el-input :model-value="application.enterpriseName" disabled />
             </el-form-item>
+            <el-form-item v-if="isReadonly && application" label="服务商">
+              <el-input :model-value="application.serviceProviderName || '—'" disabled />
+            </el-form-item>
             <el-form-item label="付款主体 / 开票抬头" required>
               <el-input
                 v-if="isReadonly"
@@ -728,7 +733,15 @@ function downloadInvoice() {
             <span>开票抬头</span>
             <el-tag v-if="!isReadonly && invoiceProfile?.isDefault" size="small" type="success">默认</el-tag>
           </div>
-          <template v-if="displayProfile">
+          <template v-if="isReadonly && application">
+            <dl class="profile-list">
+              <div><dt>企业</dt><dd>{{ application.enterpriseName }}</dd></div>
+              <div><dt>服务商</dt><dd>{{ application.serviceProviderName || '—' }}</dd></div>
+              <div><dt>发票抬头</dt><dd>{{ application.title }}</dd></div>
+              <div><dt>纳税人识别号</dt><dd>{{ application.taxNo }}</dd></div>
+            </dl>
+          </template>
+          <template v-else-if="displayProfile">
             <dl class="profile-list">
               <div><dt>企业名称</dt><dd>{{ displayProfile.title }}</dd></div>
               <div><dt>纳税人识别号</dt><dd>{{ displayProfile.taxNo }}</dd></div>

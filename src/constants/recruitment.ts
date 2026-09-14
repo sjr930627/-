@@ -168,7 +168,18 @@ export const MARKETING_TAG_PRESETS = [
   '零经验可',
 ]
 
-export const JOB_TYPE_OPTIONS = ['零售服务', '推广', '仓储', '配送']
+export const JOB_TYPE_OPTIONS = [
+  '零售服务',
+  '零售销售',
+  '推广',
+  '仓储',
+  '配送',
+  '物流',
+  '管理',
+  '安全',
+  '市场',
+  '后勤',
+]
 
 export function formatSalaryRange(min: number, max: number): string {
   return `${(min / 1000).toFixed(0)}K-${(max / 1000).toFixed(0)}K`

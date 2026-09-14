@@ -38,6 +38,8 @@ function enrichInstance(i: TaskInstance) {
   const worker = store.employees.find((e) => e.id === i.workerId)
   return {
     ...i,
+    taskNo: task?.taskNo || '—',
+    providerLabel: task?.serviceProviderName || '—',
     workflowName: workflow?.name ?? '—',
     phone: worker?.phone || '—',
     workflowStatus,
@@ -47,43 +49,66 @@ function enrichInstance(i: TaskInstance) {
   }
 }
 
+function matchesBaseFilters(i: TaskInstance) {
+  if (workerIdFilter.value && i.workerId !== workerIdFilter.value) return false
+  if (taskFilter.value && i.taskId !== taskFilter.value) return false
+  if (enterpriseFilter.value && i.enterpriseName !== enterpriseFilter.value) return false
+  if (!keyword.value.trim()) return true
+  const kw = keyword.value.trim()
+  const task = store.tasks.find((t) => t.id === i.taskId)
+  const workflowName =
+    store.taskWorkflows.find((w) => w.id === task?.workflowId)?.name ?? ''
+  return (
+    i.taskName.includes(kw) ||
+    (task?.taskNo ?? '').includes(kw) ||
+    (task?.serviceProviderName ?? '').includes(kw) ||
+    workflowName.includes(kw) ||
+    i.enterpriseName.includes(kw) ||
+    i.workerName.includes(kw) ||
+    (store.employees.find((e) => e.id === i.workerId)?.phone ?? '').includes(kw)
+  )
+}
+
+function matchesStatusFilter(
+  status: ReturnType<typeof resolveInstanceWorkflowStatus>,
+  filter: typeof instanceStatusFilter.value,
+) {
+  if (filter === 'all') return true
+  if (filter === 'cancelled') return status === 'cancelled' || status === 'ended'
+  return status === filter
+}
+
+const filteredInstances = computed(() =>
+  store.taskInstances.filter(matchesBaseFilters).map(enrichInstance),
+)
+
 const summary = computed(() => {
-  const active = store.tasks.filter((t) => t.status === 'active')
-  const enriched = store.taskInstances.map((i) => enrichInstance(i))
+  const list =
+    instanceStatusFilter.value === 'all'
+      ? filteredInstances.value
+      : filteredInstances.value.filter((i) =>
+          matchesStatusFilter(i.workflowStatus, instanceStatusFilter.value),
+        )
+  const pool = filteredInstances.value
+  const running = pool.filter((i) => i.workflowStatus === 'running').length
+  const completed = pool.filter((i) => i.workflowStatus === 'completed').length
+  const cancelled = pool.filter(
+    (i) => i.workflowStatus === 'cancelled' || i.workflowStatus === 'ended',
+  ).length
+  const accepted = running + completed + cancelled
   return {
-    totalTasks: store.tasks.length,
-    activeTasks: active.length,
-    totalInstances: store.taskInstances.length,
-    running: enriched.filter((i) => i.workflowStatus === 'running').length,
-    completed: enriched.filter((i) => i.workflowStatus === 'completed').length,
-    ended: enriched.filter((i) => i.workflowStatus === 'cancelled').length,
+    total: list.length,
+    running,
+    accepted,
+    completed,
+    avgCompletionRate: accepted > 0 ? Math.round((completed / accepted) * 100) : 0,
   }
 })
 
 const detailData = computed(() =>
-  store.taskInstances
-    .filter((i) => {
-      if (workerIdFilter.value && i.workerId !== workerIdFilter.value) return false
-      if (taskFilter.value && i.taskId !== taskFilter.value) return false
-      if (enterpriseFilter.value && i.enterpriseName !== enterpriseFilter.value) return false
-      if (!keyword.value.trim()) return true
-      const kw = keyword.value.trim()
-      const task = store.tasks.find((t) => t.id === i.taskId)
-      const workflowName =
-        store.taskWorkflows.find((w) => w.id === task?.workflowId)?.name ?? ''
-      return (
-        i.taskName.includes(kw) ||
-        workflowName.includes(kw) ||
-        i.enterpriseName.includes(kw) ||
-        i.workerName.includes(kw) ||
-        (store.employees.find((e) => e.id === i.workerId)?.phone ?? '').includes(kw)
-      )
-    })
-    .map(enrichInstance)
-    .filter((i) => {
-      if (instanceStatusFilter.value === 'all') return true
-      return i.workflowStatus === instanceStatusFilter.value
-    }),
+  filteredInstances.value.filter((i) =>
+    matchesStatusFilter(i.workflowStatus, instanceStatusFilter.value),
+  ),
 )
 
 const workerFilterName = computed(() =>
@@ -104,24 +129,24 @@ function openInstanceDetail(row: TaskInstance) {
 <template>
   <div class="stats-row">
     <div class="stat-card">
-      <div class="stat-value">{{ summary.totalTasks }}</div>
+      <div class="stat-value">{{ summary.total }}</div>
       <div class="stat-label">任务总数</div>
     </div>
     <div class="stat-card green">
-      <div class="stat-value">{{ summary.activeTasks }}</div>
-      <div class="stat-label">进行中</div>
-    </div>
-    <div class="stat-card blue">
       <div class="stat-value">{{ summary.running }}</div>
       <div class="stat-label">执行中</div>
     </div>
+    <div class="stat-card blue">
+      <div class="stat-value">{{ summary.accepted }}</div>
+      <div class="stat-label">总接单数</div>
+    </div>
     <div class="stat-card orange">
       <div class="stat-value">{{ summary.completed }}</div>
-      <div class="stat-label">已完成</div>
+      <div class="stat-label">已完成量</div>
     </div>
     <div class="stat-card purple">
-      <div class="stat-value">{{ summary.ended }}</div>
-      <div class="stat-label">已结束</div>
+      <div class="stat-value">{{ summary.avgCompletionRate }}%</div>
+      <div class="stat-label">平均完成率</div>
     </div>
   </div>
 
@@ -136,7 +161,7 @@ function openInstanceDetail(row: TaskInstance) {
     <div class="toolbar">
       <el-input
         v-model="keyword"
-        placeholder="搜索任务/流程/企业/灵工/手机号"
+        placeholder="搜索任务ID/名称/服务商/企业/灵工/手机号"
         clearable
         style="width: 240px"
       />
@@ -175,7 +200,9 @@ function openInstanceDetail(row: TaskInstance) {
     </div>
 
     <el-table :data="detailData" border stripe>
+      <el-table-column prop="taskNo" label="任务ID" width="130" show-overflow-tooltip />
       <el-table-column prop="enterpriseName" label="企业" min-width="140" />
+      <el-table-column prop="providerLabel" label="服务商" min-width="140" show-overflow-tooltip />
       <el-table-column prop="taskName" label="任务名称" min-width="160" />
       <el-table-column prop="workflowName" label="任务流程" width="120" />
       <el-table-column prop="workerName" label="灵工" width="100" />

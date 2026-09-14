@@ -147,7 +147,7 @@ const sharedOpsRoutes: RouteRecordRaw[] = [
     path: 'grab-attendance-exceptions',
     name: 'GrabAttendanceExceptions',
     component: () => import('@/views/attendance/ExceptionList.vue'),
-    meta: { title: '考勤审批记录', group: '抢班管理', assignmentSource: 'grab' },
+    meta: { title: '考勤审批', group: '抢班管理', assignmentSource: 'grab' },
   },
   {
     path: 'grab-cancel-shift-records',
@@ -311,6 +311,18 @@ const platformChildren: RouteRecordRaw[] = [
     meta: { title: '编辑工作流', group: '任务管理', hidden: true, portal: 'platform' },
   },
   {
+    path: 'task-workflows/:id/versions/:versionId',
+    name: 'TaskWorkflowVersionView',
+    component: () => import('@/views/task/WorkflowFormView.vue'),
+    meta: { title: '版本快照', group: '任务管理', hidden: true, portal: 'platform' },
+  },
+  {
+    path: 'task-workflows/:id',
+    name: 'TaskWorkflowView',
+    component: () => import('@/views/task/WorkflowFormView.vue'),
+    meta: { title: '流程详情', group: '任务管理', hidden: true, portal: 'platform' },
+  },
+  {
     path: 'task-approval',
     name: 'TaskApproval',
     component: () => import('@/views/task/TaskApproval.vue'),
@@ -456,27 +468,41 @@ const platformChildren: RouteRecordRaw[] = [
   },
   {
     path: 'statistics/overview',
-    name: 'StatsOverview',
-    component: () => import('@/views/statistics/OverviewStatsView.vue'),
-    meta: { title: '概览看板', group: '分析统计', portal: 'platform' },
+    redirect: '/statistics/shift',
+  },
+  {
+    path: 'statistics/shift',
+    name: 'StatsShift',
+    component: () => import('@/views/statistics/ShiftStatsView.vue'),
+    meta: { title: '班次统计', group: '数据分析', portal: 'platform' },
   },
   {
     path: 'statistics/attendance',
     name: 'StatsAttendance',
     component: () => import('@/views/statistics/AttendanceStatsView.vue'),
-    meta: { title: '考勤分析', group: '分析统计', portal: 'platform' },
+    meta: { title: '考勤分析', group: '数据分析', portal: 'platform' },
   },
   {
     path: 'statistics/task',
     name: 'StatsTask',
     component: () => import('@/views/statistics/TaskStatsView.vue'),
-    meta: { title: '任务分析', group: '分析统计', portal: 'platform' },
+    meta: { title: '任务分析', group: '数据分析', portal: 'platform' },
+  },
+  {
+    path: 'statistics/settlement/enterprise',
+    name: 'StatsSettlementEnterprise',
+    component: () => import('@/views/statistics/EnterpriseSettlementStatsView.vue'),
+    meta: { title: '企业结算分析', group: '数据分析', portal: 'platform' },
+  },
+  {
+    path: 'statistics/settlement/worker',
+    name: 'StatsSettlementWorker',
+    component: () => import('@/views/statistics/WorkerSettlementStatsView.vue'),
+    meta: { title: '灵工结算分析', group: '数据分析', portal: 'platform' },
   },
   {
     path: 'statistics/settlement',
-    name: 'StatsSettlement',
-    component: () => import('@/views/statistics/SettlementStatsView.vue'),
-    meta: { title: '结算分析', group: '分析统计', portal: 'platform' },
+    redirect: '/statistics/settlement/enterprise',
   },
 ]
 
@@ -501,7 +527,7 @@ const enterpriseChildren: RouteRecordRaw[] = [
       path: 'task/progress',
       name: 'EnterpriseTaskProgress',
       component: () => import('@/views/enterprise/TaskProgress.vue'),
-      meta: { title: '任务进度', group: '任务管理', portal: 'enterprise' },
+      meta: { title: '任务管理', group: '任务管理', portal: 'enterprise' },
     },
     {
       path: 'task/acceptance',
@@ -518,6 +544,12 @@ const enterpriseChildren: RouteRecordRaw[] = [
     name: 'EnterpriseContracts',
     component: () => import('@/views/enterprise-mgmt/ContractList.vue'),
     meta: { title: '合同管理', group: '人员管理', portal: 'enterprise' },
+  },
+  {
+    path: 'contracts/:id',
+    name: 'EnterpriseContractDetail',
+    component: () => import('@/views/platform/ContractDetailView.vue'),
+    meta: { title: '合同详情', group: '合作管理', hidden: true, portal: 'enterprise' },
   },
   {
     path: 'partnership',
@@ -558,27 +590,41 @@ const enterpriseChildren: RouteRecordRaw[] = [
   },
   {
     path: 'statistics/overview',
-    name: 'EnterpriseStatsOverview',
-    component: () => import('@/views/statistics/OverviewStatsView.vue'),
-    meta: { title: '概览看板', group: '分析统计', portal: 'enterprise' },
+    redirect: '/enterprise/statistics/shift',
+  },
+  {
+    path: 'statistics/shift',
+    name: 'EnterpriseStatsShift',
+    component: () => import('@/views/statistics/ShiftStatsView.vue'),
+    meta: { title: '班次统计', group: '数据分析', portal: 'enterprise' },
   },
   {
     path: 'statistics/attendance',
     name: 'EnterpriseStatsAttendance',
     component: () => import('@/views/statistics/AttendanceStatsView.vue'),
-    meta: { title: '考勤分析', group: '分析统计', portal: 'enterprise' },
+    meta: { title: '考勤分析', group: '数据分析', portal: 'enterprise' },
   },
   {
     path: 'statistics/task',
     name: 'EnterpriseStatsTask',
     component: () => import('@/views/statistics/TaskStatsView.vue'),
-    meta: { title: '任务分析', group: '分析统计', portal: 'enterprise' },
+    meta: { title: '任务分析', group: '数据分析', portal: 'enterprise' },
+  },
+  {
+    path: 'statistics/settlement/enterprise',
+    name: 'EnterpriseStatsSettlementEnterprise',
+    component: () => import('@/views/statistics/EnterpriseSettlementStatsView.vue'),
+    meta: { title: '企业结算分析', group: '数据分析', portal: 'enterprise' },
+  },
+  {
+    path: 'statistics/settlement/worker',
+    name: 'EnterpriseStatsSettlementWorker',
+    component: () => import('@/views/statistics/WorkerSettlementStatsView.vue'),
+    meta: { title: '灵工结算分析', group: '数据分析', portal: 'enterprise' },
   },
   {
     path: 'statistics/settlement',
-    name: 'EnterpriseStatsSettlement',
-    component: () => import('@/views/statistics/SettlementStatsView.vue'),
-    meta: { title: '结算分析', group: '分析统计', portal: 'enterprise' },
+    redirect: '/enterprise/statistics/settlement/enterprise',
   },
 ]
 
@@ -602,18 +648,6 @@ const router = createRouter({
       component: EnterpriseLayout,
       redirect: '/enterprise/dashboard',
       children: enterpriseChildren,
-    },
-    {
-      path: '/bi/monitor',
-      name: 'WorkforceMonitor',
-      component: () => import('@/views/statistics/WorkforceMonitorView.vue'),
-      meta: { title: '灵工人员数据监控中心', portal: 'platform' },
-    },
-    {
-      path: '/enterprise/bi/monitor',
-      name: 'EnterpriseWorkforceMonitor',
-      component: () => import('@/views/statistics/WorkforceMonitorView.vue'),
-      meta: { title: '灵工人员数据监控中心', portal: 'enterprise' },
     },
     {
       path: '/punch',
@@ -1149,29 +1183,43 @@ const router = createRouter({
     { path: '/enterprise/task-publish', redirect: '/enterprise/task/publish' },
     { path: '/enterprise/task-acceptance', redirect: '/enterprise/task/progress' },
     { path: '/enterprise/task-progress', redirect: '/enterprise/task/progress' },
-    { path: '/enterprise/statistics', redirect: '/enterprise/statistics/overview' },
-    { path: '/statistics', redirect: '/statistics/overview' },
+    { path: '/enterprise/statistics', redirect: '/enterprise/statistics/shift' },
+    { path: '/statistics', redirect: '/statistics/shift' },
     { path: '/payroll', redirect: '/payroll/bills' },
-    // 招聘 / 系统设置模块已下线，旧入口统一回工作台
+    // 招聘分析 / 数据监控中心 / 经营看板已下线
+    { path: '/statistics/recruitment', redirect: '/statistics/shift' },
+    { path: '/enterprise/statistics/recruitment', redirect: '/enterprise/statistics/shift' },
+    { path: '/bi/monitor', redirect: '/statistics/shift' },
+    { path: '/enterprise/bi/monitor', redirect: '/enterprise/statistics/shift' },
+    // 招聘业务 / 系统设置模块已下线，旧入口统一回工作台
     { path: '/recruitment/:pathMatch(.*)*', redirect: '/dashboard' },
     { path: '/system/:pathMatch(.*)*', redirect: '/dashboard' },
-    { path: '/statistics/recruitment', redirect: '/statistics/overview' },
     { path: '/enterprise/recruitment/:pathMatch(.*)*', redirect: '/enterprise/dashboard' },
     { path: '/enterprise/system/:pathMatch(.*)*', redirect: '/enterprise/dashboard' },
   ],
 })
 
 router.beforeEach((to) => {
-  // 招聘 / 系统设置已下线：旧书签与刷新避免白屏
+  // 招聘业务模块 / 系统设置 / 招聘分析 / 数据监控已下线
   if (
     to.path.startsWith('/recruitment') ||
+    to.path.startsWith('/system') ||
     to.path === '/statistics/recruitment' ||
-    to.path.startsWith('/system')
+    to.path === '/bi/monitor'
   ) {
-    return '/dashboard'
+    return to.path.startsWith('/statistics') || to.path.startsWith('/bi')
+      ? '/statistics/shift'
+      : '/dashboard'
   }
-  if (to.path.startsWith('/enterprise/recruitment') || to.path.startsWith('/enterprise/system')) {
-    return '/enterprise/dashboard'
+  if (
+    to.path.startsWith('/enterprise/recruitment') ||
+    to.path.startsWith('/enterprise/system') ||
+    to.path === '/enterprise/statistics/recruitment' ||
+    to.path === '/enterprise/bi/monitor'
+  ) {
+    return to.path.includes('/statistics') || to.path.includes('/bi/')
+      ? '/enterprise/statistics/shift'
+      : '/enterprise/dashboard'
   }
 
   if (to.path.startsWith('/enterprise-miniapp')) {

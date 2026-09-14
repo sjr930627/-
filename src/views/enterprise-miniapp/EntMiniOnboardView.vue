@@ -9,9 +9,10 @@ import {
   departmentJoinQrImageUrl,
   enterpriseUnassignedDepartmentId,
   isEnterpriseRootDepartment,
+  isLeafDepartment,
   isUnassignedDepartment,
 } from '@/constants/department'
-import { getDepartmentName } from '@/utils'
+import { getDepartmentPath } from '@/utils'
 import type { Employee, EmployeeOnboardingStage } from '@/types'
 
 type OnboardTab = 'apps' | 'qr'
@@ -43,8 +44,18 @@ const departments = computed(() => store.getDepartmentsByEnterprise(enterpriseId
 
 const businessDepartments = computed(() =>
   departments.value.filter(
-    (d) => !isUnassignedDepartment(d.id) && !isEnterpriseRootDepartment(d),
+    (d) =>
+      !isUnassignedDepartment(d.id) &&
+      !isEnterpriseRootDepartment(d) &&
+      isLeafDepartment(d),
   ),
+)
+
+const businessDepartmentOptions = computed(() =>
+  businessDepartments.value.map((d) => ({
+    id: d.id,
+    label: getDepartmentPath(departments.value, d.id),
+  })),
 )
 
 const unassignedId = computed(() => enterpriseUnassignedDepartmentId(enterpriseId.value))
@@ -66,7 +77,7 @@ const pendingEmployees = computed(() => {
         stage,
         stageLabel: stage === 'applied' ? '已申请' : '待申请',
         applyDeptName: e.applyDepartmentId
-          ? getDepartmentName(departments.value, e.applyDepartmentId)
+          ? getDepartmentPath(departments.value, e.applyDepartmentId)
           : '—',
         applyPositionName:
           pendingApp?.positionName ||
@@ -265,14 +276,14 @@ async function copyPayload() {
       <p class="hint">选择业务部门生成入驻二维码，灵工扫码后可申请入驻该部门</p>
       <label>入驻部门</label>
       <select v-model="qrDeptId">
-        <option v-for="d in businessDepartments" :key="d.id" :value="d.id">
-          {{ d.name }}
+        <option v-for="d in businessDepartmentOptions" :key="d.id" :value="d.id">
+          {{ d.label }}
         </option>
       </select>
 
       <div v-if="qrDept" class="qr-box">
         <img v-if="qrUrl" :src="qrUrl" alt="入驻二维码" class="qr-img">
-        <strong>{{ qrDept.name }}</strong>
+        <strong>{{ getDepartmentPath(departments, qrDept.id) }}</strong>
         <p class="payload">{{ qrPayload }}</p>
         <button type="button" class="copy" @click="copyPayload">复制二维码内容</button>
       </div>
@@ -290,8 +301,8 @@ async function copyPayload() {
         <p class="sheet-meta">{{ approveTarget.name }} · {{ approveTarget.phone || '无手机号' }}</p>
         <label>入驻部门</label>
         <select v-model="approveForm.departmentId">
-          <option v-for="d in businessDepartments" :key="d.id" :value="d.id">
-            {{ d.name }}
+          <option v-for="d in businessDepartmentOptions" :key="d.id" :value="d.id">
+            {{ d.label }}
           </option>
         </select>
         <label>岗位</label>

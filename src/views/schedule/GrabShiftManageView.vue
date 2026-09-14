@@ -11,6 +11,9 @@ import {
   resolveEnterpriseIdByAttendanceGroupId,
   resolveEnterpriseIdByDepartment,
 } from '@/utils/enterpriseScope'
+import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
+import { getDepartmentPath } from '@/utils'
+import DepartmentLeafCascader from '@/components/employee/DepartmentLeafCascader.vue'
 import {
   buildGrabPublishScopeOption,
   buildGrabShiftSlotPayload,
@@ -58,7 +61,9 @@ const publishDepartmentId = ref('')
 const listDeptFilter = ref<'all' | string>('all')
 const listPositionFilter = ref<'all' | string>('all')
 const activeTab = ref<'calendar' | 'slots' | 'publish' | 'approval'>('calendar')
-const slotStatusFilter = ref<'all' | 'open' | 'partial' | 'full' | 'cancelled'>('all')
+const slotStatusFilter = ref<'all' | 'open' | 'full' | 'cancelled' | 'urgent'>('all')
+const slotPublishStatusFilter = ref<'all' | 'pending' | 'published' | 'rejected'>('all')
+const approvalSlotIdFilter = ref('')
 const publishVisible = ref(false)
 const detailVisible = ref(false)
 const reviewVisible = ref(false)
@@ -71,8 +76,15 @@ const reviewForm = ref({
   enrollFloatValue: 0,
   wageBaseHourlyRate: 0,
   wageHourlySubsidy: 0,
-  positionRequirement: '',
-  requirementsText: '',
+  positionId: '',
+  positionName: '',
+  jobType: '',
+  description: '',
+  ageMin: undefined as number | undefined,
+  ageMax: undefined as number | undefined,
+  gender: 'any' as 'any' | 'male' | 'female',
+  experience: '不限',
+  requirements: [] as string[],
 })
 const whitelistForm = ref({ employeeId: '', remark: '' })
 const cancelDialogVisible = ref(false)
@@ -125,8 +137,7 @@ const groupList = computed(() =>
 
 const publishDepartmentOptions = computed(() =>
   store.departments.filter((d) => {
-    if (d.orgType === 'enterprise') return false
-    if (d.id.includes('unassigned')) return false
+    if (isEnterpriseRootDepartment(d) || isUnassignedDepartment(d.id)) return false
     return matchesEnterprise(resolveEnterpriseIdByDepartment(d.id, store.departments))
   }),
 )
@@ -245,7 +256,6 @@ const publishForm = ref({
   positionId: '',
   positionName: '',
   jobType: '',
-  positionRequirement: '',
   description: '',
   ageMin: undefined as number | undefined,
   ageMax: undefined as number | undefined,
@@ -278,7 +288,6 @@ function applyPublishPosition(positionId: string) {
   const p = pos.profile
   publishForm.value.positionName = p.positionName || pos.name
   publishForm.value.jobType = p.jobType || ''
-  publishForm.value.positionRequirement = p.requirements?.trim() || ''
   publishForm.value.description = p.description?.trim() || ''
   publishForm.value.ageMin = p.ageMin
   publishForm.value.ageMax = p.ageMax
@@ -325,7 +334,8 @@ watch(
   (options) => {
     if (!options.length) return
     if (!options.some((o) => o.id === publishDepartmentId.value)) {
-      publishDepartmentId.value = options[0].id
+      publishDepartmentId.value =
+        options.find((o) => o.nodeType === 'leaf')?.id ?? options[0].id
     }
   },
   { immediate: true },
@@ -365,20 +375,24 @@ const skillOptions = ['普通话二级', '客服证', '夜班资质', '叉车证
 
 const grabStatusMap: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
   open: { label: '招募中', type: 'danger' },
-  partial: { label: '部分满员', type: 'warning' },
+  partial: { label: '招募中', type: 'danger' },
   full: { label: '已满员', type: 'success' },
   cancelled: { label: '已取消', type: 'info' },
 }
 
 const departmentFilterOptions = computed(() => {
   const depts = store.departments.filter((d) => {
-    if (d.orgType === 'enterprise') return false
+    if (isEnterpriseRootDepartment(d) || isUnassignedDepartment(d.id)) return false
+    if (d.nodeType !== 'leaf') return false
     const enterpriseId = resolveEnterpriseIdByDepartment(d.id, store.departments)
     return matchesEnterprise(enterpriseId)
   })
   return [
     { value: 'all', label: '全部部门' },
-    ...depts.map((d) => ({ value: d.id, label: d.name })),
+    ...depts.map((d) => ({
+      value: d.id,
+      label: getDepartmentPath(store.departments, d.id),
+    })),
   ]
 })
 
@@ -464,7 +478,18 @@ function matchesSlotBaseFilters(s: GrabShiftSlot) {
 const slotTableData = computed(() =>
   store.grabShiftSlots
     .filter((s) => matchesSlotBaseFilters(s))
-    .filter((s) => slotStatusFilter.value === 'all' || s.status === slotStatusFilter.value)
+    .filter((s) => {
+      if (slotStatusFilter.value === 'all') return true
+      if (slotStatusFilter.value === 'urgent') return isGrabShiftUrgent(s)
+      if (slotStatusFilter.value === 'open') {
+        return s.status === 'open' || (s.status as string) === 'partial'
+      }
+      return s.status === slotStatusFilter.value
+    })
+    .filter((s) => {
+      if (slotPublishStatusFilter.value === 'all') return true
+      return (s.publishStatus ?? 'published') === slotPublishStatusFilter.value
+    })
     .map(enrichSlotRow)
     .sort((a, b) => b.date.localeCompare(a.date) || a.startTime.localeCompare(b.startTime)),
 )
@@ -473,6 +498,7 @@ const pendingApplications = computed(() =>
   store.grabShiftApplications
     .filter((a) => a.status === 'pending')
     .filter((a) => {
+      if (approvalSlotIdFilter.value && a.slotId !== approvalSlotIdFilter.value) return false
       const slot = store.grabShiftSlots.find((s) => s.id === a.slotId)
       if (!slot) return false
       if (!isShiftGroupSlot(slot)) return false
@@ -510,7 +536,44 @@ const pendingApplications = computed(() =>
     }),
 )
 
-const pendingCount = computed(() => pendingApplications.value.length)
+const pendingCount = computed(() =>
+  store.grabShiftApplications
+    .filter((a) => a.status === 'pending')
+    .filter((a) => {
+      const slot = store.grabShiftSlots.find((s) => s.id === a.slotId)
+      if (!slot) return false
+      if (!isShiftGroupSlot(slot)) return false
+      if (!matchesListDeptFilter(slot)) return false
+      if (!matchesListPositionFilter(slot)) return false
+      const enterpriseId = resolveEnterpriseIdByAttendanceGroupId(
+        slot.attendanceGroupId,
+        store.attendanceGroups,
+        store.departments,
+      )
+      return matchesEnterprise(enterpriseId)
+    }).length,
+)
+
+const approvalSlotFilterLabel = computed(() => {
+  if (!approvalSlotIdFilter.value) return ''
+  const slot = store.grabShiftSlots.find((s) => s.id === approvalSlotIdFilter.value)
+  if (!slot) return '当前班次'
+  return `${slot.positionName || resolveGrabSlotShiftName(slot)} · ${slot.date}`
+})
+
+function openApprovalForSlot(slotId: string, count: number) {
+  if (!count) return
+  approvalSlotIdFilter.value = slotId
+  activeTab.value = 'approval'
+}
+
+function clearApprovalSlotFilter() {
+  approvalSlotIdFilter.value = ''
+}
+
+watch(activeTab, (tab) => {
+  if (tab !== 'approval') approvalSlotIdFilter.value = ''
+})
 
 const pendingPublishSlots = computed(() =>
   slotTableData.value.filter((s) => s.publishStatus === 'pending'),
@@ -572,7 +635,7 @@ const whitelistTableData = computed(() =>
       return {
         ...entry,
         employeeName: emp?.name ?? '—',
-        employeeNo: emp?.employeeNo ?? '—',
+        phone: emp?.phone || '—',
         position: emp?.position ?? '—',
       }
     }),
@@ -620,7 +683,9 @@ function openPublish() {
     return
   }
   if (!publishDepartmentId.value) {
-    publishDepartmentId.value = publishDepartmentOptions.value[0].id
+    publishDepartmentId.value =
+      publishDepartmentOptions.value.find((o) => o.nodeType === 'leaf')?.id ??
+      publishDepartmentOptions.value[0].id
   }
   const firstTemplate = templateShiftOptions.value[0]
   publishForm.value = {
@@ -643,7 +708,6 @@ function openPublish() {
     positionId: '',
     positionName: '',
     jobType: '',
-    positionRequirement: '',
     description: '',
     ageMin: undefined,
     ageMax: undefined,
@@ -703,11 +767,8 @@ function submitPublish() {
     ElMessage.warning('请选择岗位')
     return
   }
-  if (
-    !publishForm.value.positionRequirement.trim() &&
-    !publishForm.value.description.trim()
-  ) {
-    ElMessage.warning('请填写任职要求或岗位描述')
+  if (!publishForm.value.description.trim()) {
+    ElMessage.warning('请填写岗位描述')
     return
   }
 
@@ -754,16 +815,13 @@ function submitPublish() {
         positionName: publishForm.value.positionName.trim(),
         jobType: publishForm.value.jobType.trim() || undefined,
         skills: publishForm.value.requirements,
-        requirements: publishForm.value.positionRequirement.trim() || undefined,
         description: publishForm.value.description.trim() || undefined,
         ageMin: publishForm.value.ageMin,
         ageMax: publishForm.value.ageMax,
         gender: publishForm.value.gender,
         experience: publishForm.value.experience.trim() || undefined,
       },
-      positionRequirement:
-        publishForm.value.positionRequirement.trim() ||
-        publishForm.value.description.trim(),
+      positionRequirement: publishForm.value.description.trim(),
       requirements: publishForm.value.requirements,
       teams: store.teams,
       shifts: store.shifts,
@@ -872,6 +930,17 @@ const currentSlotProfile = computed(() =>
   currentSlot.value ? resolveGrabSlotPositionProfile(currentSlot.value) : null,
 )
 
+const reviewEnterprisePositionOptions = computed(() => {
+  const slot = currentSlot.value
+  if (!slot) return []
+  const enterpriseId = resolveEnterpriseIdByAttendanceGroupId(
+    slot.attendanceGroupId,
+    store.attendanceGroups,
+    store.departments,
+  )
+  return enterpriseId ? store.getEnterprisePositions(enterpriseId) : []
+})
+
 function openPublishReview(slot: GrabShiftSlot) {
   currentSlot.value = slot
   const breakMinutes =
@@ -879,17 +948,42 @@ function openPublishReview(slot: GrabShiftSlot) {
     parseBreakMinutes(slot.breakRule, slot.hasBreakTime, slot.breakPeriods)
   const customerBase = slot.baseHourlyRate ?? 0
   const customerSubsidy = slot.hourlySubsidy ?? 0
+  const profile = resolveGrabSlotPositionProfile(slot)
   reviewForm.value = {
     breakMinutes,
     enrollFloatMode: slot.enrollFloatMode ?? 'absolute',
     enrollFloatValue: slot.enrollFloatValue ?? 0,
     wageBaseHourlyRate: slot.wageBaseHourlyRate ?? customerBase,
     wageHourlySubsidy: slot.wageHourlySubsidy ?? customerSubsidy,
-    positionRequirement: slot.positionRequirement ?? '',
-    requirementsText: (slot.requirements ?? []).join('、'),
+    positionId: slot.positionId ?? '',
+    positionName: profile.positionName || slot.positionName || '',
+    jobType: profile.jobType || '',
+    description: profile.description || slot.positionRequirement || '',
+    ageMin: profile.ageMin,
+    ageMax: profile.ageMax,
+    gender: profile.gender || 'any',
+    experience: profile.experience || '不限',
+    requirements: [...(profile.skills?.length ? profile.skills : slot.requirements ?? [])],
   }
   reviewNote.value = ''
   reviewVisible.value = true
+}
+
+function onReviewPositionSelect(positionId: string) {
+  reviewForm.value.positionId = positionId
+  const pos =
+    reviewEnterprisePositionOptions.value.find((p) => p.id === positionId) ??
+    store.getEnterprisePosition(positionId)
+  if (!pos) return
+  const p = pos.profile
+  reviewForm.value.positionName = p.positionName || pos.name
+  reviewForm.value.jobType = p.jobType || ''
+  reviewForm.value.description = p.description?.trim() || ''
+  reviewForm.value.ageMin = p.ageMin
+  reviewForm.value.ageMax = p.ageMax
+  reviewForm.value.gender = p.gender || 'any'
+  reviewForm.value.experience = p.experience || '不限'
+  reviewForm.value.requirements = [...(p.skills ?? [])]
 }
 
 function onCalendarSlotClick(slot: GrabShiftSlot) {
@@ -903,18 +997,19 @@ function onCalendarSlotClick(slot: GrabShiftSlot) {
 async function approvePublishSlot() {
   const slot = currentSlot.value
   if (!slot) return
-  if (!reviewForm.value.positionRequirement.trim()) {
-    ElMessage.warning('请填写岗位要求')
+  if (!reviewForm.value.positionName.trim()) {
+    ElMessage.warning('请选择岗位')
+    return
+  }
+  if (!reviewForm.value.description.trim()) {
+    ElMessage.warning('请填写岗位描述')
     return
   }
   if (reviewForm.value.wageBaseHourlyRate < 0 || reviewForm.value.wageHourlySubsidy < 0) {
     ElMessage.warning('薪资费用不能为负数')
     return
   }
-  const requirements = reviewForm.value.requirementsText
-    .split(/[,，、\s]+/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const description = reviewForm.value.description.trim()
   try {
     const { value } = await ElMessageBox.prompt(
       '审批意见（可选）',
@@ -935,12 +1030,19 @@ async function approvePublishSlot() {
       wageHourlySubsidy: Math.max(0, reviewForm.value.wageHourlySubsidy),
       wageHourlyRate: reviewWageHourly.value,
       wageFee: reviewWageFee.value,
-      positionRequirement: reviewForm.value.positionRequirement.trim(),
-      requirements: requirements.length ? requirements : slot.requirements,
+      positionId: reviewForm.value.positionId || slot.positionId,
+      positionName: reviewForm.value.positionName.trim(),
+      positionRequirement: description,
+      requirements: reviewForm.value.requirements,
       positionProfile: {
-        ...resolveGrabSlotPositionProfile(slot),
-        requirements: reviewForm.value.positionRequirement.trim(),
-        skills: requirements.length ? requirements : slot.requirements,
+        positionName: reviewForm.value.positionName.trim(),
+        jobType: reviewForm.value.jobType.trim() || undefined,
+        skills: reviewForm.value.requirements,
+        description,
+        ageMin: reviewForm.value.ageMin,
+        ageMax: reviewForm.value.ageMax,
+        gender: reviewForm.value.gender,
+        experience: reviewForm.value.experience.trim() || undefined,
       },
     })
     reviewVisible.value = false
@@ -1079,9 +1181,15 @@ watch(
             <el-radio-group v-model="slotStatusFilter" size="small">
               <el-radio-button value="all">全部</el-radio-button>
               <el-radio-button value="open">招募中</el-radio-button>
-              <el-radio-button value="partial">部分满员</el-radio-button>
+              <el-radio-button value="urgent">紧急</el-radio-button>
               <el-radio-button value="full">已满员</el-radio-button>
               <el-radio-button value="cancelled">已取消</el-radio-button>
+            </el-radio-group>
+            <el-radio-group v-model="slotPublishStatusFilter" size="small">
+              <el-radio-button value="all">全部发布</el-radio-button>
+              <el-radio-button value="pending">待审核</el-radio-button>
+              <el-radio-button value="published">已上架</el-radio-button>
+              <el-radio-button value="rejected">已驳回</el-radio-button>
             </el-radio-group>
           </div>
           <GrabShiftCalendar :slots="slotTableData" @slot-click="onCalendarSlotClick" />
@@ -1092,9 +1200,15 @@ watch(
             <el-radio-group v-model="slotStatusFilter" size="small">
               <el-radio-button value="all">全部</el-radio-button>
               <el-radio-button value="open">招募中</el-radio-button>
-              <el-radio-button value="partial">部分满员</el-radio-button>
+              <el-radio-button value="urgent">紧急</el-radio-button>
               <el-radio-button value="full">已满员</el-radio-button>
               <el-radio-button value="cancelled">已取消</el-radio-button>
+            </el-radio-group>
+            <el-radio-group v-model="slotPublishStatusFilter" size="small">
+              <el-radio-button value="all">全部发布</el-radio-button>
+              <el-radio-button value="pending">待审核</el-radio-button>
+              <el-radio-button value="published">已上架</el-radio-button>
+              <el-radio-button value="rejected">已驳回</el-radio-button>
             </el-radio-group>
           </div>
 
@@ -1136,11 +1250,16 @@ watch(
                 <span v-if="!row.requirements.length" class="text-muted">无</span>
               </template>
             </el-table-column>
-            <el-table-column label="待审报名" width="90">
+            <el-table-column label="待审报名" width="100">
               <template #default="{ row }">
-                <el-badge v-if="row.pendingApps" :value="row.pendingApps" type="warning">
-                  <span>{{ row.pendingApps }} 条</span>
-                </el-badge>
+                <el-button
+                  v-if="row.pendingApps"
+                  link
+                  type="warning"
+                  @click="openApprovalForSlot(row.id, row.pendingApps)"
+                >
+                  {{ row.pendingApps }} 条
+                </el-button>
                 <span v-else class="text-muted">0</span>
               </template>
             </el-table-column>
@@ -1200,7 +1319,7 @@ watch(
                 {{ row.date }} {{ row.startTime }}-{{ row.endTime }}
               </template>
             </el-table-column>
-            <el-table-column label="费用" width="140">
+            <el-table-column label="时薪" width="140">
               <template #default="{ row }">
                 ¥{{ row.effectiveHourlyRate ?? row.baseHourlyRate ?? '—' }}/h
                 <div v-if="row.hourlySubsidy" class="gap-text">补贴 +{{ row.hourlySubsidy }}</div>
@@ -1209,7 +1328,11 @@ watch(
             <el-table-column label="需求" width="80">
               <template #default="{ row }">{{ row.requiredCount }} 人</template>
             </el-table-column>
-            <el-table-column prop="positionRequirement" label="岗位要求" min-width="160" show-overflow-tooltip />
+            <el-table-column label="岗位描述" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.positionProfile?.description || row.positionRequirement || '—' }}
+              </template>
+            </el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
                 <el-button link type="warning" @click="openPublishReview(row)">审核</el-button>
@@ -1226,6 +1349,12 @@ watch(
             title="灵工在自助端提交报名后进入待审批；白名单人员报名自动通过并写入排班表"
             style="margin-bottom: 16px"
           />
+          <div v-if="approvalSlotIdFilter" class="filter-bar">
+            <el-tag type="warning" closable @close="clearApprovalSlotFilter">
+              筛选班次：{{ approvalSlotFilterLabel }}
+            </el-tag>
+            <el-button link type="primary" @click="clearApprovalSlotFilter">查看全部待审</el-button>
+          </div>
 
           <el-table :data="pendingApplications" border stripe>
             <el-table-column prop="enterpriseName" label="企业" min-width="150" show-overflow-tooltip />
@@ -1235,8 +1364,6 @@ watch(
             <el-table-column prop="phone" label="手机号" width="130" />
             <el-table-column prop="shiftName" label="班次" width="90" />
             <el-table-column prop="date" label="日期" width="110" />
-            <el-table-column prop="teamName" label="班组" width="120" />
-            <el-table-column prop="message" label="报名说明" min-width="160" show-overflow-tooltip />
             <el-table-column label="提交时间" width="160">
               <template #default="{ row }">
                 {{ new Date(row.createdAt).toLocaleString('zh-CN') }}
@@ -1265,14 +1392,12 @@ watch(
       <el-alert type="info" :closable="false" title="提交后进入「抢班管理 · 发布审批」；发布时可配置报名上浮（人数/百分比），审核通过后上架小程序" style="margin-bottom: 16px" />
       <el-form label-width="108px">
         <el-form-item label="部门" required>
-          <el-select v-model="publishDepartmentId" filterable style="width: 100%">
-            <el-option
-              v-for="d in publishDepartmentOptions"
-              :key="d.id"
-              :label="d.name"
-              :value="d.id"
-            />
-          </el-select>
+          <DepartmentLeafCascader
+            v-model="publishDepartmentId"
+            :departments="publishDepartmentOptions"
+            :allow-ids="publishDepartmentId ? [publishDepartmentId] : []"
+            placeholder="请按级联选择叶子部门"
+          />
         </el-form-item>
         <el-form-item label="发布范围" required>
           <el-radio-group v-model="publishForm.publishScope">
@@ -1424,17 +1549,7 @@ watch(
             <el-option v-for="s in skillOptions" :key="s" :label="s" :value="s" />
           </el-select>
         </el-form-item>
-        <el-form-item label="任职要求">
-          <el-input
-            v-model="publishForm.positionRequirement"
-            type="textarea"
-            :rows="3"
-            placeholder="任职要求，灵工端抢班详情展示"
-            maxlength="500"
-            show-word-limit
-          />
-        </el-form-item>
-        <el-form-item label="岗位描述">
+        <el-form-item label="岗位描述" required>
           <el-input
             v-model="publishForm.description"
             type="textarea"
@@ -1507,7 +1622,7 @@ watch(
 
       <el-table :data="whitelistTableData" border stripe style="margin-top: 16px">
         <el-table-column prop="employeeName" label="姓名" width="100" />
-        <el-table-column prop="employeeNo" label="工号" width="100" />
+        <el-table-column prop="phone" label="手机号" width="130" />
         <el-table-column prop="position" label="岗位" min-width="120" />
         <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
@@ -1566,11 +1681,10 @@ watch(
           <el-descriptions-item label="进度">
             {{ currentSlot.grabbedCount }}/{{ currentSlot.requiredCount }} 人
           </el-descriptions-item>
-          <el-descriptions-item label="任职要求">
-            <div class="req-text">{{ currentSlotProfile?.requirements || currentSlot.positionRequirement || '—' }}</div>
-          </el-descriptions-item>
           <el-descriptions-item label="岗位描述">
-            <div class="req-text">{{ currentSlotProfile?.description || '—' }}</div>
+            <div class="req-text">
+              {{ currentSlotProfile?.description || currentSlot.positionRequirement || '—' }}
+            </div>
           </el-descriptions-item>
           <el-descriptions-item label="年龄范围">
             {{ formatGrabPositionAgeRange(currentSlotProfile?.ageMin, currentSlotProfile?.ageMax) }}
@@ -1601,7 +1715,6 @@ watch(
           <el-table-column prop="employeeName" label="报名人" width="90" />
           <el-table-column prop="phone" label="手机号" width="120" />
           <el-table-column prop="statusLabel" label="状态" width="90" />
-          <el-table-column prop="message" label="说明" show-overflow-tooltip />
         </el-table>
         <el-button
           v-if="canCancelGrabSlot(currentSlot)"
@@ -1628,6 +1741,34 @@ watch(
           style="margin-bottom: 16px"
         />
         <el-form label-position="top">
+          <el-form-item label="企业">
+            <el-input
+              :model-value="
+                enterpriseName(
+                  resolveEnterpriseIdByAttendanceGroupId(
+                    currentSlot.attendanceGroupId,
+                    store.attendanceGroups,
+                    store.departments,
+                  ),
+                )
+              "
+              disabled
+            />
+          </el-form-item>
+          <el-form-item label="部门">
+            <el-input :model-value="resolveSlotDepartmentName(currentSlot)" disabled />
+          </el-form-item>
+          <el-form-item label="发布范围">
+            <el-input
+              :model-value="
+                isGlobalGrabSlot(currentSlot)
+                  ? '全局（全域可见）'
+                  : `部门 · ${currentSlot.departmentName || currentSlot.teamName || '—'}`
+              "
+              disabled
+            />
+            <p class="field-hint text-muted">全局：全域可见；部门：仅该部门抢班池可见</p>
+          </el-form-item>
           <el-form-item label="日期">
             <el-input :model-value="currentSlot.date" disabled />
           </el-form-item>
@@ -1729,17 +1870,65 @@ watch(
             </div>
           </el-form-item>
 
-          <el-form-item label="岗位要求" required>
+          <el-divider content-position="left">岗位信息</el-divider>
+          <el-form-item label="岗位名称" required>
+            <el-select
+              :model-value="reviewForm.positionId"
+              filterable
+              placeholder="请选择企业岗位"
+              style="width: 100%"
+              @update:model-value="onReviewPositionSelect"
+            >
+              <el-option
+                v-for="p in reviewEnterprisePositionOptions"
+                :key="p.id"
+                :label="p.profile.positionName || p.name"
+                :value="p.id"
+              />
+            </el-select>
+            <p class="field-hint text-muted">选自企业岗位库，选择后带出岗位画像，可按本次审核调整</p>
+          </el-form-item>
+          <el-form-item label="岗位类型">
+            <el-input v-model="reviewForm.jobType" placeholder="如：零售服务" />
+          </el-form-item>
+          <el-form-item label="技能要求">
+            <el-select
+              v-model="reviewForm.requirements"
+              multiple
+              filterable
+              allow-create
+              placeholder="多个技能可直接输入"
+              style="width: 100%"
+            >
+              <el-option v-for="s in skillOptions" :key="s" :label="s" :value="s" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="岗位描述" required>
             <el-input
-              v-model="reviewForm.positionRequirement"
+              v-model="reviewForm.description"
               type="textarea"
-              :rows="3"
-              maxlength="500"
+              :rows="2"
+              placeholder="岗位职责与工作内容"
+              maxlength="300"
               show-word-limit
             />
           </el-form-item>
-          <el-form-item label="技能要求（顿号/逗号分隔）">
-            <el-input v-model="reviewForm.requirementsText" placeholder="如：安全作业证、健康证" />
+          <el-form-item label="年龄范围">
+            <div class="subsidy-row">
+              <el-input-number v-model="reviewForm.ageMin" :min="16" :max="70" controls-position="right" />
+              <span>—</span>
+              <el-input-number v-model="reviewForm.ageMax" :min="16" :max="70" controls-position="right" />
+            </div>
+          </el-form-item>
+          <el-form-item label="性别要求">
+            <el-radio-group v-model="reviewForm.gender">
+              <el-radio value="any">不限</el-radio>
+              <el-radio value="male">男</el-radio>
+              <el-radio value="female">女</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="经验要求">
+            <el-input v-model="reviewForm.experience" placeholder="如：不限 / 1年以上" />
           </el-form-item>
           <el-form-item label="审批意见 / 驳回原因">
             <el-input

@@ -41,6 +41,7 @@ import type {
   SettlementBillSummary,
   SettlementManageOrder,
   SettlementManageType,
+  SettlementManageWorkerLine,
   SettlementSlip,
   SettlementSlipLine,
   SkillLibraryItem,
@@ -250,13 +251,20 @@ import {
 import {
   advanceThroughSystemNodes,
   buildNodeFieldEntries,
+  canManuallyEndTask,
   countWorkflowBoundTasks,
   extractEnterpriseActionNote,
   generateTaskName,
+  generateTaskNo,
   getWorkflowClaimNode,
   getWorkflowFieldsForNode,
   isWorkflowCompletedEndNode,
+  maybeMarkTaskCompleted,
+  ensureTaskNos,
+  getTaskClaimableCount,
+  resolveInstanceWorkflowStatus,
   resolveTransitionTarget,
+  TASK_CLAIM_LIMIT_MESSAGE,
   validateWorkflowNodeFields,
 } from '@/services/task'
 import {
@@ -519,7 +527,14 @@ export const useAppStore = defineStore('app', {
       ensureWorkflowVersions,
     ),
     taskTypes: loadFromStorage<TaskType[]>('taskTypes', seedTaskTypes),
-    tasks: loadFromStorage<Task[]>('tasks', seedTasks),
+    tasks: (() => {
+      const loaded = loadFromStorage<Task[]>('tasks', seedTasks)
+      const ensured = ensureTaskNos(loaded)
+      if (ensured.some((t, i) => t.taskNo !== loaded[i]?.taskNo)) {
+        saveToStorage('tasks', ensured)
+      }
+      return ensured
+    })(),
     taskInstances: loadFromStorage<TaskInstance[]>('taskInstances', seedTaskInstances),
     enterprises: loadFromStorage<Enterprise[]>('enterprises', seedEnterprises),
     enterpriseSettlementConfigs: loadFromStorage<EnterpriseSettlementConfig[]>(
@@ -3469,7 +3484,7 @@ export const useAppStore = defineStore('app', {
       if (!wf) throw new Error('工作流不存在')
       Object.assign(wf, ensureWorkflowVersions(wf))
       if (countWorkflowBoundTasks(this.tasks, id) > 0 && data.nodes) {
-        throw new Error('工作流已绑定任务，不可修改节点，请停用后创建新版本')
+        throw new Error('工作流有进行中任务，不可修改节点')
       }
       Object.assign(wf, data, { updatedAt: new Date().toISOString() })
       this.persist('taskWorkflows')
@@ -3485,7 +3500,7 @@ export const useAppStore = defineStore('app', {
       if (!wf) throw new Error('工作流不存在')
       Object.assign(wf, ensureWorkflowVersions(wf))
       if (countWorkflowBoundTasks(this.tasks, id) > 0 && data.nodes) {
-        throw new Error('工作流已绑定任务，不可修改节点，请从版本历史恢复或停用后新建')
+        throw new Error('工作流有进行中任务，不可修改节点')
       }
       Object.assign(wf, data, {
         status: data.status ?? 'enabled',
@@ -3506,6 +3521,9 @@ export const useAppStore = defineStore('app', {
     restoreTaskWorkflowVersion(workflowId: string, versionId: string) {
       const wf = this.taskWorkflows.find((w) => w.id === workflowId)
       if (!wf) throw new Error('工作流不存在')
+      if (countWorkflowBoundTasks(this.tasks, workflowId) > 0) {
+        throw new Error('存在进行中任务，无法恢复版本')
+      }
       Object.assign(wf, ensureWorkflowVersions(wf))
       const target = wf.versions?.find((v) => v.id === versionId)
       if (!target) throw new Error('版本不存在')
@@ -3543,9 +3561,9 @@ export const useAppStore = defineStore('app', {
     removeTaskWorkflow(id: string) {
       const wf = this.taskWorkflows.find((w) => w.id === id)
       if (!wf) throw new Error('工作流不存在')
-      if (wf.status === 'enabled') throw new Error('请先停用工作流再删除')
+      if (wf.status === 'enabled') throw new Error('请先停用再删除')
       if (countWorkflowBoundTasks(this.tasks, id) > 0) {
-        throw new Error('工作流已被任务引用，无法删除')
+        throw new Error('工作流仍有进行中任务，无法删除')
       }
       this.taskWorkflows = this.taskWorkflows.filter((w) => w.id !== id)
       this.persist('taskWorkflows')
@@ -3554,7 +3572,11 @@ export const useAppStore = defineStore('app', {
     toggleTaskWorkflowStatus(id: string) {
       const wf = this.taskWorkflows.find((w) => w.id === id)
       if (!wf) throw new Error('工作流不存在')
-      wf.status = wf.status === 'enabled' ? 'disabled' : 'enabled'
+      const next = wf.status === 'enabled' ? 'disabled' : 'enabled'
+      if (next === 'disabled' && countWorkflowBoundTasks(this.tasks, id) > 0) {
+        throw new Error('存在进行中任务，不可停用该任务流')
+      }
+      wf.status = next
       wf.updatedAt = new Date().toISOString()
       this.persist('taskWorkflows')
     },
@@ -3586,8 +3608,60 @@ export const useAppStore = defineStore('app', {
     endTask(id: string) {
       const task = this.tasks.find((t) => t.id === id)
       if (!task) throw new Error('任务不存在')
+      if (task.status !== 'active') throw new Error('仅进行中的任务可结束')
+      if (!canManuallyEndTask(task)) {
+        throw new Error('任务已过结束期限且数量已完成，将自动变为已完成，不可手动结束')
+      }
       task.status = 'ended'
+      this.forceEndRunningTaskInstances(id, '任务已结束，进行中子任务同步结束')
       this.persist('tasks')
+    },
+
+    /** 期限已到且数量已完成 → 已完成；同步结束进行中子任务 */
+    syncTaskLifecycleStatuses() {
+      let changed = false
+      for (const task of this.tasks) {
+        if (task.status !== 'active') continue
+        if (maybeMarkTaskCompleted(task)) {
+          this.forceEndRunningTaskInstances(task.id, '任务已完成，进行中子任务同步结束')
+          changed = true
+        }
+      }
+      if (changed) this.persist('tasks')
+    },
+
+    forceEndRunningTaskInstances(taskId: string, reason: string) {
+      const task = this.tasks.find((t) => t.id === taskId)
+      if (!task) return
+      const workflow = this.taskWorkflows.find((w) => w.id === task.workflowId)
+      const endNode = workflow ? resolveCancelEndNode(workflow.nodes) : undefined
+      const now = new Date().toISOString()
+      let changed = false
+      for (const instance of this.taskInstances) {
+        if (instance.taskId !== taskId) continue
+        const status = resolveInstanceWorkflowStatus(instance, workflow)
+        if (status !== 'running') continue
+        if (endNode) {
+          instance.currentNodeId = endNode.id
+        }
+        instance.currentNodeName = '已结束'
+        instance.updatedAt = now
+        if (!instance.logs) instance.logs = []
+        instance.logs.forEach((l) => {
+          if (l.tag === '当前') l.tag = undefined
+        })
+        instance.logs.push({
+          id: generateId('tilog'),
+          title: '任务结束',
+          tag: '系统',
+          operator: '系统',
+          time: now,
+          description: reason,
+          kind: 'system',
+        })
+        changed = true
+      }
+      if (changed) this.persist('taskInstances')
     },
 
     setCurrentEnterprise(id: string) {
@@ -4327,6 +4401,15 @@ export const useAppStore = defineStore('app', {
     },
 
     updateServiceProviderStatus(id: string, status: ServiceProvider['status']) {
+      const provider = this.serviceProviders.find((p) => p.id === id)
+      if (!provider) throw new Error('服务商不存在')
+      if (status === 'terminated') {
+        const activeCount = this.getContractsByProvider(id).filter((c) => c.status === 'active')
+          .length
+        if (activeCount > 0) {
+          throw new Error('存在生效中的合约，无法终止服务商合作')
+        }
+      }
       return this.updateServiceProvider(id, { status })
     },
 
@@ -4403,6 +4486,7 @@ export const useAppStore = defineStore('app', {
       data: Omit<
         Task,
         | 'id'
+        | 'taskNo'
         | 'enterpriseId'
         | 'enterpriseName'
         | 'taskTypeName'
@@ -4425,9 +4509,11 @@ export const useAppStore = defineStore('app', {
       }
       if (!data.pricingMode) throw new Error('请配置任务定价')
 
+      const existingNos = new Set(this.tasks.map((t) => t.taskNo).filter(Boolean))
       const item: Task = {
         ...data,
         id: generateId('task'),
+        taskNo: generateTaskNo(new Date(), existingNos),
         enterpriseId,
         enterpriseName: ent.name,
         taskTypeName: wf.name,
@@ -4484,7 +4570,7 @@ export const useAppStore = defineStore('app', {
       })
     },
 
-    /** 平台审核企业发布的任务：可通过前修改发布内容与结算价，通过后进入任务大厅 */
+    /** 平台审核企业发布的任务：查看发布详情后通过/驳回，通过后进入任务大厅 */
     reviewEnterpriseTask(
       id: string,
       approved: boolean,
@@ -4679,6 +4765,9 @@ export const useAppStore = defineStore('app', {
         if (isWorkflowCompletedEndNode(target)) {
           task.completedCount += instance.claimQuantity ?? 1
           task.approvedCount += instance.claimQuantity ?? 1
+          if (maybeMarkTaskCompleted(task)) {
+            this.forceEndRunningTaskInstances(task.id, '任务已完成，进行中子任务同步结束')
+          }
         }
         this.addMiniAppMessage(
           instance.workerId,
@@ -5636,6 +5725,7 @@ export const useAppStore = defineStore('app', {
       enterpriseId: string
       departmentScope: 'all' | 'department'
       departmentId?: string
+      departmentIds?: string[]
       departmentName: string
       payerSubjectType?: 'self' | 'other'
       payerEnterpriseName?: string
@@ -5659,7 +5749,11 @@ export const useAppStore = defineStore('app', {
       const enterprise = this.enterprises.find((e) => e.id === input.enterpriseId)
       if (!enterprise) throw new Error('企业不存在')
       if (!input.departmentName?.trim()) throw new Error('请选择部门')
-      if (input.departmentScope === 'department' && !input.departmentId) {
+      const departmentIds =
+        input.departmentScope === 'department'
+          ? [...new Set(input.departmentIds?.length ? input.departmentIds : input.departmentId ? [input.departmentId] : [])]
+          : []
+      if (input.departmentScope === 'department' && !departmentIds.length) {
         throw new Error('请选择部门')
       }
       const provider = resolveServiceProviderForEnterprise(
@@ -5680,7 +5774,8 @@ export const useAppStore = defineStore('app', {
         enterpriseId: input.enterpriseId,
         enterpriseName: enterprise.name,
         departmentScope: input.departmentScope,
-        departmentId: input.departmentScope === 'department' ? input.departmentId : undefined,
+        departmentId: input.departmentScope === 'department' ? departmentIds[0] : undefined,
+        departmentIds: input.departmentScope === 'department' ? departmentIds : undefined,
         departmentName: input.departmentName.trim(),
         payerSubjectType: input.payerSubjectType === 'other' ? 'other' : 'self',
         payerEnterpriseName:
@@ -5733,11 +5828,35 @@ export const useAppStore = defineStore('app', {
       const now = new Date().toISOString()
       bill.status = 'pending_confirm'
       bill.pushedAt = now
+      bill.rejectReason = undefined
+      bill.rejectedAt = undefined
       bill.updatedAt = now
       this.persist('settlementBills')
       this.pushNotification({
         title: '账单已提交',
         content: `账单 ${bill.billNo} 已推送至 ${bill.enterpriseName} 待确认`,
+        type: 'approval',
+      })
+    },
+
+    /** 企业驳回账单：退回待提交，供服务商修订后再次提交 */
+    rejectSettlementBill(id: string, reason: string) {
+      const bill = this.settlementBills.find((b) => b.id === id)
+      if (!bill) throw new Error('账单不存在')
+      if (bill.status !== 'pending_confirm') throw new Error('仅待确认账单可驳回')
+      const note = reason.trim()
+      if (!note) throw new Error('请填写驳回原因')
+      const now = new Date().toISOString()
+      bill.status = 'pending_submit'
+      bill.rejectReason = note
+      bill.rejectedAt = now
+      bill.pushedAt = undefined
+      bill.confirmedAt = undefined
+      bill.updatedAt = now
+      this.persist('settlementBills')
+      this.pushNotification({
+        title: '账单已被企业驳回',
+        content: `账单 ${bill.billNo} 已退回待提交：${note}`,
         type: 'approval',
       })
     },
@@ -6216,7 +6335,14 @@ export const useAppStore = defineStore('app', {
     batchSettleWorkerLines(items: { orderId: string; lineId: string }[], type: SettlementManageType) {
       if (!items.length) throw new Error('请选择待结算灵工')
       const now = new Date().toISOString()
-      const slipLines: SettlementSlipLine[] = []
+      const day = now.slice(0, 10)
+
+      type Prepared = {
+        order: SettlementManageOrder
+        line: SettlementManageWorkerLine
+        slipLine: SettlementSlipLine
+      }
+      const prepared: Prepared[] = []
 
       for (const { orderId, lineId } of items) {
         const order = this.settlementManageOrders.find((o) => o.id === orderId)
@@ -6224,66 +6350,99 @@ export const useAppStore = defineStore('app', {
         const line = order.workerLines.find((l) => l.id === lineId)
         if (!line || line.status !== 'pending_settlement') continue
 
-        line.status = 'settled'
-        line.settledAt = now
-        order.updatedAt = now
-
         const employee = this.employees.find((e) => e.id === line.employeeId)
-        slipLines.push({
-          orderId: order.id,
-          orderNo: order.orderNo,
-          orderName: order.orderName,
-          lineId: line.id,
-          enterpriseId: order.enterpriseId,
-          enterpriseName: order.enterpriseName,
-          employeeId: line.employeeId,
-          employeeName: line.employeeName,
-          employeeNo: line.employeeNo,
-          phone: employee?.phone,
-          departmentName: line.departmentName,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          amount: line.amount,
-          periodStart: order.periodStart,
-          periodEnd: order.periodEnd,
+        prepared.push({
+          order,
+          line,
+          slipLine: {
+            orderId: order.id,
+            orderNo: order.orderNo,
+            orderName: order.orderName,
+            lineId: line.id,
+            enterpriseId: order.enterpriseId,
+            enterpriseName: order.enterpriseName,
+            serviceProviderId: order.serviceProviderId,
+            serviceProviderName: order.serviceProviderName,
+            employeeId: line.employeeId,
+            employeeName: line.employeeName,
+            employeeNo: line.employeeNo,
+            phone: employee?.phone,
+            departmentName: line.departmentName,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            amount: line.amount,
+            periodStart: order.periodStart,
+            periodEnd: order.periodEnd,
+          },
         })
       }
 
-      if (!slipLines.length) throw new Error('所选灵工不可结算')
+      if (!prepared.length) throw new Error('所选灵工不可结算')
 
-      const slipNo = `STL${now.slice(0, 10).replace(/-/g, '')}${String(this.settlementSlips.length + 1).padStart(3, '0')}`
-      const slip: SettlementSlip = {
-        id: generateId('sms'),
-        slipNo,
-        type,
-        workerCount: slipLines.length,
-        totalQuantity: slipLines.reduce((sum, line) => sum + line.quantity, 0),
-        totalAmount: slipLines.reduce((sum, line) => sum + line.amount, 0),
-        lines: slipLines,
-        settledAt: now,
-        createdAt: now,
+      const enterpriseIds = [...new Set(prepared.map((p) => p.order.enterpriseId))]
+      if (enterpriseIds.length > 1) {
+        throw new Error('多企业不能合并为一个结算单，请按企业分别确认发薪')
       }
 
-      for (const slipLine of slipLines) {
-        const order = this.settlementManageOrders.find((o) => o.id === slipLine.orderId)
-        const line = order?.workerLines.find((l) => l.id === slipLine.lineId)
-        if (line) line.settlementSlipId = slip.id
+      const groups = new Map<string, Prepared[]>()
+      for (const item of prepared) {
+        const key = `${item.order.enterpriseId}::${item.order.serviceProviderId || 'none'}`
+        const list = groups.get(key) ?? []
+        list.push(item)
+        groups.set(key, list)
       }
 
-      this.settlementSlips.unshift(slip)
+      const slips: SettlementSlip[] = []
+      let seq = this.settlementSlips.length
+      for (const group of groups.values()) {
+        seq += 1
+        const first = group[0]
+        const slipLines = group.map((g) => g.slipLine)
+        const slipNo = `STL${day.replace(/-/g, '')}${String(seq).padStart(3, '0')}`
+        const slip: SettlementSlip = {
+          id: generateId('sms'),
+          slipNo,
+          type,
+          enterpriseId: first.order.enterpriseId,
+          enterpriseName: first.order.enterpriseName,
+          serviceProviderId: first.order.serviceProviderId,
+          serviceProviderName: first.order.serviceProviderName,
+          workerCount: slipLines.length,
+          totalQuantity: slipLines.reduce((sum, line) => sum + line.quantity, 0),
+          totalAmount: slipLines.reduce((sum, line) => sum + line.amount, 0),
+          lines: slipLines,
+          settledAt: now,
+          createdAt: now,
+        }
+
+        for (const item of group) {
+          item.line.status = 'settled'
+          item.line.settledAt = now
+          item.line.settlementSlipId = slip.id
+          item.order.updatedAt = now
+        }
+
+        this.settlementSlips.unshift(slip)
+        slips.push(slip)
+      }
+
       this.persist('settlementManageOrders')
       this.persist('settlementSlips')
+      const totalWorkers = slips.reduce((sum, s) => sum + s.workerCount, 0)
+      const totalAmount = slips.reduce((sum, s) => sum + s.totalAmount, 0)
       this.pushNotification({
         title: '结算单已生成',
-        content: `${slipNo} 已结算 ${slip.workerCount} 名灵工，合计 ¥${slip.totalAmount.toLocaleString()}`,
+        content: `已生成 ${slips.length} 张结算单，共 ${totalWorkers} 名灵工，合计 ¥${totalAmount.toLocaleString()}`,
         type: 'system',
       })
-      return slip
+      return slips
     },
 
     createImportPayrollSlip(input: {
       enterpriseId: string
       enterpriseName: string
+      serviceProviderId: string
+      serviceProviderName: string
       lines: {
         phone: string
         employeeName: string
@@ -6294,6 +6453,7 @@ export const useAppStore = defineStore('app', {
       }[]
     }) {
       if (!input.enterpriseId) throw new Error('请选择企业')
+      if (!input.serviceProviderId) throw new Error('请选择服务商')
       if (!input.lines.length) throw new Error('请至少添加一条发薪明细')
       for (const line of input.lines) {
         if (!line.phone?.trim()) throw new Error('明细手机号不能为空')
@@ -6310,6 +6470,8 @@ export const useAppStore = defineStore('app', {
         lineId: `imp_${idx + 1}`,
         enterpriseId: input.enterpriseId,
         enterpriseName: input.enterpriseName,
+        serviceProviderId: input.serviceProviderId,
+        serviceProviderName: input.serviceProviderName,
         employeeId: line.employeeId || `phone_${line.phone}`,
         employeeName: line.employeeName.trim(),
         employeeNo: line.employeeNo,
@@ -6327,6 +6489,10 @@ export const useAppStore = defineStore('app', {
         id: generateId('sms'),
         slipNo,
         type: 'import',
+        enterpriseId: input.enterpriseId,
+        enterpriseName: input.enterpriseName,
+        serviceProviderId: input.serviceProviderId,
+        serviceProviderName: input.serviceProviderName,
         workerCount: slipLines.length,
         totalQuantity: slipLines.length,
         totalAmount: slipLines.reduce((sum, line) => sum + line.amount, 0),
@@ -6964,12 +7130,13 @@ export const useAppStore = defineStore('app', {
       if (task.maxPerPerson && myClaimed + q > task.maxPerPerson) {
         throw new Error(`每人最多领取 ${task.maxPerPerson} ${task.maxPerPerson === 1 ? '次' : '次/件'}`)
       }
-      if (task.plannedTotal != null && task.acceptedCount + q > task.plannedTotal) {
-        throw new Error('任务名额不足')
-      }
-      const pricing = resolveTaskPricing(task, this.taskTypes)
       const workflow = this.taskWorkflows.find((w) => w.id === task.workflowId)
       if (!workflow) throw new Error('工作流不存在')
+      const claimable = getTaskClaimableCount(task, this.taskInstances, workflow)
+      if (claimable != null && q > claimable) {
+        throw new Error(TASK_CLAIM_LIMIT_MESSAGE)
+      }
+      const pricing = resolveTaskPricing(task, this.taskTypes)
       const claimNode = getWorkflowClaimNode(workflow)
       if (!claimNode) throw new Error('工作流节点异常')
       const settlementUnit =
@@ -7075,6 +7242,9 @@ export const useAppStore = defineStore('app', {
 
       if (target.nodeType === 'end' && target.name.includes('完成')) {
         task.completedCount += instance.claimQuantity ?? 1
+        if (maybeMarkTaskCompleted(task)) {
+          this.forceEndRunningTaskInstances(task.id, '任务已完成，进行中子任务同步结束')
+        }
         this.persist('tasks')
       }
 

@@ -5,7 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { examQuestionTypeMap } from '@/constants/training'
+import { examQuestionTypeMap, getExamQuestionImageUrls } from '@/constants/training'
 import { getExamQuestions, getLearningProgress } from '@/services/training'
 
 const route = useRoute()
@@ -145,8 +145,14 @@ async function submitExam() {
       </div>
 
       <div class="exam-card">
-        <div v-if="currentQuestion.imageUrl" class="exam-image-wrap">
-          <img :src="currentQuestion.imageUrl" alt="场景图" class="exam-image">
+        <div v-if="getExamQuestionImageUrls(currentQuestion).length" class="exam-image-wrap">
+          <img
+            v-for="(url, idx) in getExamQuestionImageUrls(currentQuestion)"
+            :key="idx"
+            :src="url"
+            alt="场景图"
+            class="exam-image"
+          >
           <span class="exam-image-tip">请仔细观察图片</span>
         </div>
 
@@ -162,7 +168,10 @@ async function submitExam() {
             @click="toggleOption(opt.key)"
           >
             <span class="opt-key">{{ opt.key }}</span>
-            <span class="opt-text">{{ opt.text }}</span>
+            <span class="opt-body">
+              <img v-if="opt.imageUrl" :src="opt.imageUrl" alt="" class="opt-image">
+              <span v-if="opt.text" class="opt-text">{{ opt.text }}</span>
+            </span>
             <span v-if="currentQuestion.type === 'multiple'" class="opt-check">
               {{ isSelected(opt.key) ? '☑' : '☐' }}
             </span>
@@ -260,9 +269,9 @@ async function submitExam() {
 .exam-image-wrap {
   position: relative;
   margin-bottom: 14px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #111;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .exam-image {
@@ -270,12 +279,12 @@ async function submitExam() {
   display: block;
   aspect-ratio: 5 / 3;
   object-fit: cover;
+  border-radius: 8px;
+  background: #111;
 }
 
 .exam-image-tip {
-  position: absolute;
-  left: 8px;
-  bottom: 8px;
+  align-self: flex-start;
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
   font-size: 11px;
@@ -335,6 +344,21 @@ async function submitExam() {
   background: var(--mini-primary);
   border-color: var(--mini-primary);
   color: #fff;
+}
+
+.opt-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.opt-image {
+  width: 100%;
+  max-height: 140px;
+  object-fit: cover;
+  border-radius: 8px;
 }
 
 .opt-text {

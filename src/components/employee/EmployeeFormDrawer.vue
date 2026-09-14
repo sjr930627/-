@@ -2,9 +2,11 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage, type UploadFile } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import { isUnassignedDepartment, DEFAULT_WORKFORCE_ENTERPRISE_ID } from '@/constants/department'
+import { isUnassignedDepartment, DEFAULT_WORKFORCE_ENTERPRISE_ID, isLeafDepartment } from '@/constants/department'
 import { resolveSkillLibraryItem } from '@/constants/skillLibrary'
 import SkillLibraryManageDialog from '@/components/skill/SkillLibraryManageDialog.vue'
+import DepartmentLeafCascader from '@/components/employee/DepartmentLeafCascader.vue'
+import { calcAgeFromIdCard } from '@/utils'
 import type {
   EmployeeGender,
   EmployeePersonnelCategory,
@@ -103,6 +105,11 @@ const formEnterpriseId = computed(() => {
 
 const enterprisePositions = computed(() => store.getEnterprisePositions(formEnterpriseId.value))
 
+/** 编辑时允许保留当前部门（即使已非叶子） */
+const departmentAllowIds = computed(() =>
+  form.value.departmentId ? [form.value.departmentId] : [],
+)
+
 function onPositionSelect(positionId: string) {
   form.value.positionId = positionId
   const pos = store.getEnterprisePosition(positionId)
@@ -110,6 +117,8 @@ function onPositionSelect(positionId: string) {
 }
 
 const isRealNameVerified = computed(() => !!editingEmployee.value?.realNameVerified)
+
+const calculatedAge = computed(() => calcAgeFromIdCard(form.value.idCardNo))
 
 watch(
   () => props.visible,
@@ -204,6 +213,11 @@ function submit() {
     ElMessage.warning('请选择部门')
     return
   }
+  const targetDept = store.departments.find((d) => d.id === form.value.departmentId)
+  if (targetDept && !isLeafDepartment(targetDept)) {
+    ElMessage.warning('仅可选择叶子部门')
+    return
+  }
 
   const certificates = form.value.skillCertificates.filter((c) => c.skillId || c.name.trim())
   for (const cert of certificates) {
@@ -230,7 +244,7 @@ function submit() {
     phone: form.value.phone.trim(),
     gender: form.value.gender,
     employeeNo: form.value.employeeNo.trim(),
-    age: form.value.age,
+    age: calculatedAge.value,
     email: form.value.email.trim(),
     hireDate: form.value.hireDate,
     address: form.value.address.trim(),
@@ -344,7 +358,12 @@ function submit() {
             <el-row :gutter="16">
               <el-col :span="12">
                 <el-form-item label="年龄">
-                  <el-input-number v-model="form.age" :min="16" :max="70" style="width: 100%" />
+                  <el-input
+                    :model-value="calculatedAge != null ? String(calculatedAge) : ''"
+                    placeholder="根据身份证号自动计算"
+                    readonly
+                    style="width: 100%"
+                  />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
@@ -399,14 +418,12 @@ function submit() {
               </el-col>
               <el-col :span="12">
                 <el-form-item label="部门" required>
-                  <el-select v-model="form.departmentId" placeholder="请选择部门" style="width: 100%">
-                    <el-option
-                      v-for="d in store.departments"
-                      :key="d.id"
-                      :label="d.name"
-                      :value="d.id"
-                    />
-                  </el-select>
+                  <DepartmentLeafCascader
+                    v-model="form.departmentId"
+                    :departments="store.departments"
+                    :allow-ids="departmentAllowIds"
+                    placeholder="请按级联选择叶子部门"
+                  />
                 </el-form-item>
               </el-col>
             </el-row>

@@ -31,7 +31,7 @@ const store = useAppStore()
 const { enterpriseId } = useEnterpriseMiniAuth()
 const { runEnterpriseAction } = useEnterpriseInstanceAction()
 
-const includeOpLogs = ref(true)
+const includeOpLogs = true
 const actionLoading = ref(false)
 const actionSheetOpen = ref(false)
 const pendingAction = ref<WorkflowActionConfig | null>(null)
@@ -73,7 +73,7 @@ const lifecycleRecords = computed(() =>
         instance.value,
         task.value,
         workflow.value,
-        includeOpLogs.value,
+        includeOpLogs,
       )
     : [],
 )
@@ -223,6 +223,10 @@ function goParentTask() {
           <span class="value">{{ instance.enterpriseName }}</span>
         </div>
         <div class="info-row">
+          <span class="label">服务商</span>
+          <span class="value">{{ task.serviceProviderName || '—' }}</span>
+        </div>
+        <div class="info-row">
           <span class="label">任务流程</span>
           <span class="value">{{ workflow.name }}</span>
         </div>
@@ -291,10 +295,6 @@ function goParentTask() {
       <section class="info-card">
         <div class="section-head">
           <h3 class="card-title">生命周期流转记录</h3>
-          <label class="switch-label">
-            <input v-model="includeOpLogs" type="checkbox">
-            含操作日志
-          </label>
         </div>
         <p class="hint">{{ lifecycleRecords.length }} 条记录</p>
         <div v-if="lifecycleRecords.length" class="timeline">

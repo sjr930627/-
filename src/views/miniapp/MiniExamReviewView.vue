@@ -3,7 +3,7 @@ import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { examQuestionTypeMap } from '@/constants/training'
+import { examQuestionTypeMap, getExamQuestionImageUrls } from '@/constants/training'
 import { getExamQuestions, gradeExamAnswers } from '@/services/training'
 
 const route = useRoute()
@@ -78,8 +78,14 @@ function backToList() {
           </span>
         </div>
 
-        <div v-if="item.question.imageUrl" class="q-image-wrap">
-          <img :src="item.question.imageUrl" alt="场景图" class="q-image">
+        <div v-if="getExamQuestionImageUrls(item.question).length" class="q-image-wrap">
+          <img
+            v-for="(url, imgIdx) in getExamQuestionImageUrls(item.question)"
+            :key="imgIdx"
+            :src="url"
+            alt="场景图"
+            class="q-image"
+          >
         </div>
 
         <div class="q-content">{{ item.question.content }}</div>
@@ -97,7 +103,10 @@ function backToList() {
             )"
           >
             <span class="opt-key">{{ opt.key }}</span>
-            <span class="opt-text">{{ opt.text }}</span>
+            <span class="opt-body">
+              <img v-if="opt.imageUrl" :src="opt.imageUrl" alt="" class="opt-image">
+              <span v-if="opt.text" class="opt-text">{{ opt.text }}</span>
+            </span>
             <span v-if="item.detail.correctAnswers.includes(opt.key)" class="opt-tag correct">正确答案</span>
             <span
               v-else-if="item.detail.userAnswers.includes(opt.key)"
@@ -222,8 +231,9 @@ function backToList() {
 .q-result.bad { color: #e60012; }
 
 .q-image-wrap {
-  border-radius: 8px;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
@@ -232,6 +242,7 @@ function backToList() {
   display: block;
   aspect-ratio: 5 / 3;
   object-fit: cover;
+  border-radius: 8px;
 }
 
 .q-content {
@@ -293,6 +304,21 @@ function backToList() {
   background: #e60012;
   border-color: #e60012;
   color: #fff;
+}
+
+.opt-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.opt-image {
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: 6px;
 }
 
 .opt-text {

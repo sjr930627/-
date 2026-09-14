@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useTrainingScope } from '@/composables/useTrainingScope'
 import { trainingOwnerTypeOptions, trainingTypeFilterOptions } from '@/constants/trainingOwner'
-import { examStatusMap, examStatusTagType } from '@/constants/training'
+import { examGateOptions, examStatusMap, examStatusTagType } from '@/constants/training'
 import {
   countCoursesUsingExam,
   getExamLinkedCourseLabel,
@@ -38,12 +38,13 @@ const examForm = ref({
   ownerType: 'enterprise' as TrainingOwnerScope,
   enterpriseId: defaultEnterpriseId.value as string | null,
   name: '',
-  description: '',
   courseId: '' as string,
   durationMinutes: 30,
   passScore: 80,
   maxRetakes: 2,
   retakeIntervalHours: 24,
+  requireExamPassForSchedule: false,
+  requireExamPassForTask: false,
 })
 
 const formOwnerEnterpriseId = computed(() =>
@@ -73,6 +74,9 @@ const examList = computed(() =>
   filterByTrainingType(store.trainingExams)
     .map((e) => {
       const questions = getExamQuestions(e.id, store.examQuestions)
+      const gates: string[] = []
+      if (e.requireExamPassForSchedule) gates.push('排班')
+      if (e.requireExamPassForTask) gates.push('接任务')
       return {
         ...e,
         ownerTypeLabel: ownerTypeLabel(e.enterpriseId),
@@ -82,6 +86,7 @@ const examList = computed(() =>
         totalScore: getExamTotalScore(questions),
         linkedCourses: countCoursesUsingExam(store.trainingCourses, e.id),
         courseName: getExamLinkedCourseLabel(store.trainingCourses, e),
+        gateLabel: gates.length ? gates.join(' / ') : '-',
         enterpriseName: isGlobalTrainingOwner(e.enterpriseId)
           ? '-'
           : store.enterprises.find((x) => x.id === e.enterpriseId)?.shortName ||
@@ -98,12 +103,13 @@ function openCreateExam() {
     ownerType: 'enterprise',
     enterpriseId: defaultEnterpriseId.value,
     name: '',
-    description: '',
     courseId: '',
     durationMinutes: 30,
     passScore: 80,
     maxRetakes: 2,
     retakeIntervalHours: 24,
+    requireExamPassForSchedule: false,
+    requireExamPassForTask: false,
   }
   examDialogVisible.value = true
 }
@@ -118,12 +124,13 @@ function openEditExam(row: TrainingExam) {
     ownerType: isGlobalTrainingOwner(row.enterpriseId) ? 'global' : 'enterprise',
     enterpriseId: row.enterpriseId ?? defaultEnterpriseId.value,
     name: row.name,
-    description: row.description ?? '',
     courseId: row.courseId ?? store.trainingCourses.find((c) => c.examId === row.id)?.id ?? '',
     durationMinutes: row.durationMinutes,
     passScore: row.passScore,
     maxRetakes: row.maxRetakes,
     retakeIntervalHours: row.retakeIntervalHours ?? 24,
+    requireExamPassForSchedule: !!row.requireExamPassForSchedule,
+    requireExamPassForTask: !!row.requireExamPassForTask,
   }
   examDialogVisible.value = true
 }
@@ -145,12 +152,13 @@ function submitExam() {
   const payload = {
     enterpriseId: isGlobal ? null : examForm.value.enterpriseId,
     name: examForm.value.name.trim(),
-    description: examForm.value.description.trim(),
     courseId: examForm.value.courseId,
     durationMinutes: examForm.value.durationMinutes,
     passScore: examForm.value.passScore,
     maxRetakes: examForm.value.maxRetakes,
     retakeIntervalHours: examForm.value.retakeIntervalHours,
+    requireExamPassForSchedule: examForm.value.requireExamPassForSchedule,
+    requireExamPassForTask: examForm.value.requireExamPassForTask,
     status: 'draft' as const,
   }
   try {
@@ -264,9 +272,7 @@ function viewResults(examId: string) {
         <template #default="{ row }">{{ row.durationMinutes }}分</template>
       </el-table-column>
       <el-table-column prop="courseName" label="关联课程" min-width="180" show-overflow-tooltip />
-      <el-table-column label="前置条件" width="120" align="center">
-        <template #default>学完课程</template>
-      </el-table-column>
+      <el-table-column prop="gateLabel" label="考核门槛" width="110" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag size="small" :type="row.statusTagType">{{ row.statusLabel }}</el-tag>
@@ -331,9 +337,6 @@ function viewResults(examId: string) {
           学员完成该课程全部资料学习后，考核才会在小程序中解锁
         </div>
       </el-form-item>
-      <el-form-item label="考核说明">
-        <el-input v-model="examForm.description" type="textarea" :rows="2" />
-      </el-form-item>
       <el-row :gutter="16">
         <el-col :span="12">
           <el-form-item label="考试时长">
@@ -359,6 +362,19 @@ function viewResults(examId: string) {
           </el-form-item>
         </el-col>
       </el-row>
+      <el-form-item label="考核门槛">
+        <div class="gate-switches">
+          <el-checkbox v-model="examForm.requireExamPassForSchedule">
+            {{ examGateOptions[0].label }}
+          </el-checkbox>
+          <el-checkbox v-model="examForm.requireExamPassForTask">
+            {{ examGateOptions[1].label }}
+          </el-checkbox>
+        </div>
+        <div class="text-muted" style="margin-top: 4px; font-size: 12px">
+          勾选后，未通过本考核的灵工不可进行对应操作
+        </div>
+      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="examDialogVisible = false">取消</el-button>
@@ -366,3 +382,11 @@ function viewResults(examId: string) {
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+.gate-switches {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+</style>

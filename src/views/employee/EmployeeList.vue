@@ -20,13 +20,16 @@ import {
   employeeDataSourceMap,
   employeeDataSourceTagType,
   resolveEmployeeDataSource,
+  isLeafDepartment,
 } from '@/constants/department'
 import { formatDepartmentGap, summarizeDepartmentGaps } from '@/services/departmentGap'
 import {
   buildDepartmentTree,
   countDepartmentEmployees,
   getDepartmentDescendantIds,
+  getDepartmentManagerIds,
   getDepartmentName,
+  getDepartmentPath,
 } from '@/utils'
 import { attendanceGroupTypeMap, formatShiftPeriod } from '@/constants/attendanceGroup'
 import type { DepartmentTreeNode, Employee, EmployeeOnboardingStage, EmployeePersonnelCategory } from '@/types'
@@ -165,20 +168,19 @@ const deptLevelLabel = computed(() => {
   return labels[level - 1] ? `${labels[level - 1]}部门` : `${level}级部门`
 })
 
-const managerEmployee = computed(() => {
-  if (!selectedDept.value) return null
-  if (selectedDept.value.managerEmployeeId) {
-    return (
-      scopedEmployees.value.find((e) => e.id === selectedDept.value!.managerEmployeeId) ?? null
-    )
+const managerEmployees = computed(() => {
+  if (!selectedDept.value) return []
+  const ids = getDepartmentManagerIds(selectedDept.value)
+  if (ids.length) {
+    return ids
+      .map((id) => scopedEmployees.value.find((e) => e.id === id))
+      .filter((e): e is Employee => Boolean(e))
   }
-  return (
+  const fallback =
     scopedEmployees.value.find(
       (e) => e.departmentId === selectedDeptId.value && e.position.includes('组长'),
-    ) ??
-    scopedEmployees.value.find((e) => e.departmentId === selectedDeptId.value) ??
-    null
-  )
+    ) ?? scopedEmployees.value.find((e) => e.departmentId === selectedDeptId.value)
+  return fallback ? [fallback] : []
 })
 
 const employeeTableData = computed(() => {
@@ -189,10 +191,12 @@ const employeeTableData = computed(() => {
     .filter((e) => {
       if (!ids.has(e.departmentId)) return false
       const category = e.personnelCategory ?? 'schedule'
-      if (personnelTab.value === 'grab') {
-        if (category !== 'grab') return false
-      } else if (category === 'grab') {
-        return false
+      if (!isUnassignedDept.value) {
+        if (personnelTab.value === 'grab') {
+          if (category !== 'grab') return false
+        } else if (category === 'grab') {
+          return false
+        }
       }
       if (employeeKeyword.value) {
         const k = employeeKeyword.value.toLowerCase()
@@ -228,7 +232,7 @@ const employeeTableData = computed(() => {
         || store.punches.filter((p) => p.employeeId === e.id && p.type === 'clock_in').length
       return {
         ...e,
-        departmentName: getDepartmentName(scopedDepartments.value, e.departmentId),
+        departmentName: getDepartmentPath(scopedDepartments.value, e.departmentId),
         isDirect: e.departmentId === selectedDeptId.value,
         onboardingStage: (e.onboardingStage ??
           (e.status === 'pending' ? 'awaiting_apply' : undefined)) as
@@ -236,7 +240,7 @@ const employeeTableData = computed(() => {
           | undefined,
         onDuty,
         applyDeptName: e.applyDepartmentId
-          ? getDepartmentName(scopedDepartments.value, e.applyDepartmentId)
+          ? getDepartmentPath(scopedDepartments.value, e.applyDepartmentId)
           : '',
         idCardDisplay: maskIdCard(e.idCardNo),
         dataSource: resolveEmployeeDataSource(e, store.workerJoinApplications),
@@ -255,9 +259,11 @@ function maskIdCard(idCard?: string) {
 const scheduleTabCount = computed(() => {
   if (!selectedDeptId.value) return 0
   const ids = getDepartmentDescendantIds(scopedDepartments.value, selectedDeptId.value)
-  return scopedEmployees.value.filter(
-    (e) => ids.has(e.departmentId) && (e.personnelCategory ?? 'schedule') !== 'grab',
-  ).length
+  return scopedEmployees.value.filter((e) => {
+    if (!ids.has(e.departmentId)) return false
+    if (isUnassignedDept.value) return true
+    return (e.personnelCategory ?? 'schedule') !== 'grab'
+  }).length
 })
 
 const grabTabCount = computed(() => {
@@ -268,13 +274,17 @@ const grabTabCount = computed(() => {
   ).length
 })
 
+const isLeafDept = computed(() =>
+  selectedDept.value ? isLeafDepartment(selectedDept.value) : false,
+)
+
 const selectedDeptQrUrl = computed(() => {
-  if (!selectedDept.value || isUnassignedDept.value) return ''
+  if (!selectedDept.value || isUnassignedDept.value || !isLeafDept.value) return ''
   return departmentJoinQrImageUrl(activeEnterpriseId.value, selectedDept.value.id, 180)
 })
 
 const selectedDeptQrPayload = computed(() => {
-  if (!selectedDept.value || isUnassignedDept.value) return ''
+  if (!selectedDept.value || isUnassignedDept.value || !isLeafDept.value) return ''
   return buildDepartmentJoinQrPayload(activeEnterpriseId.value, selectedDept.value.id)
 })
 
@@ -287,12 +297,18 @@ watch(
     const preferred =
       depts.find((d) => d.id === 'dept_prod_a') ??
       depts.find((d) => d.id === unassignedId) ??
-      depts.find((d) => d.orgType === 'enterprise') ??
+      depts.find((d) => isEnterpriseRootDepartment(d)) ??
       depts[0]
     selectedDeptId.value = preferred?.id ?? unassignedId
   },
   { immediate: true },
 )
+
+watch(selectedDeptId, (id) => {
+  if (isUnassignedDepartment(id)) {
+    personnelTab.value = 'schedule'
+  }
+})
 
 function onOrgSelect(id: string) {
   selectedDeptId.value = id
@@ -319,7 +335,7 @@ function openCreateDept(parentId: string | null = null) {
   }
   editingDeptId.value = null
   const rootDept =
-    scopedDepartments.value.find((d) => d.orgType === 'enterprise')?.id ??
+    scopedDepartments.value.find((d) => isEnterpriseRootDepartment(d))?.id ??
     enterpriseRootDepartmentId(activeEnterpriseId.value)
   const fallbackParent = isUnassignedDepartment(selectedDeptId.value)
     ? rootDept
@@ -346,6 +362,14 @@ function handleDeptSaved(deptId: string) {
 function openCreateEmployee() {
   if (!selectedDeptId.value) {
     ElMessage.warning('请先选择部门')
+    return
+  }
+  if (
+    !isUnassignedDept.value &&
+    selectedDept.value &&
+    !isLeafDepartment(selectedDept.value)
+  ) {
+    ElMessage.warning('仅叶子部门可添加人员')
     return
   }
   editingEmployeeId.value = null
@@ -376,21 +400,23 @@ function handleEmployeeSelection(rows: Employee[]) {
 }
 
 function openBatchAssign() {
+  if (!isUnassignedDept.value) {
+    ElMessage.warning('仅待入驻人员支持批量分配')
+    return
+  }
   if (!selectedEmployeeIds.value.length) {
     ElMessage.warning('请先选择要分配的人员')
     return
   }
-  assignRequireEmployeeNo.value = isUnassignedDept.value
-  assignDialogTitle.value = isUnassignedDept.value
-    ? '分配岗位及人员 ID'
-    : '批量分配部门及岗位'
+  assignRequireEmployeeNo.value = false
+  assignDialogTitle.value = '分配岗位'
   batchAssignVisible.value = true
 }
 
 function openAssignOne(emp: Employee, mode: 'assign' | 'approve') {
   selectedEmployeeIds.value = [emp.id]
-  assignRequireEmployeeNo.value = true
-  assignDialogTitle.value = mode === 'approve' ? '审批入驻并分配' : '直接分配岗位及人员 ID'
+  assignRequireEmployeeNo.value = false
+  assignDialogTitle.value = mode === 'approve' ? '审批入驻并分配岗位' : '分配岗位'
   batchAssignVisible.value = true
 }
 
@@ -444,7 +470,7 @@ function handleBatchAssigned() {
                 <h2 class="page-title dept-title-row">
                   {{ selectedDept.name }}
                   <el-button
-                    v-if="!isUnassignedDept"
+                    v-if="!isUnassignedDept && isLeafDept"
                     link
                     type="primary"
                     class="qr-btn"
@@ -455,7 +481,7 @@ function handleBatchAssigned() {
                 </h2>
                 <p class="text-muted dept-path">
                   <template v-if="isUnassignedDept">
-                    系统默认部门 · 待申请可直接分配；已申请需审批入驻信息并分配岗位与人员 ID
+                    系统默认部门 · 待申请可直接分配；已申请需审批入驻信息并分配岗位
                   </template>
                   <template v-else>
                     {{ currentEnterprise?.name }} / {{ getDepartmentName(scopedDepartments, selectedDept.parentId ?? '') || '根节点' }} / {{ selectedDept.name }}
@@ -484,7 +510,7 @@ function handleBatchAssigned() {
               <el-tag size="small">{{ isUnassignedDept ? '系统部门' : deptLevelLabel }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item v-if="isUnassignedDept" label="部门说明" :span="3">
-              待申请：可移出或直接分配岗位及人员 ID；已申请：审批入驻信息后分配岗位及人员 ID
+              待申请：可移出或直接分配岗位；已申请：审批入驻信息后分配岗位
             </el-descriptions-item>
             <template v-if="!isUnassignedDept">
             <el-descriptions-item label="节点类型">
@@ -505,12 +531,14 @@ function handleBatchAssigned() {
               {{ formatShiftPeriod(selectedAttendanceGroup) }}
             </el-descriptions-item>
             <el-descriptions-item label="负责人">
-              <template v-if="managerEmployee">
-                <el-avatar :size="24" class="mgr-avatar">
-                  {{ managerEmployee.name[0] }}
-                </el-avatar>
-                {{ managerEmployee.name }}
-              </template>
+              <div v-if="managerEmployees.length" class="mgr-list">
+                <span v-for="mgr in managerEmployees" :key="mgr.id" class="mgr-item">
+                  <el-avatar :size="24" class="mgr-avatar">
+                    {{ mgr.name[0] }}
+                  </el-avatar>
+                  {{ mgr.name }}
+                </span>
+              </div>
               <span v-else class="text-muted">未设置</span>
             </el-descriptions-item>
             <el-descriptions-item label="排序">{{ selectedDept.sort }}</el-descriptions-item>
@@ -539,7 +567,7 @@ function handleBatchAssigned() {
                     <el-tag size="small" round class="tab-count">{{ scheduleTabCount }}</el-tag>
                   </template>
                 </el-tab-pane>
-                <el-tab-pane name="grab">
+                <el-tab-pane v-if="!isUnassignedDept" name="grab">
                   <template #label>
                     抢班人员
                     <el-tag size="small" round class="tab-count">{{ grabTabCount }}</el-tag>
@@ -547,7 +575,13 @@ function handleBatchAssigned() {
                 </el-tab-pane>
               </el-tabs>
             </div>
-            <el-button type="primary" @click="openCreateEmployee">+ 添加人员</el-button>
+            <el-button
+              v-if="isUnassignedDept || isLeafDept"
+              type="primary"
+              @click="openCreateEmployee"
+            >
+              + 添加人员
+            </el-button>
           </div>
 
           <div class="page-toolbar">
@@ -569,11 +603,12 @@ function handleBatchAssigned() {
               <el-option label="已申请" value="applied" />
             </el-select>
             <el-button
+              v-if="isUnassignedDept"
               type="primary"
               :disabled="!selectedEmployeeIds.length"
               @click="openBatchAssign"
             >
-              {{ isUnassignedDept ? '分配岗位及人员 ID' : '批量分配部门及岗位' }}
+              分配岗位
             </el-button>
           </div>
 
@@ -585,7 +620,7 @@ function handleBatchAssigned() {
             class="employee-table"
             @selection-change="handleEmployeeSelection"
           >
-            <el-table-column type="selection" width="48" />
+            <el-table-column v-if="isUnassignedDept" type="selection" width="48" />
             <el-table-column prop="name" label="姓名" width="90" />
             <el-table-column label="手机号" width="130">
               <template #default="{ row }">{{ row.phone || '—' }}</template>
@@ -593,6 +628,16 @@ function handleBatchAssigned() {
             <el-table-column label="身份证号" width="160">
               <template #default="{ row }">{{ row.idCardDisplay }}</template>
             </el-table-column>
+            <el-table-column v-if="isUnassignedDept" label="申请部门" min-width="120">
+              <template #default="{ row }">{{ row.applyDeptName || '—' }}</template>
+            </el-table-column>
+            <el-table-column
+              v-if="!isUnassignedDept"
+              prop="departmentName"
+              label="部门"
+              min-width="120"
+              show-overflow-tooltip
+            />
             <el-table-column prop="position" label="岗位" width="110" />
             <template v-if="personnelTab === 'grab'">
               <el-table-column prop="firstWorkDate" label="第一次上班时间" width="140" />
@@ -616,9 +661,6 @@ function handleBatchAssigned() {
                     {{ employeeDataSourceMap[row.dataSource as keyof typeof employeeDataSourceMap] }}
                   </el-tag>
                 </template>
-              </el-table-column>
-              <el-table-column v-if="isUnassignedDept" label="申请部门" min-width="120">
-                <template #default="{ row }">{{ row.applyDeptName || '—' }}</template>
               </el-table-column>
               <el-table-column v-if="!isUnassignedDept" label="出勤情况" width="100">
                 <template #default="{ row }">
@@ -940,6 +982,18 @@ function handleBatchAssigned() {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+.mgr-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.mgr-item {
+  display: inline-flex;
+  align-items: center;
 }
 
 .mgr-avatar {

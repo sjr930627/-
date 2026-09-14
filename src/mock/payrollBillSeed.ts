@@ -320,6 +320,7 @@ export const seedSettlementBills: SettlementBill[] = [
     sourceType: 'rule',
     billingRuleName: '标准工时计薪',
     lines: [],
+    pushedAt: '2026-07-28T09:00:00.000Z',
     createdAt: '2026-07-28T08:00:00.000Z',
     updatedAt: '2026-07-28T08:00:00.000Z',
   },

@@ -7,10 +7,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ArrowLeft,
   ArrowRight,
-  Delete,
   DocumentCopy,
-  MagicStick,
-  MoreFilled,
   Promotion,
   RefreshLeft,
   RefreshRight,
@@ -22,6 +19,8 @@ import { detectComplianceConflicts, filterAssignmentsByEnterprise, normalizeAtte
 import {
   confirmStatusMap,
   formatLineAssignmentLabel,
+  FLEX_SHIFT_COLOR,
+  FLEX_SHIFT_ID,
   isAssignmentConfirmedLocked,
   isScheduleHistoryDate,
   isScheduleFutureDate,
@@ -30,19 +29,33 @@ import {
   normalizeConfirmStatus,
   SCHEDULE_DEMO_TODAY,
 } from '@/constants/schedule'
+import {
+  CANCEL_SHIFT_REASON_OPTIONS,
+  buildCancelShiftReasonText,
+  type CancelShiftReasonCode,
+} from '@/constants/cancelShift'
 import type { AttendanceGroupCompliance, ScheduleAssignment, SchedulePublishRecord } from '@/types'
-import { calcShiftHours } from '@/utils'
+import {
+  isEnterpriseRootDepartment,
+  isLeafDepartment,
+  isUnassignedDepartment,
+} from '@/constants/department'
+import ScheduleLinePanel from '@/components/schedule/ScheduleLinePanel.vue'
+import { resolveShiftIdForTemplate } from '@/services/scheduleGroup'
+import { resolveDepartmentAttendanceGroupId } from '@/services/settlementPrice'
+import { addDays, calcShiftHours, getDepartmentDescendantIds, getDepartmentPath } from '@/utils'
 
 dayjs.extend(isoWeek)
 
 const DRAFT_KEY = 'enterprise-mini:schedule-line-draft'
+const DEPT_STORAGE_PREFIX = 'ent-mini-schedule-dept:'
 
-/** 与设计稿一致的画笔色 */
+/** 与设计稿一致的画笔色（矩阵概览图例） */
 const BRUSH_META = [
   { id: 'shift_morning', name: '早班', short: '早', time: '08-16', color: '#3B82F6', soft: '#DBEAFE' },
   { id: 'shift_afternoon', name: '中班', short: '中', time: '16-00', color: '#F97316', soft: '#FFEDD5' },
   { id: 'shift_night', name: '夜班', short: '夜', time: '00-08', color: '#8B5CF6', soft: '#EDE9FE' },
-  { id: 'shift_flex', name: '天地班', short: '天地', time: '8-12+18-22', color: '#22C55E', soft: '#DCFCE7' },
+  { id: 'shift_flex', name: '自定义', short: '自定', time: '灵活时段', color: FLEX_SHIFT_COLOR, soft: '#DBEAFE' },
   { id: 'eraser', name: '橡皮', short: '擦', time: '清除', color: '#9CA3AF', soft: '#F3F4F6' },
 ] as const
 
@@ -53,13 +66,26 @@ const store = useAppStore()
 const { enterpriseId } = useEnterpriseMiniAuth()
 
 const weekAnchor = ref('2026-07-27')
-const teamId = ref('')
+const selectedDeptId = ref('')
+const deptPickerOpen = ref(false)
+const lineSelectedDate = ref(SCHEDULE_DEMO_TODAY)
+const scheduleMode = ref<'shift' | 'custom'>('shift')
+const selectedLineShiftId = ref<string | null>(null)
 const brushId = ref('shift_morning')
-const continuousMode = ref(true)
+const continuousMode = ref(false)
 const moreOpen = ref(false)
 const cellMenu = ref<{ employeeId: string; date: string } | null>(null)
 const conflictTip = ref<{ employeeId: string; date: string; messages: string[] } | null>(null)
 const cellDetail = ref<{ employeeId: string; date: string } | null>(null)
+const cancelSheetOpen = ref(false)
+const cancelSubmitting = ref(false)
+const cancelForm = ref<{
+  reasonCode: CancelShiftReasonCode
+  reasonOther: string
+}>({
+  reasonCode: 'business_change',
+  reasonOther: '',
+})
 const publishLogOpen = ref(false)
 const selectedPublishRecord = ref<SchedulePublishRecord | null>(null)
 const landscapeTip = ref(false)
@@ -86,28 +112,181 @@ const longPressOptions = [
   { id: 'shift_morning', label: '早班' },
   { id: 'shift_afternoon', label: '中班' },
   { id: 'shift_night', label: '夜班' },
-  { id: 'shift_flex', label: '天地班' },
+  { id: FLEX_SHIFT_ID, label: '自定义' },
   { id: 'shift_rest', label: '休息' },
   { id: 'leave', label: '请假' },
 ]
 
-const enterpriseTeams = computed(() => {
-  const empIds = new Set(
-    store.employees.filter((e) => e.enterpriseId === enterpriseId.value).map((e) => e.id),
-  )
-  return store.teams.filter((t) => t.memberIds.some((id) => empIds.has(id)))
+const departments = computed(() => store.getDepartmentsByEnterprise(enterpriseId.value))
+
+const departmentOptions = computed(() =>
+  departments.value
+    .filter(
+      (d) =>
+        !isUnassignedDepartment(d.id) &&
+        !isEnterpriseRootDepartment(d) &&
+        isLeafDepartment(d),
+    )
+    .map((d) => ({
+      id: d.id,
+      label: getDepartmentPath(departments.value, d.id),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')),
+)
+
+watch(
+  [enterpriseId, departmentOptions],
+  () => {
+    const options = departmentOptions.value
+    if (!options.length) {
+      selectedDeptId.value = ''
+      return
+    }
+    const saved = localStorage.getItem(`${DEPT_STORAGE_PREFIX}${enterpriseId.value}`)
+    if (saved && options.some((d) => d.id === saved)) {
+      selectedDeptId.value = saved
+      return
+    }
+    if (!options.some((d) => d.id === selectedDeptId.value)) {
+      selectedDeptId.value = options[0].id
+    }
+  },
+  { immediate: true },
+)
+
+watch(selectedDeptId, (id) => {
+  if (!id || !enterpriseId.value) return
+  localStorage.setItem(`${DEPT_STORAGE_PREFIX}${enterpriseId.value}`, id)
 })
 
-const employees = computed(() => {
-  let list = store.employees.filter(
-    (e) => e.status === 'active' && e.enterpriseId === enterpriseId.value,
+const selectedDeptLabel = computed(() => {
+  if (!selectedDeptId.value) return '请选择部门'
+  return (
+    departmentOptions.value.find((d) => d.id === selectedDeptId.value)?.label ||
+    getDepartmentPath(departments.value, selectedDeptId.value)
   )
-  if (teamId.value) {
-    const team = store.teams.find((t) => t.id === teamId.value)
-    const ids = new Set(team?.memberIds || [])
-    list = list.filter((e) => ids.has(e.id))
+})
+
+const scopedDeptIds = computed(() => {
+  if (!selectedDeptId.value) return new Set<string>()
+  return getDepartmentDescendantIds(departments.value, selectedDeptId.value)
+})
+
+const enterpriseTeams = computed(() => {
+  const empIds = new Set(
+    store.employees
+      .filter(
+        (e) =>
+          e.enterpriseId === enterpriseId.value &&
+          e.departmentId &&
+          scopedDeptIds.value.has(e.departmentId),
+      )
+      .map((e) => e.id),
+  )
+  return store.teams.filter(
+    (t) =>
+      (t.departmentId && scopedDeptIds.value.has(t.departmentId)) ||
+      t.memberIds.some((id) => empIds.has(id)),
+  )
+})
+
+const employees = computed(() =>
+  store.employees.filter(
+    (e) =>
+      e.status === 'active' &&
+      e.enterpriseId === enterpriseId.value &&
+      Boolean(e.departmentId && scopedDeptIds.value.has(e.departmentId)),
+  ),
+)
+
+const memberIds = computed(() => employees.value.map((e) => e.id))
+
+const scheduleTeamId = computed(
+  () =>
+    enterpriseTeams.value[0]?.id ||
+    store.teams.find((t) => t.memberIds.some((id) => memberIds.value.includes(id)))?.id ||
+    '',
+)
+
+const selectedAttendanceGroup = computed(() => {
+  const team = store.teams.find((t) => t.id === scheduleTeamId.value)
+  if (team?.attendanceGroupId) {
+    const byTeam = store.attendanceGroups.find((g) => g.id === team.attendanceGroupId)
+    if (byTeam) return byTeam
   }
-  return list
+  const dept = departments.value.find((d) => d.id === selectedDeptId.value)
+  if (dept) {
+    const groupId = resolveDepartmentAttendanceGroupId(dept, store.attendanceGroups)
+    if (groupId) {
+      const byDept = store.attendanceGroups.find((g) => g.id === groupId)
+      if (byDept) return byDept
+    }
+  }
+  return (
+    store.attendanceGroups.find(
+      (g) =>
+        g.attendanceType === 'shift' &&
+        (g.departmentBindings ?? []).some((b) => scopedDeptIds.value.has(b.departmentId)),
+    ) ?? null
+  )
+})
+
+function isSelectableWorkShift(shift: { id: string; code: string; name: string }) {
+  if (shift.id === FLEX_SHIFT_ID || shift.id === 'shift_free_punch') return false
+  if (shift.code === 'REST' || shift.code === 'FREE' || shift.code === 'FLEX' || shift.code === 'CUSTOM') {
+    return false
+  }
+  if (shift.name === '休息' || shift.name === '自由打卡' || shift.name === '自定义') return false
+  return true
+}
+
+const groupShifts = computed(() => {
+  const templates = selectedAttendanceGroup.value?.shiftTemplates ?? []
+  return templates
+    .map((tpl) => {
+      const shiftId = resolveShiftIdForTemplate(tpl.name, store.shifts)
+      const shift = shiftId ? store.shifts.find((s) => s.id === shiftId) ?? null : null
+      return { template: tpl, shift }
+    })
+    .filter((d): d is { template: (typeof templates)[number]; shift: NonNullable<typeof d.shift> } =>
+      Boolean(d.shift && isSelectableWorkShift(d.shift)),
+    )
+})
+
+const selectedLineShiftContext = computed(() => {
+  if (!selectedLineShiftId.value) return null
+  const d = groupShifts.value.find((x) => x.shift.id === selectedLineShiftId.value)
+  if (!d) return null
+  return {
+    shiftId: d.shift.id,
+    shiftName: d.template.name,
+    startTime: d.template.startTime,
+    endTime: d.template.endTime,
+    color: d.shift.color,
+  }
+})
+
+const showLinePanel = computed(() => {
+  if (!editMode.value || !hasMutableWeekDates.value || !scheduleTeamId.value || !memberIds.value.length) {
+    return false
+  }
+  if (scheduleMode.value === 'custom') return true
+  return Boolean(selectedLineShiftContext.value)
+})
+
+watch(scheduleMode, (mode) => {
+  if (mode === 'shift') {
+    if (!selectedLineShiftId.value || !groupShifts.value.some((d) => d.shift.id === selectedLineShiftId.value)) {
+      selectedLineShiftId.value = groupShifts.value[0]?.shift.id ?? null
+    }
+  }
+})
+
+watch(groupShifts, (list) => {
+  if (scheduleMode.value !== 'shift') return
+  if (!selectedLineShiftId.value || !list.some((d) => d.shift.id === selectedLineShiftId.value)) {
+    selectedLineShiftId.value = list[0]?.shift.id ?? null
+  }
 })
 
 /** 按班组分组，用于矩阵左侧分组展示 */
@@ -117,7 +296,6 @@ const groupedRows = computed(() => {
   const groups: { id: string; name: string; color: string; members: typeof employees.value }[] = []
 
   teams.forEach((t, i) => {
-    if (teamId.value && t.id !== teamId.value) return
     const members = employees.value.filter((e) => t.memberIds.includes(e.id))
     members.forEach((m) => used.add(m.id))
     if (!members.length) return
@@ -159,8 +337,9 @@ const weekdayLabels = ['一', '二', '三', '四', '五', '六', '日']
 const selectedBrush = computed(() => brushes.value.find((b) => b.id === brushId.value))
 
 const compliance = computed(() => {
-  const team = enterpriseTeams.value[0]
-  const group = store.attendanceGroups.find((g) => g.id === team?.attendanceGroupId)
+  const group =
+    selectedAttendanceGroup.value ||
+    store.attendanceGroups.find((g) => g.id === enterpriseTeams.value[0]?.attendanceGroupId)
   return normalizeAttendanceGroupCompliance(group?.compliance || defaultCompliance)
 })
 
@@ -232,7 +411,7 @@ const hasDraftInWeek = computed(() =>
 
 const weekPublishRecord = computed(() => {
   const month = weekDays.value[0]?.slice(0, 7)
-  const tid = teamId.value || enterpriseTeams.value[0]?.id
+  const tid = scheduleTeamId.value
   if (!tid || !month) return undefined
   return store.publishRecords.find((r) => r.teamId === tid && r.month === month)
 })
@@ -264,13 +443,16 @@ const statusBar = computed(() => {
     return {
       tone: 'warning' as const,
       label: '编辑中',
-      desc: '待确认班次可改，发布后通知灵工；已确认班次置灰锁定',
+      desc:
+        scheduleMode.value === 'shift'
+          ? '班次划线：先选班次再拖选日期；已确认班次置灰锁定'
+          : '自定义排班：按日/按周划灵活时段；已确认班次置灰锁定',
     }
   }
   return {
     tone: 'warning' as const,
     label: '编辑中',
-    desc: '划线后请点击「发布排班」，发布后灵工将收到确认通知',
+    desc: '可切换班次划线或自定义排班，完成后点击「发布排班」',
   }
 })
 
@@ -290,7 +472,7 @@ const confirmStats = computed(() => {
 })
 
 const publishHistory = computed(() => {
-  const tid = teamId.value || enterpriseTeams.value[0]?.id
+  const tid = scheduleTeamId.value
   const month = weekDays.value[0]?.slice(0, 7)
   if (!tid) return []
   return store.getSchedulePublishHistory(tid, month)
@@ -410,10 +592,18 @@ function cellDisplay(employeeId: string, date: string) {
 
   const brush = BRUSH_META.find((b) => b.id === asn.shiftId)
   const shift = store.shifts.find((s) => s.id === asn.shiftId)
+  const isFlex = asn.shiftId === FLEX_SHIFT_ID || asn.shiftId === 'shift_flex'
+  const flexLabel = isFlex ? formatLineAssignmentLabel(asn, shift ?? null) : ''
   return {
     kind: 'shift' as const,
-    short: brush?.short || shift?.name?.slice(0, 1) || '班',
-    color: locked ? '#CBD5E1' : brush?.color || shift?.color || '#3B82F6',
+    short: isFlex
+      ? flexLabel?.slice(0, 8) || '自定义'
+      : brush?.short || shift?.name?.slice(0, 1) || '班',
+    color: locked
+      ? '#CBD5E1'
+      : isFlex
+        ? FLEX_SHIFT_COLOR
+        : brush?.color || shift?.color || '#3B82F6',
     soft: brush?.soft || '#DBEAFE',
     text: locked ? '#64748B' : '#fff',
     locked,
@@ -482,7 +672,7 @@ function shiftWeek(delta: number) {
 function resolveTeamId(employeeId: string) {
   return (
     store.teams.find((t) => t.memberIds.includes(employeeId))?.id ||
-    teamId.value ||
+    scheduleTeamId.value ||
     enterpriseTeams.value[0]?.id
   )
 }
@@ -662,14 +852,8 @@ function onCellPointerUp() {
 }
 
 function onCellClick(employeeId: string, date: string) {
-  if (continuousMode.value) return
   if (openConflict(employeeId, date)) return
-  const published = getPublishedAssignment(employeeId, date)
-  if (published || isScheduleHistoryDate(date, SCHEDULE_DEMO_TODAY) || !canEditCell(employeeId, date)) {
-    openCellDetail(employeeId, date)
-    return
-  }
-  paint(employeeId, date)
+  openCellDetail(employeeId, date)
 }
 
 function onPinchStart(e: TouchEvent) {
@@ -739,7 +923,7 @@ function persistDraft() {
     DRAFT_KEY,
     JSON.stringify({
       weekAnchor: weekAnchor.value,
-      teamId: teamId.value,
+      selectedDeptId: selectedDeptId.value,
       brushId: brushId.value,
       at: Date.now(),
     }),
@@ -750,87 +934,153 @@ function restoreDraft() {
   try {
     const raw = localStorage.getItem(DRAFT_KEY)
     if (!raw) return
-    const data = JSON.parse(raw) as { weekAnchor?: string; teamId?: string; brushId?: string }
+    const data = JSON.parse(raw) as {
+      weekAnchor?: string
+      selectedDeptId?: string
+      brushId?: string
+    }
     if (data.weekAnchor) weekAnchor.value = data.weekAnchor
-    if (data.teamId !== undefined) teamId.value = data.teamId
+    if (data.selectedDeptId) selectedDeptId.value = data.selectedDeptId
     if (data.brushId) brushId.value = data.brushId
   } catch {
     /* ignore */
   }
 }
 
-function clearWeek() {
-  const batch: HistItem[] = []
-  employees.value.forEach((emp) => {
-    weekDays.value.forEach((date) => {
-      const item = applyCell(emp.id, date, 'eraser')
-      if (item) batch.push(item)
-    })
-  })
-  if (batch.length) {
-    undoStack.value.push(batch)
-    redoStack.value = []
+function resolveActionTeams() {
+  if (enterpriseTeams.value.length) return enterpriseTeams.value
+  if (scheduleTeamId.value) {
+    const t = store.teams.find((x) => x.id === scheduleTeamId.value)
+    return t ? [t] : []
   }
-  moreOpen.value = false
-  ElMessage.success('已清空本周排班')
+  return []
 }
 
-function fillRow(employeeId: string) {
-  const batch: HistItem[] = []
-  weekDays.value.forEach((date) => {
-    const item = applyCell(employeeId, date, brushId.value === 'eraser' ? 'shift_rest' : brushId.value)
-    if (item) batch.push(item)
-  })
-  if (batch.length) {
-    undoStack.value.push(batch)
-    redoStack.value = []
+function openCancelShift() {
+  if (!cellDetail.value || !detailPublishedAssignment.value) return
+  if (detailIsHistory.value) {
+    ElMessage.warning('历史班次不可取消')
+    return
   }
-  moreOpen.value = false
-  ElMessage.success('已批量填充该行')
+  if (!detailIsLocked.value) {
+    ElMessage.info('仅已确认班次需走取消班次流程')
+    return
+  }
+  cancelForm.value = { reasonCode: 'business_change', reasonOther: '' }
+  cancelSheetOpen.value = true
 }
 
-function copyToOthers(sourceId: string) {
-  const batch: HistItem[] = []
-  employees.value.forEach((emp) => {
-    if (emp.id === sourceId) return
-    weekDays.value.forEach((date) => {
-      const src = getAsn(sourceId, date)
-      const item = applyCell(emp.id, date, src?.shiftId || 'shift_rest', src?.note)
-      if (item) batch.push(item)
+async function submitCancelShift() {
+  if (!cellDetail.value || !detailPublishedAssignment.value) return
+  try {
+    const reason = buildCancelShiftReasonText(
+      cancelForm.value.reasonCode,
+      cancelForm.value.reasonOther,
+    )
+    cancelSubmitting.value = true
+    const asn = detailPublishedAssignment.value
+    const req = store.submitCancelShiftRequest({
+      employeeId: cellDetail.value.employeeId,
+      date: cellDetail.value.date,
+      shiftId: asn.shiftId,
+      teamId: asn.teamId || resolveTeamId(cellDetail.value.employeeId) || '',
+      reason,
+      reasonCode: cancelForm.value.reasonCode,
+      reasonOther:
+        cancelForm.value.reasonCode === 'other'
+          ? cancelForm.value.reasonOther.trim()
+          : undefined,
+      initiatedBy: 'admin',
+      source: 'schedule',
+      cancelScope: 'person',
     })
-  })
-  if (batch.length) {
-    undoStack.value.push(batch)
-    redoStack.value = []
+    cancelSheetOpen.value = false
+    try {
+      await ElMessageBox.confirm('取消班次申请已创建，是否立即审批通过？', '发起取消班次', {
+        type: 'warning',
+        confirmButtonText: '立即通过',
+        cancelButtonText: '稍后审批',
+      })
+      store.reviewCancelShiftRequest(req.id, true, '企业小程序审批通过', '企业小程序')
+      ElMessage.success('班次已取消')
+      cellDetail.value = null
+    } catch {
+      ElMessage.success('取消班次申请已提交，可在「考勤审批」中查看')
+      cellDetail.value = null
+    }
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '提交失败')
+  } finally {
+    cancelSubmitting.value = false
   }
-  moreOpen.value = false
-  ElMessage.success('已复制到其他人员')
 }
 
-function smartFill() {
-  const pattern = [
-    'shift_morning',
-    'shift_morning',
-    'shift_afternoon',
-    'shift_afternoon',
-    'shift_night',
-    'shift_rest',
-    'shift_rest',
-  ]
-  const batch: HistItem[] = []
-  employees.value.forEach((emp, idx) => {
-    weekDays.value.forEach((date, di) => {
-      const shift = pattern[(di + idx) % pattern.length]
-      const item = applyCell(emp.id, date, shift)
-      if (item) batch.push(item)
+function copyLastWeek() {
+  if (!memberIds.value.length) {
+    ElMessage.warning('当前部门暂无人员')
+    return
+  }
+  if (!editMode.value) {
+    enterEditMode()
+    if (!editMode.value) return
+  }
+  const targetDates = weekDays.value
+  const sourceDates = targetDates.map((d) => addDays(d, -7))
+  let count = 0
+  const teams = resolveActionTeams()
+  if (teams.length) {
+    teams.forEach((t) => {
+      const ids = memberIds.value.filter((id) => t.memberIds.includes(id))
+      if (!ids.length) return
+      count += store.cloneAssignmentsFromDates(t.id, sourceDates, targetDates, ids)
     })
-  })
-  if (batch.length) {
-    undoStack.value.push(batch)
-    redoStack.value = []
+  } else {
+    memberIds.value.forEach((employeeId) => {
+      const tid = resolveTeamId(employeeId)
+      if (!tid) return
+      count += store.cloneAssignmentsFromDates(tid, sourceDates, targetDates, [employeeId])
+    })
   }
   moreOpen.value = false
-  ElMessage.success('已智能推荐填充')
+  ElMessage.success(
+    count ? `已复制上周 ${count} 条排班（已确认班次保持不变）` : '上周无可复制排班',
+  )
+}
+
+async function clearDraftPeriod() {
+  const dates = weekDays.value.filter((d) => isScheduleFutureDate(d, SCHEDULE_DEMO_TODAY))
+  if (!dates.length) {
+    ElMessage.warning('当前周没有可清空的未来班次草稿')
+    return
+  }
+  try {
+    await ElMessageBox.confirm('将清空本周未发布草稿并恢复至上次发布版本', '清空草稿', {
+      type: 'warning',
+      confirmButtonText: '清空',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  const teams = resolveActionTeams()
+  if (teams.length) {
+    teams.forEach((t) => store.revertDraftForPeriod(t.id, dates))
+  } else {
+    memberIds.value.forEach((employeeId) => {
+      const tid = resolveTeamId(employeeId)
+      if (tid) store.revertDraftForPeriod(tid, dates)
+    })
+  }
+  undoStack.value = []
+  redoStack.value = []
+  editMode.value = false
+  moreOpen.value = false
+  ElMessage.success('草稿已清空')
+}
+
+function openPublishLogFromMore() {
+  moreOpen.value = false
+  publishLogOpen.value = true
 }
 
 function saveDraft() {
@@ -839,19 +1089,37 @@ function saveDraft() {
 }
 
 function enterEditMode() {
+  if (!selectedDeptId.value) {
+    ElMessage.warning('请先选择叶子部门')
+    deptPickerOpen.value = true
+    return
+  }
+  if (!memberIds.value.length) {
+    ElMessage.warning('该部门暂无在职人员')
+    return
+  }
+  if (!scheduleTeamId.value) {
+    ElMessage.warning('当前部门未关联班组，无法划线排班')
+    return
+  }
   if (!hasMutableWeekDates.value) {
     ElMessage.warning('当前周没有可编辑的未来班次')
     return
   }
   editMode.value = true
+  if (scheduleMode.value === 'shift' && !selectedLineShiftId.value) {
+    selectedLineShiftId.value = groupShifts.value[0]?.shift.id ?? null
+  }
 }
 
 async function publishWeek() {
-  const teams = teamId.value
-    ? enterpriseTeams.value.filter((t) => t.id === teamId.value)
-    : enterpriseTeams.value
+  const teams = enterpriseTeams.value.length
+    ? enterpriseTeams.value
+    : scheduleTeamId.value
+      ? store.teams.filter((t) => t.id === scheduleTeamId.value)
+      : []
   if (!teams.length) {
-    ElMessage.warning('暂无可用班组')
+    ElMessage.warning('当前部门暂无可用班组，请先配置班组或人员')
     return
   }
   const dates = weekDays.value.filter((d) => isScheduleFutureDate(d, SCHEDULE_DEMO_TODAY))
@@ -861,7 +1129,7 @@ async function publishWeek() {
   }
   try {
     await ElMessageBox.confirm(
-      `确认发布 ${weekLabel.value} 的排班？变更的待确认班次将通知灵工重新确认；已确认班次保持不变。`,
+      `确认发布 ${selectedDeptLabel.value} · ${weekLabel.value} 的排班？变更的待确认班次将通知灵工重新确认；已确认班次保持不变。`,
       '发布排班',
       { type: 'warning', confirmButtonText: '确认发布' },
     )
@@ -877,18 +1145,36 @@ async function publishWeek() {
   }
 }
 
+function selectDepartment(id: string) {
+  selectedDeptId.value = id
+  deptPickerOpen.value = false
+  editMode.value = false
+  undoStack.value = []
+  redoStack.value = []
+}
+
+function syncLineSelectedDate() {
+  const next =
+    weekDays.value.find((d) => isScheduleFutureDate(d, SCHEDULE_DEMO_TODAY)) || weekDays.value[0]
+  if (next) lineSelectedDate.value = next
+}
+
+watch([weekAnchor, selectedDeptId, brushId], persistDraft)
+
+watch([weekAnchor, selectedDeptId], () => {
+  editMode.value = false
+  undoStack.value = []
+  redoStack.value = []
+  selectedLineShiftId.value = null
+  syncLineSelectedDate()
+})
+
+watch(weekDays, syncLineSelectedDate, { immediate: true })
+
 function onOrientation() {
   landscapeTip.value =
     typeof window !== 'undefined' && window.matchMedia('(orientation: landscape)').matches
 }
-
-watch([weekAnchor, teamId, brushId], persistDraft)
-
-watch([weekAnchor, teamId], () => {
-  editMode.value = false
-  undoStack.value = []
-  redoStack.value = []
-})
 
 onMounted(() => {
   restoreDraft()
@@ -914,16 +1200,7 @@ onUnmounted(() => {
         <el-icon :size="20"><ArrowLeft /></el-icon>
       </button>
       <h1>划线排班</h1>
-      <button
-        v-if="editMode && !!hasMutableWeekDates"
-        type="button"
-        class="nav-btn"
-        aria-label="更多"
-        @click="moreOpen = true"
-      >
-        <el-icon :size="20"><MoreFilled /></el-icon>
-      </button>
-      <span v-else class="nav-spacer" aria-hidden="true" />
+      <button type="button" class="nav-more-text" @click="moreOpen = true">更多</button>
     </header>
 
     <div class="filter-bar">
@@ -939,10 +1216,15 @@ onUnmounted(() => {
           <el-icon><ArrowRight /></el-icon>
         </button>
       </div>
-      <select v-model="teamId" class="team-select">
-        <option value="">全部班组</option>
-        <option v-for="t in enterpriseTeams" :key="t.id" :value="t.id">{{ t.name }}</option>
-      </select>
+      <button
+        type="button"
+        class="dept-select"
+        :disabled="!departmentOptions.length"
+        @click="deptPickerOpen = true"
+      >
+        <span>{{ selectedDeptLabel }}</span>
+        <el-icon :size="14"><ArrowRight /></el-icon>
+      </button>
     </div>
 
     <div class="status-bar" :class="statusBar.tone">
@@ -961,29 +1243,79 @@ onUnmounted(() => {
 
     <p v-if="landscapeTip" class="landscape">建议竖屏使用；横屏可展示更多日期列</p>
 
-    <div v-if="editMode && !!hasMutableWeekDates" class="brushes">
+    <div v-if="editMode && !!hasMutableWeekDates" class="mode-tabs">
       <button
-        v-for="b in brushes"
-        :key="b.id"
         type="button"
-        class="brush"
-        :class="{ active: brushId === b.id }"
-        :style="{ '--brush': b.color, '--brush-soft': b.soft }"
-        @click="brushId = b.id"
+        :class="{ active: scheduleMode === 'shift' }"
+        @click="scheduleMode = 'shift'"
       >
-        <span class="brush-name">{{ b.name }}</span>
-        <span class="brush-time">{{ b.time }}</span>
+        班次划线
       </button>
+      <button
+        type="button"
+        :class="{ active: scheduleMode === 'custom' }"
+        @click="scheduleMode = 'custom'"
+      >
+        自定义排班
+      </button>
+    </div>
+
+    <div
+      v-if="editMode && scheduleMode === 'shift' && !!hasMutableWeekDates"
+      class="shift-chips"
+    >
+      <button
+        v-for="d in groupShifts"
+        :key="d.shift.id"
+        type="button"
+        class="shift-chip"
+        :class="{ active: selectedLineShiftId === d.shift.id }"
+        :style="{ '--chip': d.shift.color }"
+        @click="selectedLineShiftId = d.shift.id"
+      >
+        <strong>{{ d.template.name }}</strong>
+        <span>{{ d.template.startTime.slice(0, 5) }}-{{ d.template.endTime.slice(0, 5) }}</span>
+      </button>
+      <p v-if="!groupShifts.length" class="shift-empty">
+        当前部门未配置考勤组班次，请先在考勤组中维护班次，或改用自定义排班
+      </p>
+    </div>
+
+    <div
+      v-if="showLinePanel"
+      class="line-panel-wrap"
+    >
+      <ScheduleLinePanel
+        v-model:selected-date="lineSelectedDate"
+        :team-id="scheduleTeamId"
+        :member-ids="memberIds"
+        :week-dates="weekDays"
+        :edit-mode="editMode"
+        :mode="scheduleMode"
+        :shift-context="scheduleMode === 'shift' ? selectedLineShiftContext : null"
+        default-scope="week"
+        :conflict-map="conflictMap"
+        :is-cell-locked="isCellLocked"
+        @enter-edit="enterEditMode"
+      />
     </div>
 
     <div v-if="editMode && !!hasMutableWeekDates" class="hint">
       <el-icon class="hint-icon"><WarningFilled /></el-icon>
-      <span>选择画笔后划线；已过期与已确认班次置灰不可改，点击格子可查看详情</span>
+      <span>
+        {{
+          scheduleMode === 'shift'
+            ? selectedLineShiftContext
+              ? `已选「${selectedLineShiftContext.shiftName}」，按周拖选日期即可划线（同后台班次划线）`
+              : '请先选择考勤组班次，或切换到自定义排班'
+            : '上方按日/按周自定义划线（同后台）；下方矩阵可查看本周概览'
+        }}
+      </span>
     </div>
 
     <div v-else-if="!!hasMutableWeekDates" class="hint view-hint">
       <el-icon class="hint-icon"><WarningFilled /></el-icon>
-      <span>点击格子查看详情；已过期班次只读，未来班次可点「编辑排班」调整</span>
+      <span>点击格子查看详情；已过期班次只读，未来班次可点「编辑排班」选择班次划线或自定义排班</span>
     </div>
 
     <div v-else class="hint history-hint">
@@ -1080,12 +1412,15 @@ onUnmounted(() => {
           </tbody>
         </table>
       </div>
-      <div v-if="!employees.length" class="empty">本班组暂无人员</div>
+      <div v-if="!employees.length" class="empty">
+        {{ selectedDeptId ? '该部门暂无在职人员' : '请先选择叶子部门' }}
+      </div>
     </div>
 
     <div class="legend">
       <span class="legend-title">图例</span>
-      <span v-for="b in brushes.slice(0, 4)" :key="b.id" class="lg">
+      <span class="lg"><i :style="{ background: FLEX_SHIFT_COLOR }" />自定义划线</span>
+      <span v-for="b in brushes.slice(0, 3)" :key="b.id" class="lg">
         <i :style="{ background: b.color }" />{{ b.name }}
       </span>
       <span class="lg"><i style="background: #e5e7eb" />休息</span>
@@ -1121,6 +1456,7 @@ onUnmounted(() => {
         </span>
       </div>
       <div v-if="!!hasMutableWeekDates && !editMode" class="actions view-actions">
+        <button type="button" class="text-more" @click="moreOpen = true">更多</button>
         <button type="button" class="btn edit" @click="enterEditMode">编辑排班</button>
       </div>
       <div v-else-if="!!hasMutableWeekDates && editMode" class="actions">
@@ -1130,10 +1466,7 @@ onUnmounted(() => {
         <button type="button" class="icon-btn" :disabled="!redoStack.length" @click="redo">
           <el-icon :size="18"><RefreshRight /></el-icon>
         </button>
-        <button type="button" class="more-btn" @click="moreOpen = true">
-          <el-icon><MoreFilled /></el-icon>
-          更多
-        </button>
+        <button type="button" class="text-more" @click="moreOpen = true">更多</button>
         <button type="button" class="btn save" @click="saveDraft">
           <span class="disk" />
           保存排班
@@ -1144,42 +1477,42 @@ onUnmounted(() => {
         </button>
       </div>
       <div v-else class="actions readonly-actions">
-        <button type="button" class="btn save" @click="publishLogOpen = true">查看发布记录</button>
+        <button type="button" class="text-more" @click="moreOpen = true">更多</button>
       </div>
     </footer>
+
+    <div v-if="deptPickerOpen" class="sheet-mask" @click="deptPickerOpen = false">
+      <div class="sheet" @click.stop>
+        <h3>选择部门</h3>
+        <p class="sheet-sub">仅展示叶子部门</p>
+        <button
+          v-for="d in departmentOptions"
+          :key="d.id"
+          type="button"
+          class="sheet-row"
+          :class="{ active: d.id === selectedDeptId }"
+          @click="selectDepartment(d.id)"
+        >
+          {{ d.label }}
+          <small v-if="d.id === selectedDeptId">当前</small>
+        </button>
+        <div v-if="!departmentOptions.length" class="empty">暂无可选叶子部门</div>
+        <button type="button" class="sheet-cancel" @click="deptPickerOpen = false">取消</button>
+      </div>
+    </div>
 
     <div v-if="moreOpen" class="sheet-mask" @click="moreOpen = false">
       <div class="sheet" @click.stop>
         <h3>快捷操作</h3>
-        <label class="sheet-row switch-row">
-          <span>连续划线模式</span>
-          <input v-model="continuousMode" type="checkbox">
-        </label>
-        <button
-          type="button"
-          class="sheet-row"
-          :disabled="!selectedRowId"
-          @click="selectedRowId && fillRow(selectedRowId)"
-        >
-          批量填充选中行
-          <small v-if="!selectedRowId">（先点左侧人名）</small>
-        </button>
-        <button
-          type="button"
-          class="sheet-row"
-          :disabled="!selectedRowId"
-          @click="selectedRowId && copyToOthers(selectedRowId)"
-        >
+        <button type="button" class="sheet-row" @click="copyLastWeek">
           <el-icon><DocumentCopy /></el-icon>
-          复制排班到其他人员
+          复制上周
         </button>
-        <button type="button" class="sheet-row" @click="smartFill">
-          <el-icon><MagicStick /></el-icon>
-          智能推荐填充
+        <button type="button" class="sheet-row danger" @click="clearDraftPeriod">
+          清空草稿
         </button>
-        <button type="button" class="sheet-row danger" @click="clearWeek">
-          <el-icon><Delete /></el-icon>
-          清空当前排班
+        <button type="button" class="sheet-row" @click="openPublishLogFromMore">
+          发布日志
         </button>
         <button type="button" class="sheet-cancel" @click="moreOpen = false">取消</button>
       </div>
@@ -1249,7 +1582,7 @@ onUnmounted(() => {
           <span v-else>—</span>
         </div>
         <p v-if="detailIsLocked" class="detail-tip warn">
-          灵工已确认该班次，不可直接编辑，请通过取消班次流程处理。
+          灵工已确认该班次，不可直接编辑，可通过取消班次处理。
         </p>
         <p v-else-if="detailIsHistory" class="detail-tip">
           该班次已过期，不可修改、取消或发布。
@@ -1257,7 +1590,53 @@ onUnmounted(() => {
         <p v-else-if="detailDraftAssignment && detailPublishedAssignment" class="detail-tip">
           存在未发布修改，重新发布后将通知灵工确认。
         </p>
+        <button
+          v-if="detailIsLocked && !detailIsHistory"
+          type="button"
+          class="sheet-primary danger"
+          @click="openCancelShift"
+        >
+          取消班次
+        </button>
         <button type="button" class="sheet-cancel" @click="cellDetail = null">关闭</button>
+      </div>
+    </div>
+
+    <div v-if="cancelSheetOpen" class="sheet-mask" @click="cancelSheetOpen = false">
+      <div class="sheet" @click.stop>
+        <h3>发起取消班次</h3>
+        <p class="sheet-sub">
+          {{ detailEmployee?.name }} · {{ cellDetail?.date }} · {{ shiftLabel(detailPublishedAssignment) }}
+        </p>
+        <p class="detail-tip warn">取消通过后将移除该日排班</p>
+        <div class="reason-list">
+          <label
+            v-for="opt in CANCEL_SHIFT_REASON_OPTIONS"
+            :key="opt.value"
+            class="reason-item"
+            :class="{ active: cancelForm.reasonCode === opt.value }"
+          >
+            <input v-model="cancelForm.reasonCode" type="radio" :value="opt.value">
+            <span>{{ opt.label }}</span>
+          </label>
+        </div>
+        <textarea
+          v-if="cancelForm.reasonCode === 'other'"
+          v-model="cancelForm.reasonOther"
+          class="reason-other"
+          rows="3"
+          maxlength="200"
+          placeholder="请填写其他取消原因"
+        />
+        <button
+          type="button"
+          class="sheet-primary danger"
+          :disabled="cancelSubmitting"
+          @click="submitCancelShift"
+        >
+          {{ cancelSubmitting ? '提交中…' : '提交取消' }}
+        </button>
+        <button type="button" class="sheet-cancel" @click="cancelSheetOpen = false">返回</button>
       </div>
     </div>
 
@@ -1337,7 +1716,7 @@ onUnmounted(() => {
 }
 .nav {
   display: grid;
-  grid-template-columns: 40px 1fr 40px;
+  grid-template-columns: 40px 1fr auto;
   align-items: center;
   padding: 8px 8px 6px;
   background: #fff;
@@ -1354,6 +1733,15 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+.nav-more-text {
+  height: 40px;
+  border: none;
+  background: transparent;
+  color: #228BFF;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0 8px;
 }
 .nav-spacer {
   width: 40px;
@@ -1375,7 +1763,7 @@ h1 {
   background: #fff;
 }
 .week-card {
-  flex: 1;
+  flex: 1.15;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -1423,6 +1811,136 @@ h1 {
   font-size: 12px;
   color: #334155;
   padding: 0 8px;
+}
+.dept-select {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 12px;
+  color: #334155;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.dept-select span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  flex: 1;
+}
+.dept-select:disabled {
+  opacity: 0.55;
+}
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 12px 8px;
+  background: #f3f4f6;
+  border-radius: 10px;
+  padding: 3px;
+}
+.mode-tabs button {
+  border: none;
+  background: transparent;
+  height: 34px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #6b7280;
+}
+.mode-tabs button.active {
+  background: #fff;
+  color: #228BFF;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+.shift-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 0 12px 8px;
+  -webkit-overflow-scrolling: touch;
+}
+.shift-chip {
+  flex-shrink: 0;
+  min-width: 96px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: left;
+}
+.shift-chip strong {
+  display: block;
+  font-size: 13px;
+  color: #111827;
+}
+.shift-chip span {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: #9ca3af;
+}
+.shift-chip.active {
+  border-color: var(--chip, #228BFF);
+  background: color-mix(in srgb, var(--chip, #228BFF) 12%, #fff);
+  box-shadow: inset 3px 0 0 var(--chip, #228BFF);
+}
+.shift-chip.active strong {
+  color: var(--chip, #228BFF);
+}
+.shift-empty {
+  margin: 0;
+  padding: 8px 4px;
+  font-size: 12px;
+  color: #9ca3af;
+  line-height: 1.45;
+}
+.line-panel-wrap {
+  margin: 0 12px 8px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+}
+.line-panel-wrap :deep(.line-panel) {
+  padding: 12px;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+}
+.line-panel-wrap :deep(.line-panel-head .panel-title) {
+  font-size: 14px;
+}
+.line-panel-wrap :deep(.line-toolbar .hint) {
+  display: none;
+}
+.line-panel-wrap :deep(.emp-col) {
+  width: 72px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.line-panel-wrap :deep(.act-col) {
+  width: 52px;
+}
+.line-panel-wrap :deep(.line-table .line-header),
+.line-panel-wrap :deep(.line-table .line-row) {
+  min-width: 640px;
+}
+.sheet-sub {
+  margin: -4px 0 10px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+.sheet-row.active {
+  color: #228BFF;
+  font-weight: 600;
+  background: #EBF4FF;
 }
 .landscape {
   margin: 0 12px 8px;
@@ -1976,6 +2494,16 @@ h1 {
   line-height: 1.1;
   flex-shrink: 0;
 }
+.text-more {
+  height: 40px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: #228BFF;
+  font-size: 14px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
 .btn {
   flex: 1;
   height: 40px;
@@ -2074,6 +2602,55 @@ h1 {
   background: #f3f4f6;
   margin-top: 4px;
   font-size: 14px;
+}
+.sheet-primary {
+  width: 100%;
+  height: 44px;
+  border: none;
+  border-radius: 12px;
+  background: #228BFF;
+  color: #fff;
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.sheet-primary.danger {
+  background: #ef4444;
+}
+.reason-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 12px;
+}
+.reason-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.4;
+}
+.reason-item.active {
+  border-color: #228BFF;
+  background: #EBF4FF;
+  color: #228BFF;
+}
+.reason-item input {
+  margin-top: 2px;
+}
+.reason-other {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  margin-bottom: 8px;
+  resize: vertical;
 }
 .conflict-msg {
   margin: 0 0 8px;

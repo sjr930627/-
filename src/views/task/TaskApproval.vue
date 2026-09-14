@@ -1,13 +1,11 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import TaskPublishFormBody, {
   type TaskPublishFormModel,
 } from '@/components/task/TaskPublishFormBody.vue'
-import TaskQuantityField from '@/components/task/TaskQuantityField.vue'
-import TaskFormSection from '@/components/task/TaskFormSection.vue'
 import {
   formatTaskQuantity,
   formatTaskRegionLabel,
@@ -19,17 +17,23 @@ import {
   taskPublishStatusMap,
   workflowStatusMap,
 } from '@/constants/task'
-import { calcEnterpriseTaskProgress } from '@/services/task'
+import { calcEnterpriseTaskProgress, canManuallyEndTask, formatTaskClaimableQuantity } from '@/services/task'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
 import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
 import type { Task } from '@/types'
 
 const store = useAppStore()
-const activeTab = ref<'pending' | 'all'>('pending')
+const statusFilter = ref<'all' | 'pending' | 'active' | 'ended' | 'completed' | 'rejected'>('pending')
+const orgKeyword = ref('')
+const nameKeyword = ref('')
 const detailVisible = ref(false)
 const publishVisible = ref(false)
 const currentTask = ref<Task | null>(null)
 const reviewNote = ref('')
+
+onMounted(() => {
+  store.syncTaskLifecycleStatuses()
+})
 
 function createEmptyForm(enterpriseId = ''): TaskPublishFormModel {
   return {
@@ -45,7 +49,6 @@ function createEmptyForm(enterpriseId = ''): TaskPublishFormModel {
     metadataFields: [],
     fixedPrice: 50,
     settlementUnitPrice: 50,
-    trainingCourseId: '',
     plannedTotal: 100,
     unlimitedQuantity: false,
     longTerm: false,
@@ -121,7 +124,18 @@ const customerUnitPrice = computed(() => reviewForm.value.fixedPrice || 0)
 
 const tableData = computed(() =>
   store.tasks
-    .filter((t) => (activeTab.value === 'pending' ? t.status === 'pending' : true))
+    .filter((t) => {
+      if (statusFilter.value !== 'all' && t.status !== statusFilter.value) return false
+      const orgKw = orgKeyword.value.trim()
+      if (orgKw) {
+        const hitEnterprise = (t.enterpriseName ?? '').includes(orgKw)
+        const hitProvider = (t.serviceProviderName ?? '').includes(orgKw)
+        if (!hitEnterprise && !hitProvider) return false
+      }
+      const nameKw = nameKeyword.value.trim()
+      if (nameKw && !(t.name ?? '').includes(nameKw)) return false
+      return true
+    })
     .map((t) => {
       const wf = store.taskWorkflows.find((w) => w.id === t.workflowId)
       const { progress } = calcEnterpriseTaskProgress(t)
@@ -146,6 +160,11 @@ const tableData = computed(() =>
             ? `¥${t.settlementUnitPrice}/单`
             : `¥${resolveTaskSettlementUnitPrice(t)}/单（默认）`,
         quantityLabel: formatTaskQuantity(t.unlimitedQuantity, t.plannedTotal),
+        claimableLabel: formatTaskClaimableQuantity(
+          t,
+          store.taskInstances,
+          store.taskWorkflows.find((w) => w.id === t.workflowId),
+        ),
         statusLabel: taskPublishStatusMap[t.status],
         periodLabel: t.longTerm
           ? '长期'
@@ -156,6 +175,22 @@ const tableData = computed(() =>
 )
 
 const pendingCount = computed(() => store.tasks.filter((t) => t.status === 'pending').length)
+const statusCounts = computed(() => ({
+  pending: store.tasks.filter((t) => t.status === 'pending').length,
+  active: store.tasks.filter((t) => t.status === 'active').length,
+  ended: store.tasks.filter((t) => t.status === 'ended').length,
+  completed: store.tasks.filter((t) => t.status === 'completed').length,
+  rejected: store.tasks.filter((t) => t.status === 'rejected').length,
+}))
+
+const reviewClaimableLabel = computed(() => {
+  if (!currentTask.value) return undefined
+  return formatTaskClaimableQuantity(
+    currentTask.value,
+    store.taskInstances,
+    store.taskWorkflows.find((w) => w.id === currentTask.value!.workflowId),
+  )
+})
 
 function fillFormFromTask(row: Task): TaskPublishFormModel {
   return {
@@ -176,7 +211,6 @@ function fillFormFromTask(row: Task): TaskPublishFormModel {
     })),
     fixedPrice: row.fixedPrice ?? 50,
     settlementUnitPrice: resolveTaskSettlementUnitPrice(row),
-    trainingCourseId: row.trainingCourseId ?? '',
     plannedTotal: row.plannedTotal,
     unlimitedQuantity: row.unlimitedQuantity ?? row.plannedTotal == null,
     longTerm: row.longTerm ?? false,
@@ -256,10 +290,6 @@ function validateForm(form: TaskPublishFormModel, requireEnterprise = false) {
     ElMessage.warning('请填写任务内容')
     return false
   }
-  if (!form.regionCodes?.length || form.regionCodes.length < 3) {
-    ElMessage.warning('请选择省市区')
-    return false
-  }
   if (!form.fixedPrice || form.fixedPrice < 1) {
     ElMessage.warning('请填写固定单价')
     return false
@@ -307,7 +337,6 @@ function toTaskPayload(form: TaskPublishFormModel) {
     pricingMode: 'fixed' as const,
     fixedPrice: form.fixedPrice,
     settlementUnitPrice: form.settlementUnitPrice,
-    trainingCourseId: form.trainingCourseId.trim() || undefined,
     unlimitedQuantity: form.unlimitedQuantity,
     plannedTotal: form.unlimitedQuantity ? undefined : form.plannedTotal,
     longTerm: form.longTerm,
@@ -326,7 +355,6 @@ function toTaskPayload(form: TaskPublishFormModel) {
 async function approveTask() {
   const task = currentTask.value
   if (!task) return
-  if (!validateForm(reviewForm.value)) return
   try {
     const { value } = await ElMessageBox.prompt(
       '审批意见（可选）',
@@ -336,9 +364,7 @@ async function approveTask() {
         inputPlaceholder: '请输入',
       },
     )
-    store.reviewEnterpriseTask(task.id, true, String(value || '').trim(), '运营-李芳', {
-      ...toTaskPayload(reviewForm.value),
-    })
+    store.reviewEnterpriseTask(task.id, true, String(value || '').trim(), '运营-李芳')
     detailVisible.value = false
     ElMessage.success('已发布到任务大厅')
   } catch {
@@ -363,41 +389,26 @@ async function rejectTask() {
   }
 }
 
-function saveActiveTask() {
-  const task = currentTask.value
-  if (!task || task.status !== 'active') return
-  if (
-    !reviewForm.value.unlimitedQuantity &&
-    (!reviewForm.value.plannedTotal || reviewForm.value.plannedTotal < 1)
-  ) {
-    ElMessage.warning('请填写任务数量或选择无上限')
+async function endActiveTask(row?: Task) {
+  const task = row ?? currentTask.value
+  if (!task) return
+  if (!canManuallyEndTask(task)) {
+    ElMessage.warning('任务已过结束期限且数量已完成，将自动变为已完成')
+    store.syncTaskLifecycleStatuses()
     return
   }
-  if (
-    !reviewForm.value.longTerm &&
-    (!reviewForm.value.dateRange?.length || reviewForm.value.dateRange.length < 2)
-  ) {
-    ElMessage.warning('请设置任务期限或选择长期')
-    return
-  }
-  const { start, end } = buildTimeRange(
-    reviewForm.value.longTerm,
-    reviewForm.value.dateRange,
-  )
   try {
-    store.updateActiveEnterpriseTask(task.id, {
-      unlimitedQuantity: reviewForm.value.unlimitedQuantity,
-      plannedTotal: reviewForm.value.unlimitedQuantity
-        ? undefined
-        : reviewForm.value.plannedTotal,
-      longTerm: reviewForm.value.longTerm,
-      startTime: start,
-      endTime: end,
-    })
-    ElMessage.success('已保存')
-    detailVisible.value = false
+    await ElMessageBox.confirm(
+      `确定结束任务「${task.name}」？结束后状态为已结束，进行中的子任务将同步结束。`,
+      '结束任务',
+      { type: 'warning' },
+    )
+    store.endTask(task.id)
+    if (currentTask.value?.id === task.id) detailVisible.value = false
+    ElMessage.success('任务已结束')
   } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+    if (e === 'cancel' || e === 'close') return
+    if (e instanceof Error) ElMessage.error(e.message)
   }
 }
 
@@ -414,20 +425,15 @@ async function submitPublish() {
     )
     store.publishEnterpriseTask(created.id)
     publishVisible.value = false
-    activeTab.value = 'pending'
+    statusFilter.value = 'pending'
     ElMessage.success('已提交审批')
   } catch (e) {
     if (e !== 'cancel' && e instanceof Error) ElMessage.error(e.message)
   }
 }
 
-function syncSettlementFromCustomer() {
-  reviewForm.value.settlementUnitPrice = customerUnitPrice.value
-}
-
-const reviewReadonly = computed(
-  () => currentTask.value?.status !== 'pending',
-)
+/** 审核/详情均只读查看发布内容 */
+const reviewReadonly = computed(() => true)
 </script>
 
 <template>
@@ -436,16 +442,44 @@ const reviewReadonly = computed(
       <div>
         <h2 class="page-title">任务审批</h2>
         <p class="text-muted">
-          审核时可修改发布内容与结算价，通过后进入任务大厅 · 待审批 {{ pendingCount }} 条
+          查看企业发布详情并审批，通过后进入任务大厅 · 待审批 {{ pendingCount }} 条
         </p>
       </div>
       <el-button type="primary" :icon="Plus" @click="openPublish">发布任务</el-button>
     </div>
 
-    <el-tabs v-model="activeTab">
-      <el-tab-pane :label="`待审批 (${pendingCount})`" name="pending" />
-      <el-tab-pane label="全部记录" name="all" />
-    </el-tabs>
+    <div class="toolbar">
+      <el-input
+        v-model="orgKeyword"
+        placeholder="企业/服务商模糊查询"
+        clearable
+        style="width: 220px"
+      />
+      <el-input
+        v-model="nameKeyword"
+        placeholder="任务名称模糊查询"
+        clearable
+        style="width: 200px"
+      />
+      <el-radio-group v-model="statusFilter">
+        <el-radio-button value="all">全部</el-radio-button>
+        <el-radio-button value="pending">
+          待审批 ({{ statusCounts.pending }})
+        </el-radio-button>
+        <el-radio-button value="active">
+          进行中 ({{ statusCounts.active }})
+        </el-radio-button>
+        <el-radio-button value="ended">
+          已结束 ({{ statusCounts.ended }})
+        </el-radio-button>
+        <el-radio-button value="completed">
+          已完成 ({{ statusCounts.completed }})
+        </el-radio-button>
+        <el-radio-button value="rejected">
+          已驳回 ({{ statusCounts.rejected }})
+        </el-radio-button>
+      </el-radio-group>
+    </div>
 
     <el-table :data="tableData" border stripe>
       <el-table-column prop="enterpriseName" label="企业名称" min-width="140" show-overflow-tooltip />
@@ -456,7 +490,13 @@ const reviewReadonly = computed(
       <el-table-column prop="priceLabel" label="客户单价" width="100" />
       <el-table-column prop="settlementLabel" label="结算价" width="120" show-overflow-tooltip />
       <el-table-column prop="quantityLabel" label="任务数量" width="90" />
+      <el-table-column prop="claimableLabel" label="可领任务数" width="100" />
       <el-table-column prop="periodLabel" label="任务期限" min-width="150" />
+      <el-table-column label="进度" min-width="140">
+        <template #default="{ row }">
+          接单 {{ row.acceptedCount }} · 完成 {{ row.completedCount }}
+        </template>
+      </el-table-column>
       <el-table-column label="提交时间" width="160">
         <template #default="{ row }">
           {{ new Date(row.createdAt).toLocaleString('zh-CN') }}
@@ -467,7 +507,7 @@ const reviewReadonly = computed(
           <el-tag
             size="small"
             :type="
-              row.status === 'active'
+              row.status === 'active' || row.status === 'completed'
                 ? 'success'
                 : row.status === 'pending'
                   ? 'warning'
@@ -480,7 +520,7 @@ const reviewReadonly = computed(
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
           <el-button
             v-if="row.status === 'pending'"
@@ -491,6 +531,14 @@ const reviewReadonly = computed(
             审核
           </el-button>
           <el-button v-else link type="primary" @click="openReview(row)">详情</el-button>
+          <el-button
+            v-if="row.status === 'active' && canManuallyEndTask(row)"
+            link
+            type="warning"
+            @click="endActiveTask(row)"
+          >
+            结束
+          </el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -500,8 +548,8 @@ const reviewReadonly = computed(
     v-model="detailVisible"
     :title="
       currentTask?.status === 'pending'
-        ? `审核发布 · ${currentTask?.name ?? ''}`
-        : currentTask?.name ?? '任务详情'
+        ? `审核 · ${currentTask?.name ?? ''}`
+        : `发布详情 · ${currentTask?.name ?? ''}`
     "
     size="680px"
   >
@@ -510,63 +558,31 @@ const reviewReadonly = computed(
         v-if="currentTask.status === 'pending'"
         type="info"
         :closable="false"
-        title="可修改任务发布内容，并配置灵工结算价后发布到任务大厅"
+        title="仅可查看企业提交的发布内容，确认无误后通过或驳回"
         style="margin-bottom: 16px"
       />
       <el-alert
-        v-else-if="currentTask.status === 'active'"
-        type="warning"
+        v-else
+        type="info"
         :closable="false"
-        title="进行中的任务仅可修改任务数量与任务期限"
+        title="发布任务详情（只读）"
         style="margin-bottom: 16px"
       />
 
-      <el-form v-if="currentTask.status === 'active'" label-position="top">
-        <el-form-item label="企业">
-          <el-input :model-value="currentTask.enterpriseName" disabled />
-        </el-form-item>
-        <el-form-item label="服务商">
-          <el-input :model-value="currentTask.serviceProviderName || '—'" disabled />
-        </el-form-item>
-        <TaskFormSection title="数量与期限" icon="量" icon-variant="purple">
-          <el-form-item label="任务数量" required>
-            <TaskQuantityField
-              v-model="reviewForm.plannedTotal"
-              v-model:unlimited="reviewForm.unlimitedQuantity"
-            />
-          </el-form-item>
-          <el-form-item label="任务期限">
-            <el-radio-group v-model="reviewForm.longTerm">
-              <el-radio :value="true">长期</el-radio>
-              <el-radio :value="false">指定时间段</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item v-if="!reviewForm.longTerm" label="时间范围" required>
-            <el-date-picker
-              v-model="reviewForm.dateRange"
-              type="daterange"
-              value-format="YYYY-MM-DD"
-              start-placeholder="开始"
-              end-placeholder="结束"
-              style="width: 100%"
-            />
-          </el-form-item>
-        </TaskFormSection>
-      </el-form>
-
-      <el-form v-else label-position="top">
+      <el-form label-position="top">
         <el-form-item label="企业">
           <el-input :model-value="currentTask.enterpriseName" disabled />
         </el-form-item>
         <TaskPublishFormBody
           v-model="reviewForm"
           :readonly="reviewReadonly"
-          :show-settlement="currentTask.status === 'pending'"
+          :require-location="false"
+          show-settlement
           :provider-options="reviewProviderOptions"
           :department-options="reviewDepartmentOptions"
           :workflow-options="reviewWorkflowOptions"
           :customer-unit-price="customerUnitPrice"
-          @sync-settlement="syncSettlementFromCustomer"
+          :claimable-label="reviewClaimableLabel"
         />
         <el-form-item v-if="currentTask.status === 'pending'" label="审批意见 / 驳回原因">
           <el-input
@@ -585,8 +601,8 @@ const reviewReadonly = computed(
         <el-button type="success" @click="approveTask">通过并发布到大厅</el-button>
         <el-button type="danger" @click="rejectTask">驳回</el-button>
       </div>
-      <div v-else-if="currentTask.status === 'active'" class="drawer-actions">
-        <el-button type="primary" @click="saveActiveTask">保存修改</el-button>
+      <div v-else-if="currentTask.status === 'active' && canManuallyEndTask(currentTask)" class="drawer-actions">
+        <el-button type="warning" @click="endActiveTask()">结束任务</el-button>
       </div>
     </template>
   </el-drawer>
@@ -608,6 +624,7 @@ const reviewReadonly = computed(
       <TaskPublishFormBody
         v-model="publishForm"
         show-enterprise
+        :require-location="false"
         :enterprise-options="enterpriseOptions"
         :provider-options="publishProviderOptions"
         :department-options="publishDepartmentOptions"
@@ -623,6 +640,14 @@ const reviewReadonly = computed(
 </template>
 
 <style scoped>
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: center;
+}
+
 .drawer-actions {
   display: flex;
   gap: 12px;

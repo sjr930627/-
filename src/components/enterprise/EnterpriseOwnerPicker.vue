@@ -7,6 +7,7 @@ import {
   getDepartmentDescendantIds,
   getDepartmentName,
 } from '@/utils'
+import { DEFAULT_WORKFORCE_ENTERPRISE_ID, isUnassignedDepartment } from '@/constants/department'
 import { enterpriseOperatorRoleId } from '@/constants/enterprise'
 import { accountHasRole } from '@/constants/account'
 
@@ -28,18 +29,31 @@ const treeKeyword = ref('')
 const accountKeyword = ref('')
 const selectedDeptId = ref('dept_root')
 
-const treeData = computed(() => buildDepartmentTree(store.departments))
+/** 运营后台权限组织（非企业灵工部门树） */
+const platformDepartments = computed(() =>
+  store
+    .getDepartmentsByEnterprise(DEFAULT_WORKFORCE_ENTERPRISE_ID)
+    .filter((d) => !isUnassignedDepartment(d.id)),
+)
+
+const treeData = computed(() => buildDepartmentTree(platformDepartments.value))
 
 const selectedDept = computed(() =>
-  store.departments.find((d) => d.id === selectedDeptId.value),
+  platformDepartments.value.find((d) => d.id === selectedDeptId.value),
 )
 
 const allOperatorAccounts = computed(() =>
   store.systemAccounts
-    .filter((a) => accountHasRole(a, enterpriseOperatorRoleId) && a.status === 'enabled')
+    .filter(
+      (a) =>
+        accountHasRole(a, enterpriseOperatorRoleId) &&
+        a.status === 'enabled' &&
+        a.accountPortal !== 'enterprise' &&
+        !a.enterpriseId,
+    )
     .map((a) => ({
       ...a,
-      departmentName: getDepartmentName(store.departments, a.departmentId),
+      departmentName: getDepartmentName(platformDepartments.value, a.departmentId),
       checked: props.modelValue.includes(a.id),
     }))
     .sort((a, b) => a.displayName.localeCompare(b.displayName, 'zh-CN')),
@@ -56,7 +70,7 @@ const operatorAccounts = computed(() => {
     )
   }
   if (!selectedDeptId.value) return []
-  const ids = getDepartmentDescendantIds(store.departments, selectedDeptId.value)
+  const ids = getDepartmentDescendantIds(platformDepartments.value, selectedDeptId.value)
   return allOperatorAccounts.value.filter((a) => ids.has(a.departmentId))
 })
 
@@ -120,7 +134,7 @@ function removeOwner(id: string) {
 
     <div class="picker-layout">
       <div class="org-panel">
-        <div class="panel-title">灵工组织架构</div>
+        <div class="panel-title">权限组织</div>
         <el-input
           v-model="treeKeyword"
           placeholder="搜索部门"
@@ -155,7 +169,7 @@ function removeOwner(id: string) {
         </div>
         <el-input
           v-model="accountKeyword"
-          placeholder="输入姓名/账号/手机查询权限部门人员"
+          placeholder="输入姓名/账号/手机查询权限账号"
           clearable
           prefix-icon="Search"
           class="org-search"

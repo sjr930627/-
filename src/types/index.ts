@@ -1065,7 +1065,10 @@ export interface SettlementBill {
   enterpriseName: string
   /** 账单适用部门范围：全公司或指定部门 */
   departmentScope: 'all' | 'department'
+  /** 单部门兼容字段（多选时取首个） */
   departmentId?: string
+  /** 多选部门 ID（departmentScope=department 时） */
+  departmentIds?: string[]
   departmentName: string
   /** 付款企业（可选，企业确认时可改） */
   payerEnterpriseName?: string
@@ -1114,6 +1117,9 @@ export interface SettlementBill {
   confirmedAt?: string
   paidAt?: string
   voidReason?: string
+  /** 企业驳回原因（退回待提交） */
+  rejectReason?: string
+  rejectedAt?: string
   remark?: string
   /** 打款失败标记（银行返回失败需重试） */
   paymentFailed?: boolean
@@ -1167,6 +1173,12 @@ export type BillingFormulaFieldKey =
   | 'fixed_unit_amount'
   | 'payroll_total'
   | 'service_fee_rate'
+  | 'recruit_service_rate'
+  | 'manage_service_rate'
+  | 'grab_manage_rate'
+  | 'task_service_rate'
+  | 'schedule_hours'
+  | 'grab_hours'
 
 /** 计费规则 */
 export interface BillingRule {
@@ -1225,6 +1237,9 @@ export interface SettlementManageOrder {
   id: string
   enterpriseId: string
   enterpriseName: string
+  /** 合作服务商（结算单按企业+服务商维度） */
+  serviceProviderId?: string
+  serviceProviderName?: string
   type: SettlementManageType
   orderNo: string
   orderName: string
@@ -1243,6 +1258,8 @@ export interface SettlementSlipLine {
   lineId: string
   enterpriseId: string
   enterpriseName: string
+  serviceProviderId?: string
+  serviceProviderName?: string
   employeeId: string
   employeeName: string
   employeeNo?: string
@@ -1256,11 +1273,15 @@ export interface SettlementSlipLine {
   periodEnd: string
 }
 
-/** 结算单（每次批量结算操作生成） */
+/** 结算单（每次批量结算操作生成；同一单仅含一个企业+一个服务商） */
 export interface SettlementSlip {
   id: string
   slipNo: string
   type: SettlementManageType
+  enterpriseId?: string
+  enterpriseName?: string
+  serviceProviderId?: string
+  serviceProviderName?: string
   workerCount: number
   totalQuantity: number
   totalAmount: number
@@ -1364,6 +1385,9 @@ export interface InvoiceApplication {
   bills: InvoiceApplicationBillRef[]
   enterpriseId: string
   enterpriseName: string
+  /** 开票服务商（来自关联账单） */
+  serviceProviderId?: string
+  serviceProviderName?: string
   /** 选用的开票抬头 / 付款主体 */
   invoiceProfileId?: string
   invoiceType: InvoiceType
@@ -1688,20 +1712,22 @@ export interface WorkflowEntryConditionGroup {
   /** 用户如何完成打卡 */
   punchNavigateMode?: WorkflowPunchNavigateMode
   listenTarget?: WorkflowEntryListenTarget
-  /** 条件未满足时的提示文案 */
+  /** 条件未满足时的提示文案（面包屑下方展示，≤100 字） */
   incompletePrompt?: string
+  /** 待打卡提示（待打卡记录条件） */
+  pendingPunchPrompt?: string
   timeoutDays?: number
   timeoutAction?: WorkflowEntryTimeoutAction
   timeoutTargetNodeId?: string
   /** 打卡次数：仅上班 / 上下班 / 每个服务时段 */
   punchCountMode?: WorkflowPunchCountMode
-  /** 允许的打卡方式（未填默认 GPS） */
+  /** 允许的打卡方式：定位 / WiFi / 扫码（未填默认定位；WiFi、扫码跟随考勤组） */
   allowedPunchMethods?: PunchMethod[]
   /** 打卡地点来源 */
   locationSource?: WorkflowPunchLocationSource
   /** 地点取自流程字段时关联 field.id */
   locationFieldId?: string
-  /** 服务时间来源 */
+  /** 打卡时间段来源 */
   serviceTimeSource?: WorkflowPunchTimeSource
   /** 时段取自流程字段时关联 field.id */
   serviceTimeFieldId?: string
@@ -1758,7 +1784,13 @@ export interface WorkflowNode {
   /** 进入该节点需满足的条件组（任一组满足即可进入） */
   entryConditionGroups?: WorkflowEntryConditionGroup[]
   timeConditionNote?: string
+  /** 短信通知 */
   notifySms?: boolean
+  /** 服务号通知 */
+  notifyServiceAccount?: boolean
+  /** 消息通知（站内/消息中心） */
+  notifyMessage?: boolean
+  /** @deprecated 兼容旧数据，加载时迁移为 notifyServiceAccount */
   notifyMiniProgram?: boolean
   notifyRoles?: WorkflowRole[]
   timeoutEnabled?: boolean
@@ -1858,7 +1890,14 @@ export interface TaskType {
   createdAt: string
 }
 
-export type TaskPublishStatus = 'draft' | 'pending' | 'active' | 'ended' | 'cancelled' | 'rejected'
+export type TaskPublishStatus =
+  | 'draft'
+  | 'pending'
+  | 'active'
+  | 'ended'
+  | 'completed'
+  | 'cancelled'
+  | 'rejected'
 export type DispatchMode = 'assign' | 'hall'
 /** 任务发布范围：全局全部灵工可见；部门含所选部门及全部下级 */
 export type TaskPublishScope = 'global' | 'department'
@@ -1873,6 +1912,8 @@ export interface TaskMetadataField {
 
 export interface Task {
   id: string
+  /** 业务任务编号：年月日 + 4 位随机数，如 202609141234；缺省加载时补齐 */
+  taskNo?: string
   enterpriseId: string
   enterpriseName: string
   name: string
@@ -2397,11 +2438,11 @@ export interface ServiceProvider {
   code: string
   name: string
   shortName?: string
-  contact: string
-  phone: string
+  contact?: string
+  phone?: string
   email?: string
   address?: string
-  businessScope: string
+  businessScope?: string
   status: ServiceProviderStatus
   linkedEnterpriseIds: string[]
   cooperationStartDate: string

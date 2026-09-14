@@ -1,177 +1,203 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
 import StatKpiCard from '@/components/statistics/StatKpiCard.vue'
 import StatPanel from '@/components/statistics/StatPanel.vue'
 import VChart from '@/components/statistics/VChart.vue'
-import RankList from '@/components/statistics/RankList.vue'
-import {
-  buildDailyAttendanceList,
-  buildMonthlySummary,
-  getMonthDateRange,
-} from '@/services/attendance'
-import {
-  buildDepartmentAnalytics,
-  buildMonthlyTrends,
-  formatDepartmentLabel,
-  getRecentMonths,
-} from '@/services/analytics'
-import { buildPayrollPreview } from '@/services/payroll'
-import { barChartOption, lineChartOption, trendText } from '@/services/statisticsCharts'
-import { chartColors } from '@/plugins/echarts'
+import { WORKBENCH_DEMO_NOW } from '@/constants/workbenchReminder'
 import { formatMoney } from '@/constants/payrollBill'
+import { valueLineChartOption } from '@/services/statisticsCharts'
+import { chartColors } from '@/plugins/echarts'
+import {
+  buildDashboardAlerts,
+  countActiveEmployees,
+  countHiresInRange,
+  countPendingApprovals,
+  countResignsInRange,
+  formatMomPercent,
+  formatResignMom,
+  listOpenExceptionsOnDay,
+  resolveDashboardWindow,
+  sumPendingPaymentAmount,
+  windowDates,
+  type DashboardPeriod,
+} from '@/services/businessDashboard'
+import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 
 const store = useAppStore()
-const dateRange = ref<[string, string]>(['2026-07-01', '2026-07-31'])
-const month = ref('2026-07')
-const deptKeyword = ref('')
+const router = useRouter()
+const { pathPrefix, isEnterprise } = usePortal()
 
-const dailyList = computed(() =>
-  buildDailyAttendanceList(
-    store.activeEmployees.map((e) => e.id),
-    getMonthDateRange(month.value),
-    store.assignments,
-    store.shifts,
-    store.punches,
-    store.leaveRequests,
-    store.attendanceRule,
-    store.manualOverrides,
-  ),
+const period = ref<DashboardPeriod>('month')
+
+const nowDay = computed(() => {
+  const d = WORKBENCH_DEMO_NOW
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+})
+
+const window = computed(() => resolveDashboardWindow(period.value, WORKBENCH_DEMO_NOW))
+
+const enterpriseIds = computed(() => {
+  if (!isEnterprise.value) return undefined as string[] | undefined
+  const id = store.currentEnterpriseId
+  return id ? [id] : undefined
+})
+
+function employeeInScope(employeeId: string) {
+  const ids = enterpriseIds.value
+  if (!ids?.length) return true
+  const emp = store.employees.find((e) => e.id === employeeId)
+  return emp ? ids.includes(resolveEnterpriseIdByEmployee(emp)) : false
+}
+
+const scopedEmployees = computed(() => {
+  const ids = enterpriseIds.value
+  if (!ids?.length) return store.employees
+  return store.employees.filter((e) => ids.includes(resolveEnterpriseIdByEmployee(e)))
+})
+
+const scopedBills = computed(() => {
+  const ids = enterpriseIds.value
+  if (!ids?.length) return store.settlementBills
+  return store.settlementBills.filter((b) => ids.includes(b.enterpriseId))
+})
+
+const scopedExceptions = computed(() =>
+  store.exceptions.filter((e) => employeeInScope(e.employeeId)),
 )
 
-const summaries = computed(() =>
-  store.activeEmployees.map((emp) =>
-    buildMonthlySummary(emp.id, month.value, dailyList.value.filter((d) => d.employeeId === emp.id)),
-  ),
+const scopedJoins = computed(() => {
+  const ids = enterpriseIds.value
+  if (!ids?.length) return store.workerJoinApplications
+  return store.workerJoinApplications.filter((a) => ids.includes(a.enterpriseId))
+})
+
+const scopedMakeup = computed(() =>
+  store.makeupRequests.filter((r) => employeeInScope(r.employeeId)),
 )
 
-const payrollItems = computed(() =>
-  buildPayrollPreview(
-    store.activeEmployees,
-    summaries.value,
-    dailyList.value,
-    store.overtimeRequests,
-    store.payrollConfig,
-    store.teams,
-    store.assignments,
-    month.value,
-  ),
-)
+const scopedGrab = computed(() => {
+  const ids = enterpriseIds.value
+  if (!ids?.length) return store.grabShiftApplications
+  return store.grabShiftApplications.filter((a) => {
+    const emp = store.employees.find((e) => e.id === a.employeeId)
+    return emp ? ids.includes(resolveEnterpriseIdByEmployee(emp)) : true
+  })
+})
 
-const deptStats = computed(() =>
-  buildDepartmentAnalytics(
-    store.departments,
-    store.employees,
-    dailyList.value,
-    payrollItems.value,
-    month.value,
-  ).map((d) => {
-    const seed = d.departmentId.charCodeAt(d.departmentId.length - 1)
-    return {
-      ...d,
-      departmentName: formatDepartmentLabel(store.departments, d.departmentId),
-      abnormalRate: Math.round((d.lateRate + d.absentRate) * 10) / 10,
-      taskRate: 82 + (seed % 15),
-      momChange: ((seed % 7) - 3).toFixed(1),
-    }
+const scopedTasks = computed(() => {
+  const ids = enterpriseIds.value
+  if (!ids?.length) return store.tasks
+  return store.tasks.filter((t) => ids.includes(t.enterpriseId))
+})
+
+const activeTotal = computed(() => countActiveEmployees(scopedEmployees.value))
+
+const hireCount = computed(() =>
+  countHiresInRange(scopedEmployees.value, window.value.start, window.value.end),
+)
+const hirePrev = computed(() =>
+  countHiresInRange(scopedEmployees.value, window.value.prevStart, window.value.prevEnd),
+)
+const hireMom = computed(() => formatMomPercent(hireCount.value, hirePrev.value))
+
+const resignCount = computed(() =>
+  countResignsInRange(scopedEmployees.value, window.value.start, window.value.end),
+)
+const resignPrev = computed(() =>
+  countResignsInRange(scopedEmployees.value, window.value.prevStart, window.value.prevEnd),
+)
+const resignMom = computed(() => formatResignMom(resignCount.value, resignPrev.value))
+
+const pending = computed(() =>
+  countPendingApprovals({
+    makeupRequests: scopedMakeup.value,
+    grabApplications: scopedGrab.value,
+    tasks: scopedTasks.value,
+    joinApplications: scopedJoins.value,
+    leavePending: store.leaveRequests.filter(
+      (r) => r.status === 'pending' && employeeInScope(r.employeeId),
+    ).length,
+    overtimePending: store.overtimeRequests.filter(
+      (r) => r.status === 'pending' && employeeInScope(r.employeeId),
+    ).length,
+    swapPending: store.swapRequests.filter(
+      (r) =>
+        r.status === 'pending' &&
+        (employeeInScope(r.applicantId) || employeeInScope(r.targetEmployeeId)),
+    ).length,
   }),
 )
 
-const filteredDeptStats = computed(() => {
-  const kw = deptKeyword.value.trim()
-  if (!kw) return deptStats.value
-  return deptStats.value.filter((d) => d.departmentName.includes(kw))
-})
+const pendingPayAmount = computed(() => sumPendingPaymentAmount(scopedBills.value))
 
-const avgAttendance = computed(() =>
-  deptStats.value.length
-    ? Math.round(deptStats.value.reduce((s, d) => s + d.attendanceRate, 0) / deptStats.value.length * 10) / 10
-    : 0,
+const todayExceptions = computed(() =>
+  listOpenExceptionsOnDay(scopedExceptions.value, nowDay.value),
 )
 
-const totalPayroll = computed(() =>
-  Math.round(payrollItems.value.reduce((s, p) => s + p.totalPay, 0)),
-)
-
-const taskCompletionRate = computed(() => {
-  const tasks = store.tasks.filter((t) => t.status === 'active' || t.status === 'ended')
-  if (!tasks.length) return 0
-  const total = tasks.reduce((s, t) => s + (t.plannedTotal ?? t.acceptedCount), 0)
-  const done = tasks.reduce((s, t) => s + t.completedCount, 0)
-  return total ? Math.round((done / total) * 1000) / 10 : 0
-})
-
-const activeRate = computed(() =>
-  store.employees.length
-    ? Math.round((store.activeEmployees.length / store.employees.length) * 1000) / 10
-    : 0,
-)
-
-const trendDays = computed(() => {
-  const dates = getMonthDateRange(month.value).slice(-30)
-  const labels = dates.map((d) => d.slice(5))
-  const attendance: number[] = []
-  const abnormal: number[] = []
-  for (const date of dates) {
-    const dayRecords = dailyList.value.filter((d) => d.date === date && d.scheduledHours > 0)
-    if (!dayRecords.length) {
-      attendance.push(0)
-      abnormal.push(0)
-      continue
-    }
-    const normal = dayRecords.filter((d) => d.status === 'normal' || d.status === 'late').length
-    const abn = dayRecords.filter((d) => ['late', 'absent', 'missing_punch', 'early_leave'].includes(d.status)).length
-    attendance.push(Math.round((normal / dayRecords.length) * 1000) / 10)
-    abnormal.push(Math.round((abn / dayRecords.length) * 1000) / 10)
+const latestExceptionSummary = computed(() => {
+  const list = todayExceptions.value
+  if (!list.length) return '—'
+  const ex = [...list].sort((a, b) => b.date.localeCompare(a.date))[0]
+  const emp = store.employees.find((e) => e.id === ex.employeeId)
+  const name = emp?.name ?? '未知员工'
+  const dept = store.departments.find((d) => d.id === emp?.departmentId)?.name ?? '—'
+  const overtime = ex.message.includes('超') || ex.type === 'absent'
+  return {
+    text: `${name} · ${dept} · ${ex.message} · ${ex.date}`,
+    overtime,
   }
-  return { labels, attendance, abnormal }
 })
 
-const attendanceTrendOption = computed(() =>
-  lineChartOption(trendDays.value.labels, [
-    { name: '出勤率', data: trendDays.value.attendance, color: chartColors.blue },
-    { name: '异常率', data: trendDays.value.abnormal, color: chartColors.orange, dashed: true },
-  ]),
+const alerts = computed(() =>
+  buildDashboardAlerts({
+    exceptions: scopedExceptions.value,
+    bills: scopedBills.value,
+    joinApplications: scopedJoins.value,
+    makeupRequests: scopedMakeup.value,
+    pathPrefix: pathPrefix.value,
+    nowDay: nowDay.value,
+  }),
 )
 
-const salaryTrendOption = computed(() => {
-  const months = getRecentMonths(12, month.value)
-  const trends = buildMonthlyTrends(months, store.activeEmployees, store.teams, store.assignments, (m) =>
-    buildDailyAttendanceList(
-      store.activeEmployees.map((e) => e.id),
-      getMonthDateRange(m),
-      store.assignments,
-      store.shifts,
-      store.punches,
-      store.leaveRequests,
-      store.attendanceRule,
-      store.manualOverrides,
-    ),
-    store.payrollConfig,
-  )
-  const colors = trends.map((_, i) =>
-    i === trends.length - 1 ? chartColors.blue : chartColors.green,
-  )
-  return barChartOption(
-    months.map((m) => `${Number(m.slice(5))}月`),
-    [{ name: '薪酬支出', data: trends.map((t) => t.laborCost), color: colors }],
+const trendOption = computed(() => {
+  const dates = windowDates(window.value)
+  const labels = dates.map((d) => d.slice(5))
+  const hires: number[] = []
+  const resigns: number[] = []
+  const exceptions: number[] = []
+  for (const day of dates) {
+    hires.push(countHiresInRange(scopedEmployees.value, day, day))
+    resigns.push(countResignsInRange(scopedEmployees.value, day, day))
+    exceptions.push(
+      scopedExceptions.value.filter((e) => e.date === day && (e.status === 'open' || e.status === 'appealed'))
+        .length,
+    )
+  }
+  return valueLineChartOption(
+    labels,
+    [
+      { name: '入职', data: hires, color: chartColors.green },
+      { name: '离职', data: resigns, color: chartColors.orange, dashed: true },
+      { name: '考勤异常', data: exceptions, color: chartColors.red },
+    ],
+    '人',
   )
 })
 
-const abnormalRank = computed(() =>
-  [...deptStats.value]
-    .sort((a, b) => b.abnormalRate - a.abnormalRate)
-    .slice(0, 5)
-    .map((d, i) => ({
-      name: d.departmentName,
-      value: d.abnormalRate,
-      percent: Math.min(100, d.abnormalRate * 10),
-      color: [chartColors.red, chartColors.orange, chartColors.orange, chartColors.blue, chartColors.purple][i],
-    })),
-)
+function displayValue(n: number) {
+  return n === 0 ? '—' : n
+}
 
-function refreshData() {
-  month.value = month.value
+function go(path: string, query?: Record<string, string>) {
+  router.push({ path: `${pathPrefix.value}${path}`, query })
+}
+
+function onAlert(path: string) {
+  router.push(path)
 }
 </script>
 
@@ -179,146 +205,113 @@ function refreshData() {
   <div class="stats-page">
     <div class="stats-header">
       <div>
-        <h2 class="page-title">概览看板</h2>
-        <p class="text-muted">数据报表 · 综合运营指标一览</p>
+        <h2 class="page-title">经营看板</h2>
+        <p class="text-muted">
+          平台经营核心指标 · {{ window.label }}（{{ window.start }} ~ {{ window.end }}）
+        </p>
       </div>
-      <div class="stats-toolbar">
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始"
-          end-placeholder="结束"
-          value-format="YYYY-MM-DD"
-          style="width: 260px"
-        />
-        <el-button>导出报表</el-button>
-        <el-button type="primary" @click="refreshData">刷新数据</el-button>
+      <el-radio-group v-model="period" size="default">
+        <el-radio-button value="month">本月</el-radio-button>
+        <el-radio-button value="30d">近30天</el-radio-button>
+      </el-radio-group>
+    </div>
+
+    <div v-if="alerts.length" class="alert-bar">
+      <div v-for="item in alerts" :key="item.id" class="alert-item" :class="item.level">
+        <div class="alert-main">
+          <el-tag
+            size="small"
+            :type="item.level === 'urgent' ? 'danger' : item.level === 'important' ? 'warning' : 'info'"
+          >
+            {{ item.level === 'urgent' ? '紧急' : item.level === 'important' ? '重要' : '一般' }}
+          </el-tag>
+          <span class="alert-title">{{ item.title }}</span>
+          <span class="alert-detail">{{ item.detail }}</span>
+        </div>
+        <el-button type="primary" link @click="onAlert(item.path)">去处理</el-button>
       </div>
     </div>
 
     <el-row :gutter="16" class="kpi-row">
       <el-col :xs="24" :sm="12" :md="8" :lg="4">
         <StatKpiCard
-          label="灵工总数"
-          :value="store.employees.length.toLocaleString()"
+          label="在职员工总数"
+          :value="activeTotal"
           icon="User"
           color="blue"
-          trend="+8.2% 较上月"
-          :trend-up="true"
+          clickable
+          @click="go('/employees', { status: 'active' })"
         />
       </el-col>
       <el-col :xs="24" :sm="12" :md="8" :lg="4">
         <StatKpiCard
-          label="本月活跃灵工"
-          :value="store.activeEmployees.length.toLocaleString()"
-          icon="Avatar"
+          :label="`${window.label}入职`"
+          :value="displayValue(hireCount)"
+          icon="Plus"
+          color="green"
+          :trend="hireMom ? `${hireMom.text} 环比` : undefined"
+          :trend-up="hireMom?.up"
+          :trend-positive="hireMom?.positive"
+          clickable
+          @click="go('/employees', { status: 'active' })"
+        />
+      </el-col>
+      <el-col :xs="24" :sm="12" :md="8" :lg="4">
+        <StatKpiCard
+          :label="`${window.label}离职`"
+          :value="displayValue(resignCount)"
+          icon="Minus"
           color="orange"
-          :sub-text="`活跃率 ${activeRate}%`"
+          :trend="resignMom ? `${resignMom.text} 环比` : undefined"
+          :trend-up="resignMom?.up"
+          :trend-positive="resignMom?.positive"
+          clickable
+          @click="go('/employees', { status: 'resigned' })"
+        />
+      </el-col>
+      <el-col :xs="24" :sm="12" :md="8" :lg="4">
+        <StatKpiCard
+          label="待审批"
+          :value="pending.total"
+          icon="Stamp"
+          color="purple"
+          :sub-text="pending.urgent > 0 ? `⚠ ${pending.urgent} 项紧急` : undefined"
+          clickable
+          @click="go('/approvals')"
+        />
+      </el-col>
+      <el-col :xs="24" :sm="12" :md="8" :lg="4">
+        <StatKpiCard
+          label="结算待付金额"
+          :value="formatMoney(pendingPayAmount)"
+          icon="Wallet"
+          color="cyan"
+          clickable
+          @click="go('/statistics/settlement/enterprise', { status: 'pending_payment' })"
+        />
+      </el-col>
+      <el-col :xs="24" :sm="12" :md="8" :lg="4">
+        <StatKpiCard
+          label="考勤异常数"
+          :value="todayExceptions.length"
+          icon="Warning"
+          color="red"
+          :sub-text="typeof latestExceptionSummary === 'string' ? latestExceptionSummary : latestExceptionSummary.text"
+          clickable
+          @click="go('/attendance-exceptions')"
         >
-          <el-progress :percentage="activeRate" :show-text="false" :stroke-width="4" style="margin-top: 10px" />
+          <div
+            v-if="typeof latestExceptionSummary !== 'string' && latestExceptionSummary.overtime"
+            class="overtime-flag"
+          >
+            超工时待复核
+          </div>
         </StatKpiCard>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="4">
-        <StatKpiCard
-          label="本月出勤率"
-          :value="avgAttendance"
-          suffix="%"
-          icon="Calendar"
-          color="green"
-          :trend="trendText(1.2)"
-          :trend-up="true"
-        />
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="4">
-        <StatKpiCard
-          label="本月薪酬总额"
-          :value="formatMoney(totalPayroll)"
-          icon="Money"
-          color="purple"
-          trend="+12.5% 较上月"
-          :trend-up="true"
-        />
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="4">
-        <StatKpiCard
-          label="任务完成率"
-          :value="taskCompletionRate"
-          suffix="%"
-          icon="Finished"
-          color="pink"
-          trend="-2.1% 较上月"
-          :trend-up="false"
-        />
-      </el-col>
     </el-row>
 
-    <StatPanel title="考勤趋势" subtitle="近30天" class="chart-section">
-      <VChart :option="attendanceTrendOption" height="300px" />
-    </StatPanel>
-
-    <el-row :gutter="16" class="chart-row">
-      <el-col :xs="24" :lg="14">
-        <StatPanel title="月度薪酬支出趋势" subtitle="近12个月">
-          <VChart :option="salaryTrendOption" height="300px" />
-        </StatPanel>
-      </el-col>
-      <el-col :xs="24" :lg="10">
-        <StatPanel title="异常考勤部门排行">
-          <template #extra>
-            <el-button link type="primary">查看全部</el-button>
-          </template>
-          <RankList :items="abnormalRank" />
-        </StatPanel>
-      </el-col>
-    </el-row>
-
-    <StatPanel title="部门数据明细" class="table-section">
-      <template #extra>
-        <div class="table-toolbar">
-          <el-select placeholder="全部部门" clearable style="width: 140px">
-            <el-option
-              v-for="d in store.departments.filter((dep) => dep.id !== 'dept_root')"
-              :key="d.id"
-              :label="d.name"
-              :value="d.id"
-            />
-          </el-select>
-          <el-input v-model="deptKeyword" placeholder="搜索部门名称" clearable prefix-icon="Search" style="width: 180px" />
-        </div>
-      </template>
-      <el-table :data="filteredDeptStats" border stripe>
-        <el-table-column prop="departmentName" label="部门名称" min-width="120" fixed />
-        <el-table-column prop="employeeCount" label="灵工人数" width="90" align="center" />
-        <el-table-column label="出勤率" width="90" align="center">
-          <template #default="{ row }">
-            <span class="text-success">{{ row.attendanceRate }}%</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="异常率" width="90" align="center">
-          <template #default="{ row }">
-            <span :class="row.abnormalRate > 5 ? 'text-danger' : 'text-success'">{{ row.abnormalRate }}%</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="任务完成率" width="110" align="center">
-          <template #default="{ row }">{{ row.taskRate }}%</template>
-        </el-table-column>
-        <el-table-column label="薪酬总额" width="120" align="right">
-          <template #default="{ row }">{{ formatMoney(row.laborCost) }}</template>
-        </el-table-column>
-        <el-table-column label="人均薪酬" width="110" align="right">
-          <template #default="{ row }">
-            {{ formatMoney(row.employeeCount ? row.laborCost / row.employeeCount : 0) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="环比变化" width="100" align="center">
-          <template #default="{ row }">
-            <span :class="Number(row.momChange) >= 0 ? 'text-danger' : 'text-success'">
-              {{ Number(row.momChange) >= 0 ? '↑' : '↓' }} {{ Math.abs(Number(row.momChange)) }}%
-            </span>
-          </template>
-        </el-table-column>
-      </el-table>
+    <StatPanel :title="`经营趋势（${window.label}）`">
+      <VChart :option="trendOption" height="320px" />
     </StatPanel>
   </div>
 </template>
@@ -342,38 +335,59 @@ function refreshData() {
   border: 1px solid var(--app-border);
 }
 
-.stats-toolbar {
+.alert-bar {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  padding: 10px 16px;
+}
+
+.alert-item.urgent {
+  border-color: #f5c2c0;
+  background: #fff7f6;
+}
+
+.alert-item.important {
+  border-color: #f5dab1;
+  background: #fffbf2;
+}
+
+.alert-main {
+  display: flex;
+  align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  align-items: center;
+  min-width: 0;
+}
+
+.alert-title {
+  font-weight: 600;
+  color: #303133;
+}
+
+.alert-detail {
+  color: #909399;
+  font-size: 13px;
 }
 
 .kpi-row .el-col {
   margin-bottom: 16px;
 }
 
-.chart-section,
-.table-section {
-  margin: 0;
-}
-
-.chart-row .el-col {
-  margin-bottom: 16px;
-}
-
-.table-toolbar {
-  display: flex;
-  gap: 10px;
-}
-
-.text-success {
-  color: #52c41a;
-  font-weight: 500;
-}
-
-.text-danger {
+.overtime-flag {
+  margin-top: 6px;
+  font-size: 12px;
   color: #f5222d;
-  font-weight: 500;
+  font-weight: 600;
 }
 </style>

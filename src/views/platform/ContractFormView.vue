@@ -7,8 +7,7 @@ import {
   billingRuleTypeMap,
   contractServiceFeeCategoryMap,
   contractTermOptions,
-  settlementCycleMap,
-  settlementQuarterMonthOptions,
+  settlementCycleFormOptions,
   settlementWeekdayOptions,
 } from '@/constants/partnership'
 import {
@@ -60,6 +59,9 @@ const editingContract = computed(() =>
 const expiryManuallyEdited = ref(false)
 const changeNote = ref('')
 const pendingAttachments = ref<ContractAttachment[]>([])
+const publishDialogVisible = ref(false)
+const publishNote = ref('')
+const publishNoteMax = 1000
 
 const form = ref({
   enterpriseId: '',
@@ -72,8 +74,6 @@ const form = ref({
   settlementCycle: 'monthly' as SettlementCycle,
   settlementDay: 15,
   settlementWeekday: 5,
-  settlementQuarterMonth: 3,
-  settlementQuarterDay: 15,
   remark: '',
   enabledBillingTypes: ['hourly'] as ContractBillingRuleType[],
   hourlyRule: defaultBillingRule('hourly'),
@@ -104,15 +104,11 @@ function loadFromContract(contract: NonNullable<typeof editingContract.value>) {
     effectiveDate: source.effectiveDate,
     expiryDate: source.expiryDate,
     settlementCycle:
-      source.settlementCycle === 'weekly' ||
-      source.settlementCycle === 'monthly' ||
-      source.settlementCycle === 'quarterly'
+      source.settlementCycle === 'weekly' || source.settlementCycle === 'monthly'
         ? source.settlementCycle
         : 'monthly',
     settlementDay: source.settlementDay ?? 15,
     settlementWeekday: source.settlementWeekday ?? 5,
-    settlementQuarterMonth: source.settlementQuarterMonth ?? 3,
-    settlementQuarterDay: source.settlementQuarterDay ?? 15,
     remark: source.remark ?? '',
     enabledBillingTypes: rules.map((r) => r.type),
     hourlyRule: hourly ? cloneRule(hourly) : defaultBillingRule('hourly'),
@@ -309,12 +305,6 @@ function validate() {
     ElMessage.warning('请填写每月结算日')
     return false
   }
-  if (form.value.settlementCycle === 'quarterly') {
-    if (!form.value.settlementQuarterMonth || !form.value.settlementQuarterDay) {
-      ElMessage.warning('请完善按季结算配置')
-      return false
-    }
-  }
   if (isRenew.value) {
     if (!changeNote.value.trim()) {
       ElMessage.warning('请填写续约说明')
@@ -324,8 +314,6 @@ function validate() {
       ElMessage.warning('请上传续约合同文件')
       return false
     }
-  } else if (isEdit.value && !changeNote.value.trim()) {
-    // 改版说明可选，默认用「配置改版」
   }
   return true
 }
@@ -351,12 +339,12 @@ function buildSettlementFields() {
     settlementCycle: cycle,
     settlementDay: cycle === 'monthly' ? form.value.settlementDay : undefined,
     settlementWeekday: cycle === 'weekly' ? form.value.settlementWeekday : undefined,
-    settlementQuarterMonth: cycle === 'quarterly' ? form.value.settlementQuarterMonth : undefined,
-    settlementQuarterDay: cycle === 'quarterly' ? form.value.settlementQuarterDay : undefined,
+    settlementQuarterMonth: undefined,
+    settlementQuarterDay: undefined,
   }
 }
 
-function save(submitForApproval = false) {
+function save(submitForApproval = false, publishNoteText?: string) {
   if (!validate()) return
   const billingRules = buildBillingRules()
   const legacy = syncLegacyBillingFields(billingRules)
@@ -375,9 +363,11 @@ function save(submitForApproval = false) {
   }
 
   if (isRevision.value && contractId.value) {
-    const note =
-      changeNote.value.trim() ||
-      (isRenew.value ? '续约改版' : '配置改版')
+    const note = isRenew.value
+      ? changeNote.value.trim() || '续约改版'
+      : publishNoteText !== undefined
+        ? publishNoteText.slice(0, publishNoteMax)
+        : '配置改版'
     const existing = editingContract.value?.attachments ?? []
     const attachments =
       pendingAttachments.value.length > 0
@@ -413,10 +403,14 @@ function save(submitForApproval = false) {
     router.push(`/contracts/${contractId.value}`)
   } else {
     try {
+      const note =
+        publishNoteText !== undefined
+          ? publishNoteText.slice(0, publishNoteMax)
+          : '初始版本'
       const item = store.addServiceContract({
         ...payload,
         submitForApproval,
-        changeNote: '初始版本',
+        changeNote: note,
         attachments: [...pendingAttachments.value],
       })
       ElMessage.success(submitForApproval ? '已创建并提交审批' : '草稿已保存')
@@ -425,6 +419,23 @@ function save(submitForApproval = false) {
       ElMessage.warning(e instanceof Error ? e.message : '创建失败')
     }
   }
+}
+
+/** 新增/编辑：提交审批前填写发布说明；续约仍走表单续约说明 */
+function openPublishDialog() {
+  if (!validate()) return
+  if (isRenew.value) {
+    save(true)
+    return
+  }
+  publishNote.value = ''
+  publishDialogVisible.value = true
+}
+
+function confirmPublish() {
+  const note = publishNote.value.trim().slice(0, publishNoteMax)
+  publishDialogVisible.value = false
+  save(true, note)
 }
 
 function cancel() {
@@ -449,7 +460,7 @@ function cancel() {
         <el-button @click="save(false)">
           {{ isRevision ? '保存（待提交审批）' : '保存草稿' }}
         </el-button>
-        <el-button type="primary" @click="save(true)">提交审批</el-button>
+        <el-button type="primary" @click="openPublishDialog">提交审批</el-button>
       </div>
     </div>
 
@@ -568,10 +579,10 @@ function cancel() {
             <el-form-item label="结算周期" required>
               <el-select v-model="form.settlementCycle" style="width: 100%">
                 <el-option
-                  v-for="(label, key) in settlementCycleMap"
-                  :key="key"
-                  :label="label"
-                  :value="key"
+                  v-for="opt in settlementCycleFormOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
                 />
               </el-select>
               <div class="field-hint">用于提醒生成账单</div>
@@ -603,46 +614,20 @@ function cancel() {
           </el-col>
         </el-row>
 
-        <el-row v-else-if="form.settlementCycle === 'quarterly'" :gutter="16">
-          <el-col :span="8">
-            <el-form-item label="季度内月份" required>
-              <el-select v-model="form.settlementQuarterMonth" style="width: 100%">
-                <el-option
-                  v-for="m in settlementQuarterMonthOptions"
-                  :key="m.value"
-                  :label="m.label"
-                  :value="m.value"
-                />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="结算日" required>
-              <el-input-number
-                v-model="form.settlementQuarterDay"
-                :min="1"
-                :max="28"
-                style="width: 100%"
-              />
-              <div class="field-hint">该月几号结算</div>
-            </el-form-item>
-          </el-col>
-        </el-row>
-
         <el-form-item label="备注">
           <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="可选" />
         </el-form-item>
 
-        <template v-if="isRevision">
-          <el-form-item :label="isRenew ? '续约说明' : '改版说明'" :required="isRenew">
+        <template v-if="isRenew">
+          <el-form-item label="续约说明" required>
             <el-input
               v-model="changeNote"
               type="textarea"
               :rows="3"
-              :placeholder="isRenew ? '请说明续约原因、期限调整等' : '可选，说明本次改版内容'"
+              placeholder="请说明续约原因、期限调整等"
             />
           </el-form-item>
-          <el-form-item :label="isRenew ? '上传续约合同' : '上传合同附件'" :required="isRenew">
+          <el-form-item label="上传续约合同" required>
             <el-upload
               drag
               action="#"
@@ -664,6 +649,27 @@ function cancel() {
             </div>
           </el-form-item>
         </template>
+        <el-form-item v-else-if="isEdit" label="上传合同附件">
+          <el-upload
+            drag
+            action="#"
+            :auto-upload="false"
+            :show-file-list="false"
+            :on-change="onUploadChange"
+            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+          >
+            <div class="upload-inner">
+              <p>拖拽文件到此处，或点击选择</p>
+              <p class="upload-hint">支持 PDF / Word / 图片（演示仅记录文件名）</p>
+            </div>
+          </el-upload>
+          <div v-if="pendingAttachments.length" class="pending-files">
+            <div v-for="file in pendingAttachments" :key="file.id" class="pending-file">
+              <span>{{ file.name }}（{{ file.size }}）</span>
+              <el-button link type="danger" @click="removePendingAttachment(file.id)">移除</el-button>
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item v-else label="合同附件">
           <el-upload
             drag
@@ -778,6 +784,31 @@ function cancel() {
         />
       </el-form>
     </section>
+
+    <el-dialog
+      v-model="publishDialogVisible"
+      title="填写发布说明"
+      width="520px"
+      destroy-on-close
+      append-to-body
+    >
+      <el-form label-position="top">
+        <el-form-item label="发布说明">
+          <el-input
+            v-model="publishNote"
+            type="textarea"
+            :rows="5"
+            :maxlength="publishNoteMax"
+            show-word-limit
+            placeholder="选填，最多 1000 字"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="publishDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmPublish">确认发布</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

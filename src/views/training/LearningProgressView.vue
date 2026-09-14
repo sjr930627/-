@@ -4,21 +4,18 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useTrainingScope } from '@/composables/useTrainingScope'
-import { trainingTypeFilterOptions } from '@/constants/trainingOwner'
-import VChart from '@/components/statistics/VChart.vue'
 import {
   getCourseCompletionStats,
-  getDepartmentCompletionRates,
-  getExamEligibilityLabel,
+  getCourseExamStatusItems,
+  getDepartmentLearningRanking,
   resolveCourseAssignees,
 } from '@/services/training'
 import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 import type { CourseLearningRecord } from '@/types'
-import type { EChartsOption } from 'echarts'
 
 const store = useAppStore()
 const route = useRoute()
-const { isPlatform, typeFilter, enterpriseFilter, filterByTrainingType } = useTrainingScope()
+const { isPlatform, enterpriseFilter, filterByTrainingType } = useTrainingScope()
 const selectedCourseId = ref<string>('')
 
 const selectableCourses = computed(() =>
@@ -69,17 +66,15 @@ const courseStats = computed(() => {
   return getCourseCompletionStats(c, store.courseLearningRecords, store.employees, store.departments)
 })
 
-const deptChartOption = computed((): EChartsOption | null => {
+const departmentRanking = computed(() => {
   const c = selectedCourse.value
-  if (!c) return null
-  const rates = getDepartmentCompletionRates(c, store.courseLearningRecords, store.employees, store.departments)
-  return {
-    tooltip: { trigger: 'axis' },
-    grid: { left: 48, right: 16, top: 24, bottom: 48 },
-    xAxis: { type: 'category' as const, data: rates.map((d) => d.name), axisLabel: { rotate: 30 } },
-    yAxis: { type: 'value' as const, max: 100, axisLabel: { formatter: '{value}%' } },
-    series: [{ type: 'bar' as const, data: rates.map((d) => d.rate), itemStyle: { color: '#e60012' } }],
-  }
+  if (!c) return []
+  return getDepartmentLearningRanking(
+    c,
+    store.courseLearningRecords,
+    store.employees,
+    store.departments,
+  )
 })
 
 const employeeRows = computed(() => {
@@ -102,10 +97,13 @@ const employeeRows = computed(() => {
         updatedAt: '',
       } as CourseLearningRecord
     }
-    const exam = c.examId ? store.trainingExams.find((e) => e.id === c.examId) : null
-    const examLabel = exam
-      ? getExamEligibilityLabel(rec, c, rec.examPassed, rec.examScore)
-      : '-'
+    const examItems = getCourseExamStatusItems(
+      emp.id,
+      c,
+      rec,
+      store.trainingExams,
+      store.examAttempts,
+    )
     const empEnterpriseId = resolveEnterpriseIdByEmployee(emp)
     return {
       employeeId: emp.id,
@@ -115,7 +113,7 @@ const employeeRows = computed(() => {
       department: dept?.name ?? '-',
       courseName: c.name,
       studyMinutes: rec.studyMinutes,
-      examLabel,
+      examItems,
       completedAt: rec.completedAt?.slice(0, 16).replace('T', ' ') ?? '-',
     }
   })
@@ -164,16 +162,8 @@ function exportDetail() {
     </div>
 
     <div class="page-toolbar">
-      <el-select v-if="isPlatform" v-model="typeFilter" placeholder="类型" style="width: 120px">
-        <el-option
-          v-for="o in trainingTypeFilterOptions"
-          :key="o.value"
-          :label="o.label"
-          :value="o.value"
-        />
-      </el-select>
       <el-select
-        v-if="isPlatform && typeFilter !== 'global'"
+        v-if="isPlatform"
         v-model="enterpriseFilter"
         placeholder="所属企业"
         clearable
@@ -198,7 +188,7 @@ function exportDetail() {
           <div class="stat-value sm">{{ selectedCourse.name }}</div>
         </div>
         <div class="stat-card">
-          <div class="stat-label">下发总人数</div>
+          <div class="stat-label">总人数</div>
           <div class="stat-value">{{ courseStats.total }}</div>
         </div>
         <div class="stat-card">
@@ -215,10 +205,15 @@ function exportDetail() {
         </div>
       </div>
 
-      <div class="chart-section">
-        <h3>部门完成率排行</h3>
-        <VChart v-if="deptChartOption" :option="deptChartOption" height="260px" />
-      </div>
+      <h3 class="section-title">部门学习进度排行</h3>
+      <el-table :data="departmentRanking" border stripe style="margin-bottom: 24px; max-width: 560px">
+        <el-table-column type="index" label="排名" width="70" align="center" />
+        <el-table-column prop="departmentName" label="部门" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="studied" label="已学习人数" width="110" align="center" />
+        <el-table-column label="完成率" width="100" align="center">
+          <template #default="{ row }">{{ row.completionRate }}%</template>
+        </el-table-column>
+      </el-table>
 
       <h3 class="section-title">灵工学习明细</h3>
       <el-table :data="employeeRows" border stripe>
@@ -231,7 +226,17 @@ function exportDetail() {
           <template #default="{ row }">{{ row.studyMinutes }} 分钟</template>
         </el-table-column>
         <el-table-column prop="completedAt" label="完成时间" min-width="150" />
-        <el-table-column prop="examLabel" label="考核情况" min-width="180" show-overflow-tooltip />
+        <el-table-column label="考核情况" min-width="220">
+          <template #default="{ row }">
+            <template v-if="row.examItems.length === 0">——</template>
+            <div v-else class="exam-status-list">
+              <div v-for="item in row.examItems" :key="item.examId" class="exam-status-item">
+                <span class="exam-name">{{ item.examName }}</span>
+                <span class="exam-status">{{ item.statusLabel }}</span>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
       </el-table>
     </template>
   </div>
@@ -255,8 +260,29 @@ function exportDetail() {
 .stat-value { font-size: 28px; font-weight: 700; color: #303133; }
 .stat-value.sm { font-size: 15px; font-weight: 600; }
 .unit { font-size: 14px; font-weight: 400; margin-left: 2px; }
-.chart-section { margin-bottom: 24px; }
-.chart-section h3, .section-title { font-size: 15px; margin: 0 0 12px; }
+.section-title { font-size: 15px; margin: 0 0 12px; }
+.exam-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1.4;
+}
+.exam-status-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+}
+.exam-name {
+  color: #303133;
+  font-weight: 500;
+}
+.exam-name::after {
+  content: '：';
+}
+.exam-status {
+  color: #606266;
+}
 @media (max-width: 1200px) {
   .stats-row { grid-template-columns: repeat(2, 1fr); }
 }

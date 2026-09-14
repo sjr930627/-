@@ -6,17 +6,20 @@ import { useAppStore } from '@/stores/app'
 import WorkflowDesignCanvas from '@/components/task/WorkflowDesignCanvas.vue'
 import WorkflowNodePalette from '@/components/task/WorkflowNodePalette.vue'
 import WorkflowNodeConfigPanel from '@/components/task/WorkflowNodeConfigPanel.vue'
-import WorkflowTrialRunDialog from '@/components/task/WorkflowTrialRunDialog.vue'
 import { buildNodeFromPalette, getPaletteItem, validatePaletteDrop } from '@/constants/workflowPalette'
-import { workflowRoleMap } from '@/constants/task'
 import { countWorkflowBoundTasks } from '@/services/task'
+import {
+  ensureWorkflowVersions,
+  formatWorkflowVersionLabel,
+  workflowFromVersionSnapshot,
+} from '@/services/taskWorkflowVersion'
 import { workflowTemplates } from '@/mock/taskSeed'
 import type {
   TaskWorkflow,
+  TaskWorkflowVersion,
   WorkflowEnterpriseScope,
   WorkflowFieldConfig,
   WorkflowNode,
-  WorkflowRole,
 } from '@/types'
 import { generateId } from '@/utils'
 import {
@@ -34,32 +37,40 @@ const router = useRouter()
 const store = useAppStore()
 
 const editingId = computed(() => (route.params.id as string | undefined) ?? null)
+const versionId = computed(() => (route.params.versionId as string | undefined) ?? null)
+const isViewMode = computed(
+  () => route.name === 'TaskWorkflowView' || route.name === 'TaskWorkflowVersionView',
+)
+const isVersionView = computed(() => route.name === 'TaskWorkflowVersionView')
 const isEdit = computed(() => Boolean(editingId.value))
 const existing = computed(() =>
   editingId.value ? store.taskWorkflows.find((w) => w.id === editingId.value) : null,
 )
 
-const boundTaskCount = computed(() => {
-  if (!editingId.value) return 0
+const viewingVersion = computed((): TaskWorkflowVersion | null => {
+  if (!isVersionView.value || !existing.value || !versionId.value) return null
+  const ensured = ensureWorkflowVersions(existing.value)
+  return ensured.versions?.find((v) => v.id === versionId.value) ?? null
+})
+
+const boundActiveTaskCount = computed(() => {
+  if (!editingId.value || isVersionView.value) return 0
   return countWorkflowBoundTasks(store.tasks, editingId.value)
 })
 
-const nodesLocked = computed(() => boundTaskCount.value > 0)
+/** 详情/版本快照只读，或绑定进行中任务时不可改节点 */
+const nodesLocked = computed(() => isViewMode.value || boundActiveTaskCount.value > 0)
 
-const studioMode = ref<'config' | 'preview' | 'trial'>('config')
 const setupStep = ref<'basic' | 'canvas'>('basic')
-const previewRole = ref<WorkflowRole>('enterprise')
 const selectedNodeId = ref('')
 const settingsVisible = ref(false)
-const trialRunVisible = ref(false)
-const trialStatus = ref<Record<string, 'running' | 'success' | 'waiting' | 'error'>>({})
 
 const form = ref({
   name: '',
   description: '',
   enterpriseScope: 'all' as WorkflowEnterpriseScope,
   enterpriseIds: [] as string[],
-  status: 'enabled' as 'enabled' | 'disabled',
+  status: 'disabled' as 'enabled' | 'disabled',
   nodes: [] as WorkflowNode[],
   fields: [] as WorkflowFieldConfig[],
 })
@@ -68,7 +79,12 @@ const enterpriseOptions = computed(() =>
   store.enterprises.filter((e) => e.status !== 'terminated').map((e) => ({ value: e.id, label: e.name })),
 )
 
-const roleOptions = Object.entries(workflowRoleMap) as [WorkflowRole, string][]
+/** 草稿或新建：可保存；已启用：仅可发布；详情页只读 */
+const canSaveDraft = computed(
+  () => !isViewMode.value && (!isEdit.value || form.value.status === 'disabled'),
+)
+const canPublish = computed(() => !isViewMode.value)
+const isPublished = computed(() => isEdit.value && form.value.status === 'enabled')
 
 const selectedNode = computed(() =>
   form.value.nodes.find((n) => n.id === selectedNodeId.value) ?? null,
@@ -121,7 +137,15 @@ function initDefaultNodes() {
 function loadForm() {
   if (isEdit.value && existing.value) {
     setupStep.value = 'canvas'
-    const wf = existing.value
+    let wf: TaskWorkflow = existing.value
+    if (isVersionView.value) {
+      if (!viewingVersion.value) {
+        ElMessage.error('版本不存在')
+        router.replace(`/task-workflows/${editingId.value}`)
+        return
+      }
+      wf = workflowFromVersionSnapshot(existing.value, viewingVersion.value)
+    }
     const rawNodes = wf.nodes.map((n) => ({ ...n, actions: n.actions.map((a) => ({ ...a })) }))
     const scope = resolveEnterpriseScope(wf)
     form.value = {
@@ -132,10 +156,17 @@ function loadForm() {
       nodes: normalizeNodes(rawNodes),
       fields: (wf.fields ?? []).map((f) => ({ ...f, nodeIds: [...f.nodeIds] })),
     }
-    if (nodesLocked.value) {
-      ElMessage.warning('该工作流已绑定任务，仅可修改名称、描述和适用企业')
+    if (!isViewMode.value && boundActiveTaskCount.value > 0) {
+      ElMessage.warning(
+        `该工作流有 ${boundActiveTaskCount.value} 个进行中任务，节点与流转不可修改`,
+      )
     }
     selectedNodeId.value = form.value.nodes[0]?.id ?? ''
+    return
+  }
+  if (isEdit.value && !existing.value) {
+    ElMessage.error('工作流不存在')
+    router.replace('/task-workflows')
     return
   }
   setupStep.value = 'basic'
@@ -144,14 +175,18 @@ function loadForm() {
     description: '',
     enterpriseScope: 'all',
     enterpriseIds: [],
-    status: 'enabled',
+    status: 'disabled',
     nodes: [],
     fields: defaultFields(),
   }
   selectedNodeId.value = ''
 }
 
-watch([editingId, () => store.taskWorkflows.length], loadForm, { immediate: true })
+watch(
+  [editingId, versionId, isViewMode, isVersionView, () => store.taskWorkflows.length],
+  loadForm,
+  { immediate: true },
+)
 
 watch(
   () => form.value.enterpriseScope,
@@ -251,21 +286,6 @@ function onRemoveNode(nodeId: string) {
   ElMessage.success('已删除节点')
 }
 
-function openTrialRun() {
-  trialStatus.value = {}
-  studioMode.value = 'trial'
-  trialRunVisible.value = true
-}
-
-function onTrialStep(nodeId: string, status: 'running' | 'success' | 'waiting' | 'error') {
-  trialStatus.value = { ...trialStatus.value, [nodeId]: status }
-  selectedNodeId.value = nodeId
-}
-
-function onTrialDone() {
-  studioMode.value = 'config'
-}
-
 function validateBasicForm() {
   if (!form.value.name.trim()) {
     ElMessage.warning('请输入流程名称')
@@ -361,16 +381,23 @@ function buildPayload(status: 'enabled' | 'disabled') {
 }
 
 function save(asDraft = false) {
+  if (isViewMode.value) return
   if (!validateForm()) return
+  if (asDraft && isPublished.value) {
+    ElMessage.warning('已发布流程不可保存为草稿，请直接发布新版本')
+    return
+  }
   const status = asDraft ? 'disabled' : 'enabled'
   const payload = buildPayload(status)
   try {
     if (isEdit.value && editingId.value) {
       if (asDraft) {
         store.updateTaskWorkflow(editingId.value, payload)
-        ElMessage.success('草稿已保存')
+        form.value.status = 'disabled'
+        ElMessage.success('已保存为草稿')
       } else {
         store.publishTaskWorkflow(editingId.value, payload, '配置发布')
+        form.value.status = 'enabled'
         ElMessage.success('已发布新版本')
       }
     } else {
@@ -381,7 +408,7 @@ function save(asDraft = false) {
         TaskWorkflow,
         'id' | 'version' | 'versions' | 'boundTaskTypeCount' | 'createdAt' | 'updatedAt'
       >)
-      ElMessage.success(asDraft ? '草稿已保存' : '创建成功')
+      ElMessage.success(asDraft ? '草稿已保存' : '发布成功')
     }
     router.push('/task-workflows')
   } catch (e) {
@@ -460,55 +487,64 @@ function cancel() {
           ← 返回基本信息
         </el-button>
         <h2 class="page-title">
-          任务流程配置
+          {{ isVersionView ? '版本快照' : isViewMode ? '流程详情' : '任务流程配置' }}
           <span v-if="form.name" class="flow-name">· {{ form.name }}</span>
+          <span v-if="viewingVersion" class="flow-name">
+            · {{ formatWorkflowVersionLabel(viewingVersion.version) }}
+          </span>
         </h2>
         <button type="button" class="link-btn" @click="settingsVisible = true">流程设置</button>
       </div>
       <div class="header-actions">
-        <el-button @click="studioMode = studioMode === 'preview' ? 'config' : 'preview'">
-          {{ studioMode === 'preview' ? '退出预览' : '预览' }}
-        </el-button>
-        <el-button @click="openTrialRun">试运行</el-button>
-        <el-button @click="cancel">取消</el-button>
-        <el-button @click="save(true)">保存草稿</el-button>
-        <el-button type="primary" @click="save(false)">发布</el-button>
+        <el-button @click="cancel">{{ isViewMode ? '返回' : '取消' }}</el-button>
+        <el-button v-if="canSaveDraft" @click="save(true)">保存</el-button>
+        <el-button v-if="canPublish" type="primary" @click="save(false)">发布</el-button>
       </div>
     </header>
 
-    <div v-if="studioMode === 'preview'" class="preview-role-bar">
-      <span>预览角色：</span>
-      <el-button
-        v-for="[role, label] in roleOptions"
-        :key="role"
-        size="small"
-        :type="previewRole === role ? 'primary' : 'default'"
-        @click="previewRole = role"
-      >
-        {{ label }}
-      </el-button>
-    </div>
-
-    <el-alert v-if="nodesLocked" type="warning" show-icon :closable="false" class="lock-alert">
-      已绑定 {{ boundTaskCount }} 个任务，节点与流转不可修改
+    <el-alert
+      v-if="isVersionView && viewingVersion"
+      type="info"
+      show-icon
+      :closable="false"
+      class="lock-alert"
+    >
+      正在查看 {{ formatWorkflowVersionLabel(viewingVersion.version) }} 历史快照（只读）
+      <template v-if="viewingVersion.isActive"> · 当前生效版本</template>
+    </el-alert>
+    <el-alert
+      v-else-if="isViewMode"
+      type="info"
+      show-icon
+      :closable="false"
+      class="lock-alert"
+    >
+      当前为查看模式，仅可浏览流程配置
+    </el-alert>
+    <el-alert
+      v-else-if="boundActiveTaskCount > 0"
+      type="warning"
+      show-icon
+      :closable="false"
+      class="lock-alert"
+    >
+      已绑定 {{ boundActiveTaskCount }} 个进行中任务，节点与流转不可修改；待任务结束后可编辑并发布新版本
     </el-alert>
 
     <div class="coze-studio">
-      <WorkflowNodePalette v-if="studioMode === 'config'" :readonly="nodesLocked" />
+      <WorkflowNodePalette :readonly="nodesLocked" />
       <WorkflowDesignCanvas
         :nodes="form.nodes"
         :workflow-fields="form.fields"
         :selected-node-id="selectedNodeId"
-        :mode="studioMode"
-        :preview-role="previewRole"
+        mode="config"
         :readonly="nodesLocked"
-        :trial-status="trialStatus"
         @update:nodes="onNodesUpdate"
         @select-node="selectNode"
         @remove-node="onRemoveNode"
         @add-from-palette="addFromPalette"
       />
-      <aside v-if="studioMode !== 'preview'" class="studio-side fields-side">
+      <aside class="studio-side fields-side">
         <WorkflowNodeConfigPanel
           :node="selectedNode"
           :all-nodes="form.nodes"
@@ -517,21 +553,15 @@ function cancel() {
           fields-only
         />
       </aside>
-      <aside v-if="studioMode === 'preview'" class="studio-side">
-        <div class="preview-side">
-          <h3>角色视角预览</h3>
-          <p class="hint">不可见节点已淡化，卡片上仅展示当前角色可操作按钮。</p>
-        </div>
-      </aside>
     </div>
 
     <el-dialog v-model="settingsVisible" title="流程设置" width="560px">
       <el-form label-width="96px">
         <el-form-item label="流程名称" required>
-          <el-input v-model="form.name" placeholder="如：盘点任务流程" />
+          <el-input v-model="form.name" placeholder="如：盘点任务流程" :disabled="isViewMode" />
         </el-form-item>
         <el-form-item label="适用企业" required>
-          <el-radio-group v-model="form.enterpriseScope">
+          <el-radio-group v-model="form.enterpriseScope" :disabled="isViewMode">
             <el-radio value="all">全部企业</el-radio>
             <el-radio value="specific">特定企业</el-radio>
           </el-radio-group>
@@ -542,12 +572,13 @@ function cancel() {
             collapse-tags
             placeholder="选择企业"
             style="width: 100%; margin-top: 8px"
+            :disabled="isViewMode"
           >
             <el-option v-for="opt in enterpriseOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="流程描述">
-          <el-input v-model="form.description" type="textarea" :rows="2" />
+          <el-input v-model="form.description" type="textarea" :rows="2" :disabled="isViewMode" />
         </el-form-item>
         <el-form-item v-if="!isEdit && setupStep === 'canvas'" label="套用模板">
           <el-button
@@ -562,13 +593,6 @@ function cancel() {
         </el-form-item>
       </el-form>
     </el-dialog>
-
-    <WorkflowTrialRunDialog
-      v-model:visible="trialRunVisible"
-      :nodes="form.nodes"
-      @step="onTrialStep"
-      @done="onTrialDone"
-    />
   </div>
 </template>
 
@@ -650,19 +674,6 @@ function cancel() {
   flex-wrap: wrap;
 }
 
-.mode-switch {
-  margin-right: 4px;
-}
-
-.preview-role-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  font-size: 13px;
-  color: #606266;
-}
-
 .lock-alert {
   margin-bottom: 12px;
 }
@@ -710,23 +721,5 @@ function cancel() {
 
 .studio-side .config-panel {
   height: 100%;
-}
-
-.preview-side {
-  padding: 16px;
-  font-size: 13px;
-  color: #606266;
-  line-height: 1.6;
-}
-
-.preview-side h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
-  color: #303133;
-}
-
-.preview-side .hint {
-  color: #909399;
-  font-size: 12px;
 }
 </style>

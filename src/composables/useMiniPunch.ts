@@ -3,6 +3,7 @@ import type { AttendanceGroup, PunchMethod } from '@/types'
 import type { useAppStore } from '@/stores/app'
 import { MINIAPP_DEMO_ANCHOR_DATE } from '@/constants/miniapp'
 import type { MiniPunchMethod } from '@/constants/miniapp'
+import { formatPunchLocationAddress } from '@/constants/region'
 
 type Store = ReturnType<typeof useAppStore>
 
@@ -63,7 +64,7 @@ export function buildPunchTargets(group: AttendanceGroup | null): PunchTarget[] 
     return {
       id: loc.id,
       name: loc.name,
-      address: loc.address ?? loc.name,
+      address: formatPunchLocationAddress(loc),
       lat: coords.lat,
       lng: coords.lng,
     }

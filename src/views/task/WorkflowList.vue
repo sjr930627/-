@@ -3,15 +3,12 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
-import WorkflowFlowChart from '@/components/task/WorkflowFlowChart.vue'
 import { formatWorkflowEnterpriseLabel, workflowStatusMap } from '@/constants/task'
 import { countWorkflowBoundTasks } from '@/services/task'
 import {
   ensureWorkflowVersions,
   formatWorkflowVersionLabel,
   formatWorkflowVersionTime,
-  summarizeWorkflowVersionSnapshot,
-  workflowFromVersionSnapshot,
 } from '@/services/taskWorkflowVersion'
 import type { TaskWorkflow, TaskWorkflowVersion } from '@/types'
 
@@ -20,13 +17,9 @@ const router = useRouter()
 
 const keyword = ref('')
 const statusFilter = ref<'all' | 'enabled' | 'disabled'>('all')
-const chartVisible = ref(false)
-const viewingWorkflow = ref<TaskWorkflow | null>(null)
 
 const historyVisible = ref(false)
 const historyWorkflow = ref<TaskWorkflow | null>(null)
-const versionDetailVisible = ref(false)
-const selectedVersion = ref<TaskWorkflowVersion | null>(null)
 
 const tableData = computed(() =>
   store.taskWorkflows
@@ -55,17 +48,6 @@ const versionHistory = computed(() => {
   return [...(historyWorkflow.value.versions ?? [])].sort((a, b) => b.version - a.version)
 })
 
-const versionDetailLines = computed(() =>
-  selectedVersion.value
-    ? summarizeWorkflowVersionSnapshot(selectedVersion.value.snapshot, store.enterprises)
-    : [],
-)
-
-const versionPreviewWorkflow = computed(() => {
-  if (!historyWorkflow.value || !selectedVersion.value) return null
-  return workflowFromVersionSnapshot(historyWorkflow.value, selectedVersion.value)
-})
-
 function openCreate() {
   router.push('/task-workflows/create')
 }
@@ -74,14 +56,36 @@ function openEdit(row: TaskWorkflow) {
   router.push(`/task-workflows/${row.id}/edit`)
 }
 
-async function copyWorkflow(row: TaskWorkflow) {
-  store.copyTaskWorkflow(row.id)
-  ElMessage.success('已复制为新工作流（默认停用）')
+function openDetail(row: TaskWorkflow) {
+  router.push(`/task-workflows/${row.id}`)
 }
 
-async function toggleStatus(row: TaskWorkflow) {
-  store.toggleTaskWorkflowStatus(row.id)
-  ElMessage.success(row.status === 'enabled' ? '已停用' : '已启用')
+async function copyWorkflow(row: TaskWorkflow) {
+  store.copyTaskWorkflow(row.id)
+  ElMessage.success('已复制为新工作流（草稿）')
+}
+
+async function toggleStatus(row: TaskWorkflow & { boundTaskCount: number }) {
+  const willDisable = row.status === 'enabled'
+  if (willDisable && row.boundTaskCount > 0) {
+    ElMessage.warning('存在进行中任务，不可停用该任务流')
+    return
+  }
+  const action = willDisable ? '停用' : '启用'
+  try {
+    await ElMessageBox.confirm(
+      willDisable
+        ? `停用后不可再关联新任务，确定停用「${row.name}」？`
+        : `确定启用「${row.name}」？`,
+      action,
+      { type: 'warning' },
+    )
+    store.toggleTaskWorkflowStatus(row.id)
+    ElMessage.success(willDisable ? '已停用' : '已启用')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    if (e instanceof Error) ElMessage.error(e.message)
+  }
 }
 
 async function remove(row: TaskWorkflow) {
@@ -96,11 +100,6 @@ async function remove(row: TaskWorkflow) {
   }
 }
 
-function viewChart(row: TaskWorkflow) {
-  viewingWorkflow.value = row
-  chartVisible.value = true
-}
-
 function openVersionHistory(row: TaskWorkflow) {
   const live = store.taskWorkflows.find((w) => w.id === row.id) ?? row
   historyWorkflow.value = ensureWorkflowVersions(live)
@@ -110,8 +109,9 @@ function openVersionHistory(row: TaskWorkflow) {
 }
 
 function viewVersionDetail(version: TaskWorkflowVersion) {
-  selectedVersion.value = version
-  versionDetailVisible.value = true
+  if (!historyWorkflow.value) return
+  historyVisible.value = false
+  router.push(`/task-workflows/${historyWorkflow.value.id}/versions/${version.id}`)
 }
 
 async function restoreVersion(version: TaskWorkflowVersion) {
@@ -120,9 +120,14 @@ async function restoreVersion(version: TaskWorkflowVersion) {
     ElMessage.info('当前已是该版本')
     return
   }
+  const boundCount = countWorkflowBoundTasks(store.tasks, historyWorkflow.value.id)
+  if (boundCount > 0) {
+    ElMessage.warning('存在进行中任务，无法恢复版本')
+    return
+  }
   try {
     await ElMessageBox.confirm(
-      `将流程恢复为 V${version.version} 的配置，并生成新版本生效。已绑定任务时节点也会一并恢复，请确认。`,
+      `将流程恢复为 V${version.version} 的配置，并生成新版本生效。确定恢复？`,
       '恢复版本',
       { type: 'warning' },
     )
@@ -130,9 +135,9 @@ async function restoreVersion(version: TaskWorkflowVersion) {
     const live = store.taskWorkflows.find((w) => w.id === historyWorkflow.value!.id)
     historyWorkflow.value = live ? ensureWorkflowVersions(live) : historyWorkflow.value
     ElMessage.success(`已恢复并发布为 V${record.version}`)
-    versionDetailVisible.value = false
   } catch (e) {
-    if (e !== 'cancel' && e instanceof Error) ElMessage.error(e.message)
+    if (e === 'cancel' || e === 'close') return
+    if (e instanceof Error) ElMessage.error(e.message)
   }
 }
 </script>
@@ -153,8 +158,8 @@ async function restoreVersion(version: TaskWorkflowVersion) {
       <el-input v-model="keyword" placeholder="搜索流程名称或企业" clearable style="width: 240px" />
       <el-radio-group v-model="statusFilter">
         <el-radio-button value="all">全部</el-radio-button>
-        <el-radio-button value="enabled">启用</el-radio-button>
-        <el-radio-button value="disabled">停用</el-radio-button>
+        <el-radio-button value="enabled">已启用</el-radio-button>
+        <el-radio-button value="disabled">已停用</el-radio-button>
       </el-radio-group>
     </div>
 
@@ -162,7 +167,7 @@ async function restoreVersion(version: TaskWorkflowVersion) {
       <el-table-column prop="name" label="流程名称" min-width="180" />
       <el-table-column prop="enterpriseLabel" label="适用企业" min-width="160" show-overflow-tooltip />
       <el-table-column prop="nodeCount" label="节点数" width="80" align="center" />
-      <el-table-column prop="boundTaskCount" label="绑定任务数量" width="110" align="center">
+      <el-table-column prop="boundTaskCount" label="绑定进行中任务数" width="140" align="center">
         <template #default="{ row }">
           <el-tag v-if="row.boundTaskCount > 0" type="warning" size="small">
             {{ row.boundTaskCount }} 个
@@ -184,12 +189,23 @@ async function restoreVersion(version: TaskWorkflowVersion) {
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="280" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="viewChart(row)">流程图</el-button>
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+          <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+          <el-button
+            v-if="row.boundTaskCount === 0"
+            link
+            type="primary"
+            @click="openEdit(row)"
+          >
+            编辑
+          </el-button>
           <el-button link @click="copyWorkflow(row)">复制</el-button>
-          <el-button link @click="toggleStatus(row)">
+          <el-button
+            link
+            :type="row.status === 'enabled' ? 'warning' : 'success'"
+            @click="toggleStatus(row)"
+          >
             {{ row.status === 'enabled' ? '停用' : '启用' }}
           </el-button>
           <el-button link type="danger" @click="remove(row)">删除</el-button>
@@ -197,10 +213,6 @@ async function restoreVersion(version: TaskWorkflowVersion) {
       </el-table-column>
     </el-table>
   </div>
-
-  <el-dialog v-model="chartVisible" title="流程预览" width="800px">
-    <WorkflowFlowChart v-if="viewingWorkflow" :workflow="viewingWorkflow" compact />
-  </el-dialog>
 
   <el-dialog
     v-model="historyVisible"
@@ -239,34 +251,6 @@ async function restoreVersion(version: TaskWorkflowVersion) {
       </el-table-column>
     </el-table>
   </el-dialog>
-
-  <el-dialog
-    v-model="versionDetailVisible"
-    :title="selectedVersion ? `V${selectedVersion.version} 配置详情` : '配置详情'"
-    width="820px"
-  >
-    <div v-if="selectedVersion" class="version-detail">
-      <div class="version-meta">
-        <span>发布时间：{{ formatWorkflowVersionTime(selectedVersion.publishedAt) }}</span>
-        <el-tag v-if="selectedVersion.isActive" size="small" type="success">当前生效</el-tag>
-      </div>
-      <ul class="version-lines">
-        <li v-for="(line, index) in versionDetailLines" :key="index">{{ line }}</li>
-      </ul>
-      <div v-if="versionPreviewWorkflow" class="version-chart">
-        <WorkflowFlowChart :workflow="versionPreviewWorkflow" compact />
-      </div>
-      <div class="version-actions">
-        <el-button
-          v-if="!selectedVersion.isActive"
-          type="warning"
-          @click="restoreVersion(selectedVersion)"
-        >
-          恢复此版本
-        </el-button>
-      </div>
-    </div>
-  </el-dialog>
 </template>
 
 <style scoped>
@@ -284,47 +268,5 @@ async function restoreVersion(version: TaskWorkflowVersion) {
 .active-label {
   color: var(--el-color-success);
   font-size: 13px;
-}
-
-.version-detail {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.version-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
-
-.version-note {
-  margin: 0;
-  padding: 8px 12px;
-  background: var(--el-fill-color-light);
-  border-radius: 6px;
-  font-size: 13px;
-}
-
-.version-lines {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 13px;
-  line-height: 1.8;
-  color: var(--el-text-color-regular);
-}
-
-.version-chart {
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  padding: 8px;
-  overflow: auto;
-}
-
-.version-actions {
-  display: flex;
-  justify-content: flex-end;
 }
 </style>

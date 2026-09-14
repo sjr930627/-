@@ -4,11 +4,11 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useTrainingScope } from '@/composables/useTrainingScope'
-import { trainingTypeFilterOptions } from '@/constants/trainingOwner'
 import VChart from '@/components/statistics/VChart.vue'
 import { examQuestionTypeMap } from '@/constants/training'
 import {
   canEmployeeTakeExam,
+  getExamDepartmentRanking,
   getExamDetailStatusLabel,
   getExamLinkedCourses,
   getExamQuestions,
@@ -23,7 +23,7 @@ import type { EChartsOption } from 'echarts'
 
 const store = useAppStore()
 const route = useRoute()
-const { isPlatform, typeFilter, enterpriseFilter, filterByTrainingType } = useTrainingScope()
+const { isPlatform, enterpriseFilter, filterByTrainingType } = useTrainingScope()
 const selectedExamId = ref<string>('')
 const detailVisible = ref(false)
 const detailEmployeeId = ref<string>('')
@@ -80,16 +80,73 @@ const examStats = computed(() => {
   return getExamStats(e, store.trainingCourses, store.examAttempts, store.employees, store.departments)
 })
 
+const PIE_COLORS = ['#e60012', '#409eff', '#67c23a', '#e6a23c', '#909399', '#b37feb', '#36cfc9']
+
+function buildPieOption(
+  items: { name: string; value: number }[],
+  emptyText: string,
+): EChartsOption {
+  const data = items.filter((i) => i.value > 0)
+  if (data.length === 0) {
+    return {
+      title: {
+        text: emptyText,
+        left: 'center',
+        top: 'middle',
+        textStyle: { color: '#909399', fontSize: 13, fontWeight: 400 },
+      },
+    }
+  }
+  return {
+    tooltip: { trigger: 'item', formatter: '{b}: {c}（{d}%）' },
+    legend: {
+      orient: 'vertical',
+      right: 8,
+      top: 'center',
+      textStyle: { color: '#606266', fontSize: 12 },
+      icon: 'circle',
+      itemWidth: 8,
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['42%', '68%'],
+        center: ['38%', '50%'],
+        avoidLabelOverlap: true,
+        label: { show: false },
+        emphasis: {
+          label: { show: true, fontSize: 13, fontWeight: 600 },
+        },
+        data: data.map((item, idx) => ({
+          name: item.name,
+          value: item.value,
+          itemStyle: { color: PIE_COLORS[idx % PIE_COLORS.length] },
+        })),
+      },
+    ],
+  }
+}
+
 const scoreChartOption = computed((): EChartsOption | null => {
+  if (!selectedExamId.value) return null
   const attempts = store.examAttempts.filter((a) => a.examId === selectedExamId.value)
   const buckets = getScoreDistribution(attempts)
-  return {
-    tooltip: { trigger: 'axis' },
-    grid: { left: 48, right: 16, top: 24, bottom: 32 },
-    xAxis: { type: 'category' as const, data: buckets.map((b) => b.label + '分') },
-    yAxis: { type: 'value' as const, minInterval: 1 },
-    series: [{ type: 'bar' as const, data: buckets.map((b) => b.count), itemStyle: { color: '#409eff' } }],
-  }
+  return buildPieOption(
+    buckets.map((b) => ({ name: `${b.label}分`, value: b.count })),
+    '暂无成绩数据',
+  )
+})
+
+const departmentRanking = computed(() => {
+  const exam = selectedExam.value
+  if (!exam) return []
+  return getExamDepartmentRanking(
+    exam,
+    store.trainingCourses,
+    store.examAttempts,
+    store.employees,
+    store.departments,
+  )
 })
 
 const personalRows = computed(() => {
@@ -206,16 +263,8 @@ const detailEmployeeName = computed(() => {
     </div>
 
     <div class="page-toolbar">
-      <el-select v-if="isPlatform" v-model="typeFilter" placeholder="类型" style="width: 120px">
-        <el-option
-          v-for="o in trainingTypeFilterOptions"
-          :key="o.value"
-          :label="o.label"
-          :value="o.value"
-        />
-      </el-select>
       <el-select
-        v-if="isPlatform && typeFilter !== 'global'"
+        v-if="isPlatform"
         v-model="enterpriseFilter"
         placeholder="所属企业"
         clearable
@@ -271,8 +320,18 @@ const detailEmployeeName = computed(() => {
 
       <div class="chart-section">
         <h3>分数分布</h3>
-        <VChart v-if="scoreChartOption" :option="scoreChartOption" height="260px" />
+        <VChart v-if="scoreChartOption" :option="scoreChartOption" height="280px" />
       </div>
+
+      <h3 class="section-title">部门考核排行</h3>
+      <el-table :data="departmentRanking" border stripe style="margin-bottom: 24px; max-width: 560px">
+        <el-table-column type="index" label="排名" width="70" align="center" />
+        <el-table-column prop="departmentName" label="部门名称" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="taken" label="考核人数" width="100" align="center" />
+        <el-table-column label="通过率" width="100" align="center">
+          <template #default="{ row }">{{ row.passRate }}%</template>
+        </el-table-column>
+      </el-table>
 
       <h3 class="section-title">个人成绩明细</h3>
       <el-table :data="personalRows" border stripe>
@@ -338,7 +397,14 @@ const detailEmployeeName = computed(() => {
 .stat-label { font-size: 12px; color: #909399; margin-bottom: 6px; }
 .stat-value { font-size: 28px; font-weight: 700; color: #303133; }
 .stat-value.sm { font-size: 15px; font-weight: 600; }
-.chart-section { margin-bottom: 24px; }
+.chart-section {
+  margin-bottom: 24px;
+  padding: 12px 16px 8px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  max-width: 560px;
+}
 .chart-section h3, .section-title { font-size: 15px; margin: 0 0 12px; }
 .attempt-block { margin-bottom: 8px; }
 .attempt-head {

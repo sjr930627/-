@@ -6,6 +6,7 @@ import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import { formatVersionLabel } from '@/constants/attendanceGroup'
+import { isEnterpriseRootDepartment, isLeafDepartment, isUnassignedDepartment } from '@/constants/department'
 import {
   clonePricingConfig,
   createDefaultFreePunchConfig,
@@ -29,7 +30,10 @@ import {
   normalizeAttendanceShiftTemplateBreak,
   resolveGrabShiftWorkHoursFromTimes,
 } from '@/services/grabShift'
-import { countDepartmentEmployees, generateId } from '@/utils'
+import { countDepartmentScheduleAndGrab, generateId, getDepartmentManagerNames, getDepartmentPath } from '@/utils'
+import {
+  REGION_CASCADER_OPTIONS,
+} from '@/constants/region'
 import type {
   AttendanceGroup,
   AttendanceGroupShiftTemplate,
@@ -83,8 +87,30 @@ const emptyShift = (): AttendanceGroupShiftTemplate => {
 const emptyLocation = (): PunchLocation => ({
   id: generateId('loc'),
   name: '',
+  province: '',
+  city: '',
+  district: '',
   address: '',
 })
+
+function citiesOfProvince(province?: string) {
+  if (!province) return []
+  return REGION_CASCADER_OPTIONS.find((p) => p.value === province)?.children ?? []
+}
+
+function districtsOfCity(province?: string, cityName?: string) {
+  if (!province || !cityName) return []
+  return citiesOfProvince(province).find((c) => c.value === cityName)?.children ?? []
+}
+
+function onProvinceChange(loc: PunchLocation) {
+  loc.city = ''
+  loc.district = ''
+}
+
+function onCityChange(loc: PunchLocation) {
+  loc.district = ''
+}
 
 function emptyForm(): Omit<
   AttendanceGroup,
@@ -132,7 +158,18 @@ const saveTemplateOpen = ref(false)
 const templateName = ref('')
 
 const enterpriseDepartments = computed(() =>
-  store.getDepartmentsByEnterprise(enterpriseId.value).filter((d) => d.orgType !== 'enterprise'),
+  store
+    .getDepartmentsByEnterprise(enterpriseId.value)
+    .filter(
+      (d) =>
+        !isEnterpriseRootDepartment(d) &&
+        !isUnassignedDepartment(d.id) &&
+        isLeafDepartment(d),
+    )
+    .map((d) => ({
+      ...d,
+      pathLabel: getDepartmentPath(store.departments, d.id),
+    })),
 )
 
 const versionHint = computed(() => {
@@ -267,12 +304,18 @@ watch(
 function syncDepartmentBindings() {
   form.value.departmentBindings = selectedDeptIds.value.map((id) => {
     const dept = store.departments.find((d) => d.id === id)
-    const existing = form.value.departmentBindings.find((b) => b.departmentId === id)
     return {
       departmentId: id,
-      departmentName: dept?.name ?? id,
-      headcount: countDepartmentEmployees(store.departments, store.employees, id, true),
-      managerName: existing?.managerName,
+      departmentName: dept
+        ? getDepartmentPath(store.departments, id)
+        : id,
+      headcount: countDepartmentScheduleAndGrab(
+        store.departments,
+        store.employees,
+        id,
+        false,
+      ),
+      managerName: getDepartmentManagerNames(dept, store.employees),
     }
   })
 }
@@ -452,6 +495,22 @@ function validate() {
   }
   if (form.value.attendanceType !== 'none') {
     ensurePricingConfig()
+  }
+  if (form.value.gpsEnabled) {
+    for (const loc of form.value.punchLocations) {
+      if (!loc.name.trim()) {
+        ElMessage.warning('请填写打卡地点名称')
+        return false
+      }
+      if (!loc.province || !loc.city || !loc.district) {
+        ElMessage.warning('请选择打卡点的省市区')
+        return false
+      }
+      if (!loc.address?.trim()) {
+        ElMessage.warning('请填写打卡点详细地址')
+        return false
+      }
+    }
   }
   syncDepartmentBindings()
   return true
@@ -696,7 +755,40 @@ function publish() {
           </div>
           <div v-for="(loc, idx) in form.punchLocations" :key="loc.id" class="sub-card">
             <input v-model="loc.name" type="text" placeholder="地点名称">
-            <input v-model="loc.address" type="text" placeholder="详细地址">
+            <label>省市区</label>
+            <div class="region-row">
+              <select v-model="loc.province" @change="onProvinceChange(loc)">
+                <option value="">省</option>
+                <option
+                  v-for="p in REGION_CASCADER_OPTIONS"
+                  :key="p.value"
+                  :value="p.value"
+                >
+                  {{ p.label }}
+                </option>
+              </select>
+              <select v-model="loc.city" @change="onCityChange(loc)">
+                <option value="">市</option>
+                <option
+                  v-for="c in citiesOfProvince(loc.province)"
+                  :key="c.value"
+                  :value="c.value"
+                >
+                  {{ c.label }}
+                </option>
+              </select>
+              <select v-model="loc.district">
+                <option value="">区</option>
+                <option
+                  v-for="d in districtsOfCity(loc.province, loc.city)"
+                  :key="d.value"
+                  :value="d.value"
+                >
+                  {{ d.label }}
+                </option>
+              </select>
+            </div>
+            <input v-model="loc.address" type="text" placeholder="详细地址（街道门牌号）">
             <button
               v-if="form.punchLocations.length > 1"
               type="button"
@@ -772,10 +864,11 @@ function publish() {
       <!-- 6 关联组织 -->
       <section class="form-section">
         <h3 class="section-title">关联组织架构</h3>
+        <p class="hint">仅可选择叶子部门</p>
         <div class="dept-list">
           <label v-for="d in enterpriseDepartments" :key="d.id" class="dept-check">
             <input v-model="selectedDeptIds" type="checkbox" :value="d.id">
-            <span>{{ d.name }}</span>
+            <span>{{ d.pathLabel }}</span>
           </label>
         </div>
         <div
@@ -784,12 +877,12 @@ function publish() {
           class="dept-bind"
         >
           <div class="dept-bind-head">
-            <strong>{{ b.departmentName }}</strong>
+            <strong>{{ getDepartmentPath(store.departments, b.departmentId) }}</strong>
             <span>{{ b.headcount }} 人</span>
           </div>
-          <input v-model="b.managerName" type="text" placeholder="负责人（可选）">
+          <p class="manager-line">负责人：{{ b.managerName || '—' }}</p>
         </div>
-        <p v-if="!enterpriseDepartments.length" class="hint">本企业暂无可选部门</p>
+        <p v-if="!enterpriseDepartments.length" class="hint">本企业暂无可选叶子部门</p>
       </section>
 
       <!-- 7 定价配置表 -->
@@ -988,6 +1081,17 @@ function publish() {
   gap: 8px;
 }
 
+.region-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.region-row select {
+  width: 100%;
+  min-width: 0;
+}
+
 .row-2 {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1051,6 +1155,12 @@ function publish() {
   justify-content: space-between;
   font-size: 13px;
   color: #374151;
+}
+
+.manager-line {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
 }
 
 .hint {

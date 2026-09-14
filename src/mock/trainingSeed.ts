@@ -15,17 +15,55 @@ const weekAgo = '2026-07-13T09:00:00'
 const ENT_CM = 'ent_china_mobile_agent'
 const ENT_PINGAN = 'ent_pingan_partner'
 
-export const seedTrainingMaterialCategories: TrainingMaterialCategoryItem[] = [
-  { id: 'tmc_info_security', name: '信息安全', enterpriseId: null, builtin: true, createdAt: weekAgo },
-  { id: 'tmc_safety', name: '安全生产', enterpriseId: null, builtin: true, createdAt: weekAgo },
-  { id: 'tmc_anti_fraud', name: '反诈骗', enterpriseId: null, builtin: true, createdAt: weekAgo },
-  { id: 'tmc_service', name: '服务规范', enterpriseId: null, builtin: true, createdAt: weekAgo },
-  { id: 'tmc_emergency', name: '应急处理', enterpriseId: null, builtin: true, createdAt: weekAgo },
-  { id: 'tmc_other', name: '其他', enterpriseId: null, builtin: true, createdAt: weekAgo },
+/** 默认分类模板：各企业 / 平台通用库各自一份，互不共享 */
+const DEFAULT_CATEGORY_DEFS: { key: string; name: string }[] = [
+  { key: 'info_security', name: '信息安全' },
+  { key: 'safety', name: '安全生产' },
+  { key: 'anti_fraud', name: '反诈骗' },
+  { key: 'service', name: '服务规范' },
+  { key: 'emergency', name: '应急处理' },
+  { key: 'other', name: '其他' },
 ]
 
+function buildDefaultCategories(
+  enterpriseId: string | null,
+  idPrefix: string,
+): TrainingMaterialCategoryItem[] {
+  return DEFAULT_CATEGORY_DEFS.map((d) => ({
+    id: `${idPrefix}_${d.key}`,
+    name: d.name,
+    enterpriseId,
+    createdAt: weekAgo,
+  }))
+}
+
+export const seedTrainingMaterialCategories: TrainingMaterialCategoryItem[] = [
+  ...buildDefaultCategories(null, 'tmc'),
+  ...buildDefaultCategories(ENT_CM, 'tmc_cm'),
+  ...buildDefaultCategories(ENT_PINGAN, 'tmc_pa'),
+]
+
+const TRAINING_MATERIAL_CATEGORIES_STORAGE_VERSION = 2
+
 export function loadTrainingMaterialCategories(): TrainingMaterialCategoryItem[] {
-  return loadFromStorage('trainingMaterialCategories', seedTrainingMaterialCategories)
+  const STORAGE_PREFIX = 'shift-attendance:'
+  const versionKey = 'trainingMaterialCategoriesVersion'
+  let categories = loadFromStorage('trainingMaterialCategories', seedTrainingMaterialCategories)
+  const storedVersion = Number(localStorage.getItem(STORAGE_PREFIX + versionKey) ?? 0)
+
+  if (storedVersion < TRAINING_MATERIAL_CATEGORIES_STORAGE_VERSION) {
+    const byId = new Map(categories.map((c) => [c.id, c]))
+    for (const seed of seedTrainingMaterialCategories) {
+      if (!byId.has(seed.id)) {
+        categories.push(seed)
+        byId.set(seed.id, seed)
+      }
+    }
+    saveToStorage('trainingMaterialCategories', categories)
+    localStorage.setItem(STORAGE_PREFIX + versionKey, String(TRAINING_MATERIAL_CATEGORIES_STORAGE_VERSION))
+  }
+
+  return categories
 }
 
 export const seedTrainingMaterials: TrainingMaterial[] = [
@@ -34,7 +72,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '信息安全操作规范',
     enterpriseId: ENT_CM,
     type: 'video',
-    category: 'info_security',
+    category: 'tmc_cm_info_security',
     fileUrl: '/mock/training/info-security.mp4',
     fileName: 'info-security.mp4',
     fileSize: 85 * 1024 * 1024,
@@ -49,7 +87,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '安全生产手册',
     enterpriseId: ENT_CM,
     type: 'pdf',
-    category: 'safety',
+    category: 'tmc_cm_safety',
     fileUrl: '/mock/training/safety-manual.pdf',
     fileName: 'safety-manual.pdf',
     fileSize: 4.2 * 1024 * 1024,
@@ -68,7 +106,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '反诈骗警示案例',
     enterpriseId: ENT_CM,
     type: 'article',
-    category: 'anti_fraud',
+    category: 'tmc_cm_anti_fraud',
     fileUrl: '/mock/training/anti-fraud',
     fileName: 'anti-fraud-images.zip',
     fileSize: 2.8 * 1024 * 1024,
@@ -82,7 +120,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '客户服务礼仪规范',
     enterpriseId: ENT_CM,
     type: 'video',
-    category: 'service',
+    category: 'tmc_cm_service',
     fileUrl: '/mock/training/service-etiquette.mp4',
     fileName: 'service-etiquette.mp4',
     fileSize: 120 * 1024 * 1024,
@@ -96,7 +134,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '应急处理流程图解',
     enterpriseId: ENT_CM,
     type: 'article',
-    category: 'emergency',
+    category: 'tmc_cm_emergency',
     fileUrl: '/mock/training/emergency',
     fileName: 'emergency-guide',
     fileSize: 1.5 * 1024 * 1024,
@@ -110,7 +148,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '营业厅终端陈列标准图文',
     enterpriseId: ENT_PINGAN,
     type: 'article',
-    category: 'service',
+    category: 'tmc_pa_service',
     fileUrl: '/mock/training/store-display',
     fileName: 'store-display',
     fileSize: 2.1 * 1024 * 1024,
@@ -125,7 +163,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '平台灵工通用合规须知',
     enterpriseId: null,
     type: 'video',
-    category: 'info_security',
+    category: 'tmc_info_security',
     fileUrl: '/mock/training/platform-compliance.mp4',
     fileName: 'platform-compliance.mp4',
     fileSize: 60 * 1024 * 1024,
@@ -140,7 +178,7 @@ export const seedTrainingMaterials: TrainingMaterial[] = [
     name: '灵工接单与考勤须知',
     enterpriseId: null,
     type: 'article',
-    category: 'other',
+    category: 'tmc_other',
     fileUrl: '/mock/training/worker-guide',
     fileName: 'worker-guide',
     fileSize: 900 * 1024,
@@ -163,6 +201,8 @@ export const seedTrainingExams: TrainingExam[] = [
     passScore: 60,
     maxRetakes: 2,
     retakeIntervalHours: 24,
+    requireExamPassForSchedule: true,
+    requireExamPassForTask: true,
     status: 'published',
     createdAt: weekAgo,
     updatedAt: weekAgo,
@@ -178,6 +218,8 @@ export const seedTrainingExams: TrainingExam[] = [
     passScore: 80,
     maxRetakes: -1,
     retakeIntervalHours: 12,
+    requireExamPassForSchedule: false,
+    requireExamPassForTask: true,
     status: 'published',
     createdAt: '2026-07-16T10:00:00',
     updatedAt: '2026-07-16T10:00:00',
@@ -192,6 +234,8 @@ export const seedTrainingExams: TrainingExam[] = [
     durationMinutes: 25,
     passScore: 75,
     maxRetakes: 1,
+    requireExamPassForSchedule: false,
+    requireExamPassForTask: false,
     status: 'draft',
     createdAt: now,
     updatedAt: now,
@@ -206,6 +250,8 @@ export const seedTrainingExams: TrainingExam[] = [
     passScore: 70,
     maxRetakes: 2,
     retakeIntervalHours: 24,
+    requireExamPassForSchedule: false,
+    requireExamPassForTask: false,
     status: 'published',
     createdAt: weekAgo,
     updatedAt: weekAgo,
@@ -378,13 +424,11 @@ export const seedTrainingCourses: TrainingCourse[] = [
     coverUrl: 'https://picsum.photos/seed/course-cover/320/180',
     description: '面向中国移动新入职灵工的安全与合规基础培训，含营业厅安全生产与信息安全内容。',
     materialIds: ['tm_001', 'tm_002'],
-    studyMode: 'sequential',
+    studyMode: 'required',
     videoNoSeek: true,
     minStudyMinutes: 3,
     examId: 'te_001',
     scopeType: 'all',
-    requireExamPassForSchedule: true,
-    requireExamPassForTask: true,
     status: 'published',
     createdAt: weekAgo,
     updatedAt: weekAgo,
@@ -396,13 +440,11 @@ export const seedTrainingCourses: TrainingCourse[] = [
     enterpriseId: ENT_CM,
     description: '强化中国移动营业厅信息安全意识，完成后需通过合规测试。',
     materialIds: ['tm_001'],
-    studyMode: 'free',
+    studyMode: 'optional',
     videoNoSeek: false,
     examId: 'te_002',
     scopeType: 'department',
     scopeDepartmentIds: ['dept_prod_a', 'dept_cm_field'],
-    requireExamPassForSchedule: false,
-    requireExamPassForTask: true,
     validFrom: '2026-07-01',
     validTo: '2026-12-31',
     status: 'published',
@@ -415,7 +457,7 @@ export const seedTrainingCourses: TrainingCourse[] = [
     name: '中国移动服务规范联合课',
     enterpriseId: ENT_CM,
     materialIds: ['tm_003', 'tm_004'],
-    studyMode: 'sequential',
+    studyMode: 'required',
     videoNoSeek: true,
     examId: 'te_003',
     scopeType: 'tag',
@@ -430,12 +472,10 @@ export const seedTrainingCourses: TrainingCourse[] = [
     enterpriseId: ENT_PINGAN,
     description: '面向浙江分公司营业厅灵工的陈列与服务规范培训。',
     materialIds: ['tm_006'],
-    studyMode: 'sequential',
+    studyMode: 'required',
     videoNoSeek: true,
     scopeType: 'department',
     scopeDepartmentIds: ['dept_pj_store', 'dept_pj_field'],
-    requireExamPassForSchedule: false,
-    requireExamPassForTask: false,
     status: 'published',
     createdAt: '2026-07-18T09:00:00',
     updatedAt: '2026-07-18T09:00:00',
@@ -447,13 +487,11 @@ export const seedTrainingCourses: TrainingCourse[] = [
     enterpriseId: null,
     description: '不挂企业的平台通用培训，全体灵工可学习与考核。',
     materialIds: ['tm_g_001', 'tm_g_002'],
-    studyMode: 'sequential',
+    studyMode: 'required',
     videoNoSeek: true,
     minStudyMinutes: 5,
     examId: 'te_g_001',
     scopeType: 'all',
-    requireExamPassForSchedule: false,
-    requireExamPassForTask: false,
     status: 'published',
     createdAt: weekAgo,
     updatedAt: weekAgo,
@@ -588,9 +626,9 @@ export const seedExamAttempts: ExamAttempt[] = [
 ]
 
 const COURSE_LEARNING_STORAGE_VERSION = 4
-const TRAINING_MATERIALS_STORAGE_VERSION = 1
-const TRAINING_COURSES_STORAGE_VERSION = 4
-const TRAINING_EXAMS_STORAGE_VERSION = 3
+const TRAINING_MATERIALS_STORAGE_VERSION = 2
+const TRAINING_COURSES_STORAGE_VERSION = 5
+const TRAINING_EXAMS_STORAGE_VERSION = 4
 const EXAM_QUESTIONS_STORAGE_VERSION = 2
 
 /** 修复考核 ↔ 课程双向关联（兼容 localStorage 旧数据） */
@@ -710,6 +748,27 @@ export function loadTrainingExams(): TrainingExam[] {
       return existing ? { ...existing, ...seed, id: existing.id } : seed
     })
     exams.push(...customExams)
+
+    // 将旧课程上的考核门槛迁移到考核
+    const courses = loadFromStorage<TrainingCourse[]>('trainingCourses', seedTrainingCourses)
+    exams = exams.map((exam) => {
+      if (
+        exam.requireExamPassForSchedule !== undefined ||
+        exam.requireExamPassForTask !== undefined
+      ) {
+        return exam
+      }
+      const course =
+        (exam.courseId && courses.find((c) => c.id === exam.courseId)) ||
+        courses.find((c) => c.examId === exam.id)
+      if (!course) return exam
+      return {
+        ...exam,
+        requireExamPassForSchedule: !!course.requireExamPassForSchedule,
+        requireExamPassForTask: !!course.requireExamPassForTask,
+      }
+    })
+
     saveToStorage('trainingExams', exams)
     localStorage.setItem(STORAGE_PREFIX + versionKey, String(TRAINING_EXAMS_STORAGE_VERSION))
   }
@@ -730,6 +789,28 @@ export function loadTrainingCourses(): TrainingCourse[] {
     })
     saveToStorage('trainingCourses', courses)
     localStorage.setItem(STORAGE_PREFIX + versionKey, String(TRAINING_COURSES_STORAGE_VERSION))
+  }
+
+  // 兼容旧学习要求：sequential → required，free → optional
+  let normalized = false
+  courses = courses.map((c) => {
+    const mode = c.studyMode as string
+    if (mode === 'sequential') {
+      normalized = true
+      return { ...c, studyMode: 'required' as const }
+    }
+    if (mode === 'free') {
+      normalized = true
+      return { ...c, studyMode: 'optional' as const }
+    }
+    if (mode !== 'required' && mode !== 'optional') {
+      normalized = true
+      return { ...c, studyMode: 'required' as const }
+    }
+    return c
+  })
+  if (normalized) {
+    saveToStorage('trainingCourses', courses)
   }
 
   return courses

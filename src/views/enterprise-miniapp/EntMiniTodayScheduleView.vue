@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
@@ -7,15 +8,35 @@ import {
   buildDailyAttendanceList,
   getStatusLabel,
   getStatusTagType,
+  isGrabAssignment,
 } from '@/services/attendance'
+import { resolveGrabSlotShiftName } from '@/services/grabShift'
+import { getDepartmentDescendantIds } from '@/utils'
 
+const route = useRoute()
 const store = useAppStore()
 const { enterpriseId } = useEnterpriseMiniAuth()
 
 const today = '2026-07-27'
 
+const deptFilterId = computed(() =>
+  typeof route.query.dept === 'string' ? route.query.dept : '',
+)
+
+const scopedDeptIds = computed(() => {
+  if (!deptFilterId.value) return null
+  return getDepartmentDescendantIds(
+    store.getDepartmentsByEnterprise(enterpriseId.value),
+    deptFilterId.value,
+  )
+})
+
 const employees = computed(() =>
-  store.employees.filter((e) => e.status === 'active' && e.enterpriseId === enterpriseId.value),
+  store.employees.filter((e) => {
+    if (e.status !== 'active' || e.enterpriseId !== enterpriseId.value) return false
+    if (!scopedDeptIds.value) return true
+    return Boolean(e.departmentId && scopedDeptIds.value.has(e.departmentId))
+  }),
 )
 
 const empMap = computed(() => new Map(employees.value.map((e) => [e.id, e])))
@@ -35,71 +56,121 @@ const dailyRows = computed(() => {
   ).filter((d) => d.shiftId)
 })
 
-const shiftGroups = computed(() => {
-  const byShift = new Map<
-    string,
-    {
-      shiftId: string
-      shiftName: string
-      period: string
-      color: string
-      isRest: boolean
-      members: {
-        employeeId: string
-        name: string
-        position: string
-        statusLabel: string
-        tagType: string
-        clockIn: string
-        clockOut: string
-      }[]
-    }
-  >()
+type MemberRow = {
+  employeeId: string
+  name: string
+  position: string
+  statusLabel: string
+  tagType: string
+  clockIn: string
+  clockOut: string
+}
+
+type ShiftGroup = {
+  key: string
+  shiftName: string
+  period: string
+  color: string
+  isRest: boolean
+  isGrab: boolean
+  isFreePunch: boolean
+  members: MemberRow[]
+}
+
+function memberFromDaily(row: (typeof dailyRows.value)[number]): MemberRow {
+  const emp = empMap.value.get(row.employeeId)
+  return {
+    employeeId: row.employeeId,
+    name: emp?.name || row.employeeId,
+    position: emp?.position || '—',
+    statusLabel: getStatusLabel(row.status),
+    tagType: getStatusTagType(row.status),
+    clockIn: row.clockIn || '—',
+    clockOut: row.clockOut || '—',
+  }
+}
+
+const scheduleGroups = computed(() => {
+  const byShift = new Map<string, ShiftGroup>()
 
   for (const row of dailyRows.value) {
+    const assignment = store.assignments.find(
+      (a) => a.employeeId === row.employeeId && a.date === today && a.shiftId === row.shiftId,
+    )
+    if (isGrabAssignment(assignment)) continue
+
     const shift = store.shifts.find((s) => s.id === row.shiftId)
     if (!shift) continue
     let group = byShift.get(shift.id)
     if (!group) {
       const isRest = shift.code === 'REST' || shift.id === 'shift_rest'
+      const isFreePunch = shift.id === 'shift_free_punch'
       group = {
-        shiftId: shift.id,
+        key: shift.id,
         shiftName: shift.name,
         period: isRest ? '休息日' : `${shift.startTime} - ${shift.endTime}`,
         color: shift.color || '#228BFF',
         isRest,
+        isGrab: false,
+        isFreePunch,
         members: [],
       }
       byShift.set(shift.id, group)
     }
-    const emp = empMap.value.get(row.employeeId)
-    group.members.push({
-      employeeId: row.employeeId,
-      name: emp?.name || row.employeeId,
-      position: emp?.position || '—',
-      statusLabel: getStatusLabel(row.status),
-      tagType: getStatusTagType(row.status),
-      clockIn: row.clockIn || '—',
-      clockOut: row.clockOut || '—',
-    })
+    group.members.push(memberFromDaily(row))
   }
 
   return [...byShift.values()].sort((a, b) => {
     if (a.isRest !== b.isRest) return a.isRest ? 1 : -1
+    if (a.isFreePunch !== b.isFreePunch) return a.isFreePunch ? 1 : -1
     return a.period.localeCompare(b.period)
   })
 })
 
+const grabGroups = computed(() => {
+  const bySlot = new Map<string, ShiftGroup>()
+
+  for (const row of dailyRows.value) {
+    const assignment = store.assignments.find(
+      (a) => a.employeeId === row.employeeId && a.date === today && a.shiftId === row.shiftId,
+    )
+    if (!isGrabAssignment(assignment) || !assignment?.fromGrabSlotId) continue
+
+    const slot = store.grabShiftSlots.find((s) => s.id === assignment.fromGrabSlotId)
+    const shift = store.shifts.find((s) => s.id === row.shiftId)
+    const key = assignment.fromGrabSlotId
+    let group = bySlot.get(key)
+    if (!group) {
+      const shiftName = slot ? resolveGrabSlotShiftName(slot) : shift?.name || '抢班班次'
+      const start = (slot?.startTime ?? shift?.startTime ?? '').slice(0, 5)
+      const end = (slot?.endTime ?? shift?.endTime ?? '').slice(0, 5)
+      group = {
+        key,
+        shiftName,
+        period: start && end ? `${start} - ${end}` : '—',
+        color: shift?.color || '#10B981',
+        isRest: false,
+        isGrab: true,
+        isFreePunch: false,
+        members: [],
+      }
+      bySlot.set(key, group)
+    }
+    group.members.push(memberFromDaily(row))
+  }
+
+  return [...bySlot.values()].sort((a, b) => a.period.localeCompare(b.period))
+})
+
 const workGroups = computed(() =>
-  shiftGroups.value.filter((g) => !g.isRest && g.shiftId !== 'shift_free_punch'),
+  scheduleGroups.value.filter((g) => !g.isRest && !g.isFreePunch),
 )
 const freePunchGroup = computed(
-  () => shiftGroups.value.find((g) => g.shiftId === 'shift_free_punch') ?? null,
+  () => scheduleGroups.value.find((g) => g.isFreePunch) ?? null,
 )
-const restGroup = computed(() => shiftGroups.value.find((g) => g.isRest) ?? null)
 
 const workCount = computed(() => workGroups.value.reduce((s, g) => s + g.members.length, 0))
-const restCount = computed(() => restGroup.value?.members.length ?? 0)
+const grabCount = computed(() => grabGroups.value.reduce((s, g) => s + g.members.length, 0))
 const presentCount = computed(() => {
   const empIds = new Set(employees.value.map((e) => e.id))
   return new Set(
@@ -108,6 +179,9 @@ const presentCount = computed(() => {
       .map((p) => p.employeeId),
   ).size
 })
+
+const hasAny =
+  computed(() => workGroups.value.length > 0 || grabGroups.value.length > 0 || !!freePunchGroup.value)
 </script>
 
 <template>
@@ -124,32 +198,58 @@ const presentCount = computed(() => {
         <span>排班人次</span>
       </div>
       <div>
-        <strong>{{ presentCount }}</strong>
-        <span>已出勤</span>
+        <strong>{{ grabCount }}</strong>
+        <span>抢班人次</span>
       </div>
       <div>
-        <strong>{{ restCount }}</strong>
-        <span>休息人次</span>
+        <strong>{{ presentCount }}</strong>
+        <span>已出勤</span>
       </div>
     </div>
 
     <div class="list">
-      <section v-for="group in workGroups" :key="group.shiftId" class="shift-card">
-        <header>
-          <i class="dot" :style="{ background: group.color }" />
-          <div>
-            <strong>{{ group.shiftName }}</strong>
-            <p>{{ group.period }} · {{ group.members.length }} 人</p>
-          </div>
-        </header>
-        <article v-for="m in group.members" :key="m.employeeId" class="member">
-          <div class="row">
-            <strong>{{ m.name }}</strong>
-            <span class="tag" :class="m.tagType">{{ m.statusLabel }}</span>
-          </div>
-          <p>{{ m.position }} · 上班 {{ m.clockIn }} · 下班 {{ m.clockOut }}</p>
-        </article>
-      </section>
+      <template v-if="workGroups.length">
+        <div class="section-label">排班班次</div>
+        <section v-for="group in workGroups" :key="group.key" class="shift-card">
+          <header>
+            <i class="dot" :style="{ background: group.color }" />
+            <div>
+              <strong>{{ group.shiftName }}</strong>
+              <p>{{ group.period }} · {{ group.members.length }} 人</p>
+            </div>
+          </header>
+          <article v-for="m in group.members" :key="m.employeeId" class="member">
+            <div class="row">
+              <strong>{{ m.name }}</strong>
+              <span class="tag" :class="m.tagType">{{ m.statusLabel }}</span>
+            </div>
+            <p>{{ m.position }} · 上班 {{ m.clockIn }} · 下班 {{ m.clockOut }}</p>
+          </article>
+        </section>
+      </template>
+
+      <template v-if="grabGroups.length">
+        <div class="section-label">抢班班次</div>
+        <section v-for="group in grabGroups" :key="group.key" class="shift-card grab">
+          <header>
+            <i class="dot" :style="{ background: group.color }" />
+            <div>
+              <div class="title-row">
+                <strong>{{ group.shiftName }}</strong>
+                <span class="grab-badge">抢班</span>
+              </div>
+              <p>{{ group.period }} · {{ group.members.length }} 人</p>
+            </div>
+          </header>
+          <article v-for="m in group.members" :key="m.employeeId" class="member">
+            <div class="row">
+              <strong>{{ m.name }}</strong>
+              <span class="tag" :class="m.tagType">{{ m.statusLabel }}</span>
+            </div>
+            <p>{{ m.position }} · 上班 {{ m.clockIn }} · 下班 {{ m.clockOut }}</p>
+          </article>
+        </section>
+      </template>
 
       <section v-if="freePunchGroup" class="shift-card">
         <header>
@@ -168,24 +268,7 @@ const presentCount = computed(() => {
         </article>
       </section>
 
-      <section v-if="restGroup" class="shift-card rest">
-        <header>
-          <i class="dot" style="background: #94a3b8" />
-          <div>
-            <strong>{{ restGroup.shiftName }}</strong>
-            <p>休息人次 · {{ restGroup.members.length }} 人</p>
-          </div>
-        </header>
-        <article v-for="m in restGroup.members" :key="m.employeeId" class="member">
-          <div class="row">
-            <strong>{{ m.name }}</strong>
-            <span class="tag info">休息</span>
-          </div>
-          <p>{{ m.position }}</p>
-        </article>
-      </section>
-
-      <div v-if="!workGroups.length && !freePunchGroup && !restGroup" class="empty">当日暂无出勤数据</div>
+      <div v-if="!hasAny" class="empty">当日暂无出勤数据</div>
     </div>
   </div>
 </template>
@@ -219,14 +302,21 @@ const presentCount = computed(() => {
   flex-direction: column;
   gap: 10px;
 }
+.section-label {
+  margin: 4px 0 -2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+}
 .shift-card {
   background: #fff;
   border-radius: 14px;
   padding: 12px 14px;
   box-shadow: var(--mini-shadow);
 }
-.shift-card.rest {
-  background: #f8fafc;
+.shift-card.grab {
+  border: 1px solid #d1fae5;
+  background: #f0fdf4;
 }
 .shift-card header {
   display: flex;
@@ -236,6 +326,9 @@ const presentCount = computed(() => {
   margin-bottom: 4px;
   border-bottom: 1px solid #f3f4f6;
 }
+.shift-card.grab header {
+  border-bottom-color: #d1fae5;
+}
 .dot {
   width: 10px;
   height: 10px;
@@ -243,9 +336,21 @@ const presentCount = computed(() => {
   margin-top: 5px;
   flex-shrink: 0;
 }
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .shift-card header strong {
   font-size: 14px;
   color: #111827;
+}
+.grab-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #10b981;
+  color: #fff;
 }
 .shift-card header p {
   margin: 2px 0 0;

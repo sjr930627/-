@@ -1,5 +1,6 @@
 import {
   isEnterpriseRootDepartment,
+  isLeafDepartment,
   isUnassignedDepartment,
 } from '@/constants/department'
 import {
@@ -60,7 +61,7 @@ export function isWorkerInEnterpriseDepartment(
   if (!employee || employee.status !== 'active') return false
   if (isUnassignedDepartment(employee.departmentId)) return false
   const dept = departments.find((d) => d.id === employee.departmentId)
-  if (!dept || isEnterpriseRootDepartment(dept)) return false
+  if (!dept || isEnterpriseRootDepartment(dept) || !isLeafDepartment(dept)) return false
   if (enterpriseId) {
     const empEnterpriseId =
       resolveEnterpriseIdByDepartment(employee.departmentId, departments) ?? employee.enterpriseId
