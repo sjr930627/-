@@ -244,7 +244,10 @@ function resolveTaskStartedAt(instance: TaskInstance) {
   return instance.createdAt
 }
 
-function resolveTaskCompletedAt(instance: TaskInstance, status: 'running' | 'completed' | 'cancelled') {
+function resolveTaskCompletedAt(
+  instance: TaskInstance,
+  status: 'running' | 'completed' | 'cancelled' | 'ended',
+) {
   if (status !== 'completed') return undefined
   const logs = getTaskInstanceLogs(instance)
   const doneLog = [...logs].reverse().find(

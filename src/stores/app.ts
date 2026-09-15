@@ -4509,7 +4509,9 @@ export const useAppStore = defineStore('app', {
       }
       if (!data.pricingMode) throw new Error('请配置任务定价')
 
-      const existingNos = new Set(this.tasks.map((t) => t.taskNo).filter(Boolean))
+      const existingNos = new Set(
+        this.tasks.map((t) => t.taskNo).filter((n): n is string => Boolean(n)),
+      )
       const item: Task = {
         ...data,
         id: generateId('task'),

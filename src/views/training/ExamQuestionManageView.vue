@@ -459,7 +459,7 @@ onMounted(() => {
               :auto-upload="false"
               :show-file-list="false"
               accept="image/*"
-              :on-change="(file) => onOptionImageChange(opt, file)"
+              :on-change="(file: UploadFile) => onOptionImageChange(opt, file)"
             >
               <el-button size="small">上传图片</el-button>
             </el-upload>

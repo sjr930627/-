@@ -44,8 +44,6 @@ const SHIFT_TARGET = 80
 const recruitPeriod = ref<PeriodMode>('month')
 const recruitAnchor = ref('2026-07-27')
 const recruitJobId = ref('all')
-/** 转化漏斗独立岗位筛选 */
-const funnelJobId = ref('all')
 /** 入职趋势：近一月按天 / 近一年按月 */
 type OnboardTrendMode = 'month' | 'year'
 const onboardTrendMode = ref<OnboardTrendMode>('month')
@@ -93,34 +91,7 @@ function periodRange(mode: PeriodMode, anchor: string) {
   }
 }
 
-function prevPeriodRange(mode: PeriodMode, anchor: string) {
-  const base = dayjs(anchor)
-  if (mode === 'day') {
-    const d = base.subtract(1, 'day').format('YYYY-MM-DD')
-    return { start: d, end: d, label: '昨日' }
-  }
-  if (mode === 'week') {
-    const start = base.startOf('isoWeek').subtract(1, 'week')
-    const end = start.add(6, 'day')
-    return {
-      start: start.format('YYYY-MM-DD'),
-      end: end.format('YYYY-MM-DD'),
-      label: '上周',
-    }
-  }
-  const start = base.startOf('month').subtract(1, 'month')
-  return {
-    start: start.format('YYYY-MM-DD'),
-    end: start.endOf('month').format('YYYY-MM-DD'),
-    label: '上月',
-  }
-}
-
 const recruitRange = computed(() => periodRange(recruitPeriod.value, recruitAnchor.value))
-const recruitPrevRange = computed(() => prevPeriodRange(recruitPeriod.value, recruitAnchor.value))
-const recruitPrevLabel = computed(() =>
-  recruitPeriod.value === 'month' ? '上月' : recruitPeriod.value === 'week' ? '上周' : '昨日',
-)
 const hoursRange = computed(() => {
   if (hoursPeriod.value === 'day') {
     const start = hoursDayStart.value
@@ -248,159 +219,6 @@ const recruitLeads = computed(() => {
     if (!inRange(l.createdAt, start, end)) return false
     if (recruitJobId.value !== 'all' && l.requirementId !== recruitJobId.value) return false
     return true
-  })
-})
-
-const INTERVIEWING: RecruitmentLeadStatus[] = [
-  'interview_pending',
-  'interview_attended',
-  'feedback_pending',
-]
-const HIRED: RecruitmentLeadStatus[] = [
-  'salary_negotiation',
-  'background_check',
-  'medical_check',
-  'onboarding_pending',
-  'onboarded',
-  'qualified',
-]
-
-function filterLeadsByRange(start: string, end: string) {
-  return enterpriseLeads.value.filter((l) => {
-    if (l.status === 'closed') return false
-    if (!inRange(l.createdAt, start, end)) return false
-    if (recruitJobId.value !== 'all' && l.requirementId !== recruitJobId.value) return false
-    return true
-  })
-}
-
-function filterJobsByRange(start: string, end: string, leads: typeof enterpriseLeads.value) {
-  return enterpriseJobs.value.filter((j) => {
-    if (recruitJobId.value !== 'all' && j.id !== recruitJobId.value) return false
-    const created = inRange(j.createdAt, start, end)
-    const hasLead = leads.some((l) => l.requirementId === j.id)
-    const active = j.status === 'recruiting' || j.status === 'pending'
-    return created || hasLead || active
-  })
-}
-
-function calcRecruitOverview(start: string, end: string) {
-  const leads = filterLeadsByRange(start, end)
-  const jobs = filterJobsByRange(start, end, leads)
-  const demand = jobs.reduce((s, j) => s + (j.headcount || 0), 0)
-  const hired = leads.filter((l) => HIRED.includes(l.status)).length
-  const interviewing = leads.filter((l) => INTERVIEWING.includes(l.status)).length
-  const filled = jobs.reduce((s, j) => s + Math.min(j.filledCount || 0, j.headcount || 0), 0)
-  const completion = pct(filled || hired, demand || 1)
-  return { demand, hired, interviewing, completion, apply: leads.length }
-}
-
-const recruitOverview = computed(() => {
-  const curr = calcRecruitOverview(recruitRange.value.start, recruitRange.value.end)
-  const prev = calcRecruitOverview(recruitPrevRange.value.start, recruitPrevRange.value.end)
-  return {
-    ...curr,
-    demandDelta: deltaPct(curr.demand, prev.demand),
-    hiredDelta: deltaPct(curr.hired, prev.hired),
-    interviewDelta: deltaPct(curr.interviewing, prev.interviewing),
-    completionDelta: deltaPct(curr.completion, prev.completion),
-  }
-})
-
-const recruitTrendChart = computed(() => {
-  const { start, end } = recruitRange.value
-  const dates = getDatesBetween(start, end)
-  // 过长区间抽样到最多 12 个点
-  const step = Math.max(1, Math.ceil(dates.length / 12))
-  const sampled = dates.filter((_, i) => i % step === 0 || i === dates.length - 1)
-  const labels = sampled.map((d) => dayjs(d).format('M/D'))
-  const apply = sampled.map((d) =>
-    enterpriseLeads.value.filter((l) => {
-      if (recruitJobId.value !== 'all' && l.requirementId !== recruitJobId.value) return false
-      return (l.createdAt || '').slice(0, 10) === d && l.status !== 'closed'
-    }).length,
-  )
-  const hired = sampled.map((d) =>
-    enterpriseLeads.value.filter((l) => {
-      if (recruitJobId.value !== 'all' && l.requirementId !== recruitJobId.value) return false
-      if (!HIRED.includes(l.status) && !ONBOARDED.includes(l.status)) return false
-      const day = (l.onboardDate || l.updatedAt || l.createdAt || '').slice(0, 10)
-      return day === d
-    }).length,
-  )
-  return valueLineChartOption(
-    labels,
-    [
-      { name: '投递', data: apply, color: '#228BFF' },
-      { name: '录用', data: hired, color: '#A5B4FC' },
-    ],
-    '人',
-  )
-})
-
-const hireRateWow = computed(() => {
-  const curr = recruitOverview.value
-  const prev = calcRecruitOverview(recruitPrevRange.value.start, recruitPrevRange.value.end)
-  const currRate = pct(curr.hired, curr.apply || 1)
-  const prevRate = pct(prev.hired, prev.apply || 1)
-  return deltaPct(currRate, prevRate)
-})
-
-const FUNNEL_COLORS = [
-  { bg: '#E8F3FF', fg: '#3B82F6', width: 100 },
-  { bg: '#F3E8FF', fg: '#A855F7', width: 88 },
-  { bg: '#FFF4E5', fg: '#F59E0B', width: 76 },
-  { bg: '#E8F8EF', fg: '#22C55E', width: 64 },
-  { bg: '#E8F1FF', fg: '#60A5FA', width: 52 },
-]
-
-const funnelLeads = computed(() => {
-  const { start, end } = recruitRange.value
-  return enterpriseLeads.value.filter((l) => {
-    if (l.status === 'closed') return false
-    if (!inRange(l.createdAt, start, end)) return false
-    if (funnelJobId.value !== 'all' && l.requirementId !== funnelJobId.value) return false
-    return true
-  })
-})
-
-const funnelJobs = computed(() => {
-  const { start, end } = recruitRange.value
-  return enterpriseJobs.value.filter((j) => {
-    if (funnelJobId.value !== 'all' && j.id !== funnelJobId.value) return false
-    const created = inRange(j.createdAt, start, end)
-    const hasLead = funnelLeads.value.some((l) => l.requirementId === j.id)
-    return created || hasLead || (funnelJobId.value !== 'all' && j.id === funnelJobId.value)
-  })
-})
-
-const funnelRows = computed(() => {
-  const leads = funnelLeads.value
-  const published = Math.max(
-    funnelJobs.value.length,
-    leads.length ? Math.ceil(leads.length * 0.9) : 0,
-  )
-  const screening = leads.filter((l) => stageIndex(l.status) >= 1).length || leads.length
-  const invite = leads.filter((l) => stageIndex(l.status) >= 2).length
-  const passed = leads.filter((l) => stageIndex(l.status) >= 3).length
-  const onboarded = leads.filter((l) => stageIndex(l.status) >= 4).length
-
-  const values = [published, screening, invite, passed, onboarded]
-  const names = ['需求发布', '简历筛选', '面试邀约', '面试通过', '已入职']
-  const max = Math.max(...values, 1)
-
-  return names.map((name, i) => {
-    const value = values[i]
-    const prev = i === 0 ? null : values[i - 1]
-    const rate = prev == null ? null : pct(value, prev)
-    return {
-      name,
-      value,
-      rate,
-      bg: FUNNEL_COLORS[i].bg,
-      fg: FUNNEL_COLORS[i].fg,
-      widthPct: Math.max(42, Math.round((value / max) * 100)),
-    }
   })
 })
 

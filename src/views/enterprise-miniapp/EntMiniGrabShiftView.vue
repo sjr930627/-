@@ -198,7 +198,7 @@ const slots = computed(() =>
         displayShiftName: resolveGrabSlotShiftName(slot),
         departmentDisplayName: resolveGrabSlotDepartmentName(slot, store.teams, store.departments),
         statusLabel: grabStatusMap[slot.status] ?? slot.status,
-        statusClass: slot.status === 'partial' ? 'open' : slot.status,
+        statusClass: slot.status,
         publishLabel: publishMeta?.label ?? '已上架',
         pendingCount: pendingApps.length,
         approvedCount: approvedApps.length,

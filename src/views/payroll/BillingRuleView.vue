@@ -303,7 +303,7 @@ onMounted(() => {
       <el-form-item label="结算公式类型" required>
         <el-radio-group
           :model-value="formulaGroup"
-          @update:model-value="(v) => applyFormulaExample(v as BillingFormulaExampleKey)"
+          @update:model-value="(v: string | number | boolean | undefined) => applyFormulaExample(v as BillingFormulaExampleKey)"
         >
           <el-radio-button
             v-for="example in billingFormulaExamples"

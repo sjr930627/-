@@ -7,7 +7,7 @@ import { enterpriseOperatorRoleId } from '@/constants/enterprise'
 import { accountHasRole } from '@/constants/account'
 import type { DepartmentTreeNode } from '@/types'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     modelValue: string[]
     placeholder?: string

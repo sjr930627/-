@@ -76,7 +76,9 @@ export function ensureTaskNo(task: Task, existingNos?: Set<string>): Task {
 }
 
 export function ensureTaskNos(tasks: Task[]): Task[] {
-  const existing = new Set(tasks.map((t) => t.taskNo).filter(Boolean))
+  const existing = new Set(
+    tasks.map((t) => t.taskNo).filter((n): n is string => Boolean(n)),
+  )
   return tasks.map((t) => ensureTaskNo(t, existing))
 }
 
