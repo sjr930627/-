@@ -6,6 +6,8 @@ import {
   type WorkbenchReminderCategory,
   type WorkbenchReminderLevel,
 } from '@/constants/workbenchReminder'
+import { DEFAULT_WORKFORCE_ENTERPRISE_ID } from '@/constants/department'
+import { resolveContractApprovalStatus } from '@/constants/partnership'
 import { isInstanceAtEnterpriseNode } from '@/services/task'
 import type {
   AttendanceException,
@@ -14,10 +16,18 @@ import type {
   PendingSettlementItem,
   RecruitmentLead,
   ScheduleAssignment,
+  ServiceContract,
   SettlementBill,
   Task,
   TaskInstance,
+  TaskWorkflow,
 } from '@/types'
+
+export type PlatformTodoKind =
+  | 'contract_audit'
+  | 'grab_publish'
+  | 'task_publish'
+  | 'invoice'
 
 export interface WorkbenchTodoItem {
   id: string
@@ -27,7 +37,12 @@ export interface WorkbenchTodoItem {
   title: string
   detail: string
   actionLabel: string
+  /** 空字符串表示不可跳转（如招聘模块下线） */
   path: string
+  kind?: PlatformTodoKind
+  disabledReason?: string
+  /** 待办生成时间（用于「今日」判定） */
+  generatedAt?: string
 }
 
 export interface WorkbenchTodoGroup {
@@ -48,11 +63,14 @@ export interface BuildWorkbenchTodosInput {
   assignments: ScheduleAssignment[]
   taskInstances: TaskInstance[]
   tasks: Task[]
-  taskWorkflows: { id: string; nodes: { id: string; role: string; actions: unknown[] }[] }[]
+  taskWorkflows: TaskWorkflow[]
   settlementBills: SettlementBill[]
   invoiceApplications: InvoiceApplication[]
   pendingSettlements: PendingSettlementItem[]
   overtimePendingCount?: number
+  serviceContracts?: ServiceContract[]
+  /** 平台待办解析企业名称 */
+  enterprises?: Array<{ id: string; name: string }>
 }
 
 const LEVEL_RANK: Record<WorkbenchReminderLevel, number> = {
@@ -144,6 +162,201 @@ function formatDateKey(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+function dateKeyFromIso(iso: string): string {
+  return iso.slice(0, 10)
+}
+
+function isGeneratedToday(iso: string | undefined, now: Date): boolean {
+  if (!iso) return false
+  return dateKeyFromIso(iso) === formatDateKey(now)
+}
+
+/** 【年月日】展示：2026年7月30日 */
+function formatChineseYmd(isoOrDate: string): string {
+  const key = dateKeyFromIso(isoOrDate)
+  const [y, m, d] = key.split('-')
+  return `${y}年${Number(m)}月${Number(d)}日`
+}
+
+function resolveEnterpriseName(
+  enterpriseId: string | undefined,
+  enterprises: Array<{ id: string; name: string }> | undefined,
+  fallback?: string,
+) {
+  if (enterpriseId && enterprises?.length) {
+    const hit = enterprises.find((e) => e.id === enterpriseId)
+    if (hit?.name) return hit.name
+  }
+  return fallback || '企业'
+}
+
+export function listTaskTimeoutInstances(input: {
+  taskInstances: TaskInstance[]
+  tasks: Task[]
+  taskWorkflows: TaskWorkflow[]
+  enterpriseId?: string
+  now?: Date
+}): TaskInstance[] {
+  const { taskInstances, tasks, taskWorkflows, enterpriseId, now = WORKBENCH_DEMO_NOW } = input
+  const result: TaskInstance[] = []
+  for (const instance of taskInstances) {
+    const task = tasks.find((t) => t.id === instance.taskId)
+    if (!task || !matchEnterprise(enterpriseId, task.enterpriseId)) continue
+    const workflow = taskWorkflows.find((w) => w.id === task.workflowId)
+    if (!isInstanceAtEnterpriseNode(instance, workflow as never)) continue
+    const hoursWaiting = hoursSince(instance.updatedAt, now)
+    if (hoursWaiting >= WORKBENCH_THRESHOLDS.shiftAcceptanceAfterHours) {
+      result.push(instance)
+    }
+  }
+  return result
+}
+
+/** 平台工作台：4 类待办（按业务单据逐条生成） */
+function buildPlatformTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoItem[] {
+  const {
+    grabShiftSlots,
+    tasks,
+    invoiceApplications,
+    serviceContracts = [],
+    enterprises = [],
+    pathPrefix = '',
+  } = input
+  const items: WorkbenchTodoItem[] = []
+
+  for (const contract of serviceContracts) {
+    if (resolveContractApprovalStatus(contract) !== 'pending') continue
+    const enterpriseName = resolveEnterpriseName(contract.enterpriseId, enterprises, contract.name)
+    const generatedAt = contract.submittedAt || contract.updatedAt || contract.createdAt
+    items.push({
+      id: `platform_contract_${contract.id}`,
+      kind: 'contract_audit',
+      category: 'settlement',
+      level: 'urgent',
+      icon: '📄',
+      title: '企业合同审批',
+      detail: `【${enterpriseName}】有份合同处于待审审批状态`,
+      actionLabel: '去审批',
+      path: todoPath(pathPrefix, `/contracts/${contract.id}`),
+      generatedAt,
+    })
+  }
+
+  for (const slot of grabShiftSlots) {
+    if (slot.publishStatus !== 'pending') continue
+    const enterpriseName = resolveEnterpriseName(
+      DEFAULT_WORKFORCE_ENTERPRISE_ID,
+      enterprises,
+      slot.departmentName || '企业',
+    )
+    const position = slot.positionName || slot.shiftName || '岗位'
+    const ymd = formatChineseYmd(slot.date)
+    items.push({
+      id: `platform_grab_${slot.id}`,
+      kind: 'grab_publish',
+      category: 'schedule',
+      level: 'urgent',
+      icon: '📤',
+      title: '抢班上架审批',
+      detail: `【${enterpriseName}】发起【${ymd}】-【${position}】的抢班班次上架审批`,
+      actionLabel: '去审批',
+      path: todoPath(pathPrefix, '/grab-shifts', { tab: 'publish' }),
+      generatedAt: slot.createdAt,
+    })
+  }
+
+  for (const task of tasks) {
+    if (task.status !== 'pending') continue
+    items.push({
+      id: `platform_task_${task.id}`,
+      kind: 'task_publish',
+      category: 'schedule',
+      level: 'urgent',
+      icon: '✅',
+      title: '任务上架审批',
+      detail: `【${task.enterpriseName}】发起【${task.name}】的上架审批`,
+      actionLabel: '去审批',
+      path: todoPath(pathPrefix, '/task-approval', { status: 'pending' }),
+      generatedAt: task.createdAt,
+    })
+  }
+
+  for (const inv of invoiceApplications) {
+    if (inv.status !== 'pending_review') continue
+    items.push({
+      id: `platform_invoice_${inv.id}`,
+      kind: 'invoice',
+      category: 'settlement',
+      level: 'normal',
+      icon: '🧾',
+      title: '待开发票',
+      detail: `【${inv.enterpriseName}】有张发票待开具`,
+      actionLabel: '去处理',
+      path: todoPath(pathPrefix, `/payroll/invoices/${inv.id}`),
+      generatedAt: inv.submittedAt || inv.createdAt,
+    })
+  }
+
+  return items
+}
+
+/**
+ * 今日新增且已办结的平台待办（创建时间在今日，当前已不在待办池中）。
+ * 用于「今日待办完成率」，不含历史存量。
+ */
+export function countTodayCompletedPlatformTodos(input: {
+  grabShiftSlots: GrabShiftSlot[]
+  tasks: Task[]
+  invoiceApplications: InvoiceApplication[]
+  serviceContracts?: ServiceContract[]
+  now?: Date
+}): { completed: number; urgentCompleted: number } {
+  const {
+    grabShiftSlots,
+    tasks,
+    invoiceApplications,
+    serviceContracts = [],
+    now = WORKBENCH_DEMO_NOW,
+  } = input
+  let completed = 0
+  let urgentCompleted = 0
+
+  for (const contract of serviceContracts) {
+    const generatedAt = contract.submittedAt || contract.updatedAt || contract.createdAt
+    if (!isGeneratedToday(generatedAt, now)) continue
+    if (resolveContractApprovalStatus(contract) === 'pending') continue
+    if (resolveContractApprovalStatus(contract) === 'draft') continue
+    completed += 1
+    urgentCompleted += 1
+  }
+
+  for (const slot of grabShiftSlots) {
+    if (!isGeneratedToday(slot.createdAt, now)) continue
+    const publishStatus = slot.publishStatus ?? 'published'
+    if (publishStatus === 'pending') continue
+    if (publishStatus === 'published' || publishStatus === 'rejected') {
+      completed += 1
+      urgentCompleted += 1
+    }
+  }
+
+  for (const task of tasks) {
+    if (!isGeneratedToday(task.createdAt, now)) continue
+    if (task.status === 'pending') continue
+    completed += 1
+    urgentCompleted += 1
+  }
+
+  for (const inv of invoiceApplications) {
+    const generatedAt = inv.submittedAt || inv.createdAt
+    if (!isGeneratedToday(generatedAt, now)) continue
+    if (inv.status === 'pending_review' || inv.status === 'draft') continue
+    completed += 1
+  }
+
+  return { completed, urgentCompleted }
+}
+
 function buildRecruitmentTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoItem[] {
   const { recruitmentLeads, enterpriseId, now = WORKBENCH_DEMO_NOW, pathPrefix = '' } = input
   const items: WorkbenchTodoItem[] = []
@@ -155,7 +368,6 @@ function buildRecruitmentTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoIt
 
     const progressPath = todoPath(pathPrefix, '/recruitment/progress', { lead: lead.id })
 
-    /** 每日早晨：今日入职 */
     if (lead.status === 'onboarding_pending' && lead.onboardDate === today) {
       items.push({
         id: `lead_onboard_today_${lead.id}`,
@@ -170,7 +382,6 @@ function buildRecruitmentTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoIt
       continue
     }
 
-    /** 每日早晨：今日面试 */
     if (
       lead.interviewDate === today &&
       (lead.status === 'interview_pending' || lead.status === 'interview_attended')
@@ -188,7 +399,6 @@ function buildRecruitmentTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoIt
       continue
     }
 
-    /** 每日早晨：面试待反馈跟进 */
     if (lead.status === 'feedback_pending') {
       items.push({
         id: `lead_interview_followup_${lead.id}`,
@@ -203,7 +413,6 @@ function buildRecruitmentTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoIt
       continue
     }
 
-    /** 待筛选数据提醒 */
     if (lead.status === 'screening') {
       const daysWaiting = Math.max(0, Math.floor(daysSince(lead.createdAt, now)))
       items.push({
@@ -222,7 +431,6 @@ function buildRecruitmentTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoIt
       continue
     }
 
-    /** 已达标线索：1/3/5/10/15 天跟进提醒 */
     if (lead.status === 'qualified') {
       const qualifiedAt = getQualifiedAt(lead)
       const milestone = getDueQualifiedFollowUpDay(qualifiedAt, lead.lastFollowUpAt, now)
@@ -425,24 +633,23 @@ function buildScheduleTodos(input: BuildWorkbenchTodosInput): WorkbenchTodoItem[
     })
   }
 
-  for (const instance of taskInstances) {
-    const task = tasks.find((t) => t.id === instance.taskId)
-    if (!task || !matchEnterprise(enterpriseId, task.enterpriseId)) continue
-    const workflow = taskWorkflows.find((w) => w.id === task.workflowId)
-    if (!isInstanceAtEnterpriseNode(instance, workflow as never)) continue
-    const hoursWaiting = hoursSince(instance.updatedAt, now)
-    if (hoursWaiting >= WORKBENCH_THRESHOLDS.shiftAcceptanceAfterHours) {
-      items.push({
-        id: `task_accept_${instance.id}`,
-        category: 'schedule',
-        level: 'important',
-        icon: '⏱',
-        title: instance.taskName,
-        detail: `验收超时 ${Math.floor(hoursWaiting)}h · ${instance.workerName}`,
-        actionLabel: '立即验收',
-        path: taskInstanceDetailPath(pathPrefix, input.portal, instance.id),
-      })
-    }
+  for (const instance of listTaskTimeoutInstances({
+    taskInstances,
+    tasks,
+    taskWorkflows,
+    enterpriseId,
+    now,
+  })) {
+    items.push({
+      id: `task_accept_${instance.id}`,
+      category: 'schedule',
+      level: 'important',
+      icon: '⏱',
+      title: instance.taskName,
+      detail: `验收超时 ${Math.floor(hoursSince(instance.updatedAt, now))}h · ${instance.workerName}`,
+      actionLabel: '立即验收',
+      path: taskInstanceDetailPath(pathPrefix, input.portal, instance.id),
+    })
   }
 
   if ((input.overtimePendingCount ?? 0) > 0) {
@@ -569,6 +776,19 @@ function groupLevel(items: WorkbenchTodoItem[]): WorkbenchReminderLevel {
 }
 
 export function buildWorkbenchTodoGroups(input: BuildWorkbenchTodosInput): WorkbenchTodoGroup[] {
+  if (input.portal === 'platform') {
+    const items = buildPlatformTodos(input)
+    if (!items.length) return []
+    return [
+      {
+        id: 'settlement',
+        title: '待办事项',
+        level: groupLevel(items),
+        items,
+      },
+    ]
+  }
+
   const categoryBuilders: Record<WorkbenchReminderCategory, () => WorkbenchTodoItem[]> = {
     recruitment: () => buildRecruitmentTodos(input),
     attendance: () => buildAttendanceTodos(input),
@@ -606,26 +826,22 @@ export interface WorkbenchFlatTodo extends WorkbenchTodoItem {
   isToday: boolean
 }
 
-export function enrichFlatTodos(groups: WorkbenchTodoGroup[]): WorkbenchFlatTodo[] {
-  let importantIdx = 0
-  let normalIdx = 0
+export function enrichFlatTodos(
+  groups: WorkbenchTodoGroup[],
+  now: Date = WORKBENCH_DEMO_NOW,
+): WorkbenchFlatTodo[] {
   return groups.flatMap((group) =>
-    group.items.map((item) => {
-      let deadlineLabel = '本周内'
-      if (item.level === 'urgent') {
-        deadlineLabel = '今日截止'
-      } else if (item.level === 'important') {
-        deadlineLabel = importantIdx++ % 2 === 0 ? '明天' : '3天后'
-      } else {
-        deadlineLabel = normalIdx++ % 2 === 0 ? '5天后' : '本周五'
-      }
-      return {
-        ...item,
-        groupTitle: group.title,
-        subtitle: `${item.title} · ${item.detail}`,
-        deadlineLabel,
-        isToday: item.level === 'urgent',
-      }
-    }),
+    group.items.map((item) => ({
+      ...item,
+      groupTitle: group.title,
+      subtitle: item.detail,
+      deadlineLabel:
+        item.level === 'urgent' ? '紧急' : item.level === 'important' ? '重要' : '普通',
+      // 有 generatedAt 时按「当日生成」判定；否则兼容企业端（紧急≈今日）
+      isToday:
+        item.generatedAt != null
+          ? isGeneratedToday(item.generatedAt, now)
+          : item.level === 'urgent',
+    })),
   )
 }

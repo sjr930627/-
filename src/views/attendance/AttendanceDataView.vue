@@ -64,7 +64,7 @@ onMounted(() => syncTabFromRoute())
       <div>
         <h2 class="page-title">考勤数据</h2>
         <p class="text-muted">
-          {{ sourceLabel }}来源 · 按日查看打卡明细、确认/矫正工时，或按月汇总出勤统计
+          {{ sourceLabel }}来源 · 按日查看打卡明细、确认/校正工时，或按月汇总出勤统计
         </p>
       </div>
       <div class="header-actions">

@@ -9,7 +9,6 @@ import type {
   IntegrationLog,
   LeaveRequest,
   MakeupPunchRequest,
-  Notification,
   OvertimeRequest,
   PayrollConfig,
   ScheduleAssignment,
@@ -453,7 +452,7 @@ export const seedHolidays: Holiday[] = [
 
 export const seedAssignments: ScheduleAssignment[] = []
 export const seedPublishRecords: SchedulePublishRecord[] = []
-export const seedNotifications: Notification[] = []
+export { seedWorkbenchMessages as seedNotifications } from '@/mock/workbenchMessageSeed'
 
 // --- Phase 2 seed ---
 

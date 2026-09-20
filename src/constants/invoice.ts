@@ -37,9 +37,9 @@ export const invoiceStatusMap: Record<
 > = {
   draft: { label: '草稿', type: 'info' },
   pending_review: { label: '待审核', type: 'warning' },
-  reviewing: { label: '审核中', type: 'primary' },
+  reviewing: { label: '待审核', type: 'warning' },
   rejected: { label: '已驳回', type: 'danger' },
-  issuing: { label: '开票中', type: 'primary' },
+  issuing: { label: '开具中', type: 'primary' },
   issued: { label: '已开票', type: 'success' },
 }
 

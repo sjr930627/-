@@ -49,7 +49,8 @@ const rawGrabShiftSlots: GrabShiftSlot[] = [
     requirements: ['中国移动业务合规证'],
     status: 'open',
     publishStatus: 'published',
-    createdAt: '2026-07-26T07:30:00.000Z',
+    /** demo：今日创建并已上架 → 计入今日待办完成率 */
+    createdAt: '2026-07-28T01:30:00.000Z',
   },
   {
     id: 'gs_001',
@@ -213,7 +214,8 @@ const rawGrabShiftSlots: GrabShiftSlot[] = [
     requirements: ['中国移动业务合规证'],
     status: 'open',
     publishStatus: 'pending',
-    createdAt: '2026-07-27T10:00:00.000Z',
+    /** demo：工作台锚定日当日生成 → 今日待办 */
+    createdAt: '2026-07-28T02:00:00.000Z',
   },
   {
     id: 'gs_aug_am',

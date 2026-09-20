@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -23,6 +24,7 @@ import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/
 import type { Task } from '@/types'
 
 const store = useAppStore()
+const route = useRoute()
 const statusFilter = ref<'all' | 'pending' | 'active' | 'ended' | 'completed' | 'rejected'>('pending')
 const orgKeyword = ref('')
 const nameKeyword = ref('')
@@ -33,7 +35,23 @@ const reviewNote = ref('')
 
 onMounted(() => {
   store.syncTaskLifecycleStatuses()
+  if (typeof route.query.status === 'string') {
+    const s = route.query.status
+    if (['all', 'pending', 'active', 'ended', 'completed', 'rejected'].includes(s)) {
+      statusFilter.value = s as typeof statusFilter.value
+    }
+  }
 })
+
+watch(
+  () => route.query.status,
+  (status) => {
+    if (typeof status !== 'string') return
+    if (['all', 'pending', 'active', 'ended', 'completed', 'rejected'].includes(status)) {
+      statusFilter.value = status as typeof statusFilter.value
+    }
+  },
+)
 
 function createEmptyForm(enterpriseId = ''): TaskPublishFormModel {
   return {

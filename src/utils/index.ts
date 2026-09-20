@@ -1,5 +1,7 @@
+import { normalizeWorkbenchMessageCategory } from '@/constants/workbenchMessage'
+
 const STORAGE_PREFIX = 'shift-attendance:'
-const DEMO_BRANDING_VERSION = 'sinopec-v30'
+const DEMO_BRANDING_VERSION = 'sinopec-v31'
 
 const DEMO_BRANDING_KEYS = [
   'enterprises',
@@ -40,6 +42,8 @@ const DEMO_BRANDING_KEYS = [
   'billingRules',
   'settlementBills',
   'serviceContracts',
+  'invoiceApplications',
+  'notifications',
   'attendanceGroupSettlementOverrides',
   'departmentSettlementOverrides',
   'taskTypeSettlementOverrides',
@@ -69,6 +73,29 @@ export function ensureServiceContracts(
   }))
   if (!missing.length) return list
   return [...missing, ...list]
+}
+
+/** 补齐工作台消息种子（兼容旧本地空通知列表）；并归一化分类为班次/合同/资金 */
+export function ensureNotifications(
+  list: import('@/types').Notification[],
+  seed: import('@/types').Notification[],
+): import('@/types').Notification[] {
+  const normalized: import('@/types').Notification[] = []
+  for (const n of list) {
+    // 无 category 的旧顶栏通知保留
+    if (!n.category) {
+      normalized.push(n)
+      continue
+    }
+    const category = normalizeWorkbenchMessageCategory(n.category)
+    if (!category) continue
+    normalized.push(category === n.category ? n : { ...n, category })
+  }
+
+  const ids = new Set(normalized.map((n) => n.id))
+  const missing = seed.filter((s) => !ids.has(s.id)).map((s) => ({ ...s }))
+  if (!missing.length) return normalized
+  return [...missing, ...normalized]
 }
 
 /** 补齐开票抬头 id / 默认标记（兼容旧本地数据） */

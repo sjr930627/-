@@ -747,10 +747,10 @@ export function buildDailyAttendanceCsv(rows: DailyAttendanceExportRow[]): strin
     '工时确认',
     '确认人',
     '确认时间',
-    '是否矫正',
-    '矫正人',
-    '矫正时间',
-    '矫正原因',
+    '是否校正',
+    '校正人',
+    '校正时间',
+    '校正原因',
   ]
   const body = rows.map((r) =>
     toCsvRow([

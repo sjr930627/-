@@ -540,7 +540,8 @@ export const seedTasks: Task[] = [
     acceptedCount: 12,
     completedCount: 5,
     approvedCount: 4,
-    createdAt: '2026-08-05T08:00:00.000Z',
+    /** demo：今日创建并已上架通过 → 计入今日待办完成率 */
+    createdAt: '2026-07-28T02:30:00.000Z',
   },
   {
     id: 'task_5g_july',
@@ -683,7 +684,7 @@ export const seedTasks: Task[] = [
   {
     id: 'task_draft_demo',
     enterpriseId: 'ent_china_mobile_agent',
-    enterpriseName: '中国移动北京朝阳分公司',
+    enterpriseName: '中国移动朝阳企业公司',
     name: '5G套餐推广-202608',
     taskTypeId: 'tt_5g_promo',
     taskTypeName: '5G套餐推广',
@@ -707,7 +708,8 @@ export const seedTasks: Task[] = [
     acceptedCount: 0,
     completedCount: 0,
     approvedCount: 0,
-    createdAt: '2026-07-25T08:00:00.000Z',
+    /** demo：工作台锚定日当日生成 → 今日待办 */
+    createdAt: '2026-07-28T03:00:00.000Z',
   },
   {
     id: 'task_hall_recruit',

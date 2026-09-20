@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import {
@@ -28,6 +28,7 @@ import type {
 
 const store = useAppStore()
 const router = useRouter()
+const route = useRoute()
 
 const contractNo = ref('')
 const enterpriseName = ref('')
@@ -47,6 +48,20 @@ const appliedCreatedRange = ref<[string, string] | null>(null)
 const page = ref(1)
 const pageSize = ref(8)
 const selectedIds = ref<string[]>([])
+
+onMounted(() => {
+  if (typeof route.query.approval === 'string') {
+    const a = route.query.approval
+    if (['all', 'draft', 'pending', 'approved', 'rejected'].includes(a)) {
+      approvalFilter.value = a as ContractApprovalStatus | 'all'
+      appliedApproval.value = approvalFilter.value
+    }
+  }
+  if (typeof route.query.status === 'string' && route.query.status === 'pending') {
+    approvalFilter.value = 'pending'
+    appliedApproval.value = 'pending'
+  }
+})
 
 const approveVisible = ref(false)
 const approveTarget = ref<(ServiceContract & { enterpriseName?: string; providerName?: string }) | null>(null)

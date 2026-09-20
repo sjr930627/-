@@ -200,7 +200,7 @@ function submitCorrection() {
   }
   const note = correctionForm.value.note.trim()
   if (!note) {
-    ElMessage.warning('矫正原因必填')
+    ElMessage.warning('校正原因必填')
     return
   }
   try {
@@ -212,7 +212,7 @@ function submitCorrection() {
       '考勤管理员',
       { autoConfirm: false },
     )
-    ElMessage.success('工时已矫正，可继续确认工时')
+    ElMessage.success('工时已校正，可继续确认工时')
     correctionVisible.value = false
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
@@ -357,12 +357,12 @@ defineExpose({ exportCsv })
       <div>
         <h2 class="page-title">日考勤数据</h2>
         <p class="text-muted">
-          {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 未确认工时均可矫正（不限日期），确认后不可再矫正
+          {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 未确认工时均可校正（不限日期），确认后不可再校正
         </p>
       </div>
     </div>
     <p v-else class="text-muted tab-desc">
-      {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 未确认工时均可矫正（不限日期），确认后不可再矫正
+      {{ selectedDate }}（周{{ getWeekday(selectedDate) }}）· 未确认工时均可校正（不限日期），确认后不可再校正
     </p>
 
     <el-form inline style="margin-bottom: 16px">
@@ -418,7 +418,7 @@ defineExpose({ exportCsv })
         <template #default="{ row }">
           {{ row.hoursConfirmed ? formatDailyWorkHoursText(row) : row.confirmWorkHours }}
           <el-tag v-if="row.workHoursCorrected" size="small" type="warning" class="hour-tag">
-            已矫正
+            已校正
           </el-tag>
           <el-tag v-else-if="row.hoursConfirmed" size="small" type="success" class="hour-tag">
             已确认
@@ -456,7 +456,7 @@ defineExpose({ exportCsv })
       <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.canCorrect" link type="primary" @click="openCorrection(row)">
-            工时矫正
+            工时校正
           </el-button>
           <el-button v-if="row.canConfirm" link type="success" @click="confirmOne(row)">
             确认工时
@@ -466,16 +466,16 @@ defineExpose({ exportCsv })
     </el-table>
   </div>
 
-  <el-dialog v-model="correctionVisible" title="工时矫正" width="460px" destroy-on-close>
+  <el-dialog v-model="correctionVisible" title="工时校正" width="460px" destroy-on-close>
     <template v-if="correctionTarget">
       <p class="correction-meta">
         {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} ·
         {{ correctionTarget.hoursSourceLabel }} · {{ correctionTarget.baselineLabel }}
         {{ correctionTarget.scheduledHours }}h · 实际
-        {{ correctionTarget.workHours }}h（矫正工时可大于{{ correctionTarget.baselineLabel }}）
+        {{ correctionTarget.workHours }}h（校正工时可大于{{ correctionTarget.baselineLabel }}）
       </p>
       <el-form label-width="100px">
-        <el-form-item label="矫正工时" required>
+        <el-form-item label="校正工时" required>
           <el-input-number
             v-model="correctionForm.workHours"
             :min="0"
@@ -485,21 +485,21 @@ defineExpose({ exportCsv })
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="矫正原因" required>
+        <el-form-item label="校正原因" required>
           <el-input
             v-model="correctionForm.note"
             type="textarea"
             :rows="3"
             maxlength="200"
             show-word-limit
-            placeholder="必填，如：漏打卡已核实，按实际出勤矫正"
+            placeholder="必填，如：漏打卡已核实，按实际出勤校正"
           />
         </el-form-item>
       </el-form>
     </template>
     <template #footer>
       <el-button @click="correctionVisible = false">取消</el-button>
-      <el-button type="primary" @click="submitCorrection">确认矫正</el-button>
+      <el-button type="primary" @click="submitCorrection">确认校正</el-button>
     </template>
   </el-dialog>
 
@@ -507,14 +507,14 @@ defineExpose({ exportCsv })
     <template v-if="auditTarget">
       <p class="correction-meta">{{ auditTarget.employeeName }} · {{ auditTarget.date }}</p>
       <el-descriptions v-if="auditTarget.correctedAt" :column="1" border size="small" class="audit-summary">
-        <el-descriptions-item label="最近矫正人">{{ auditTarget.correctedBy || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="最近校正人">{{ auditTarget.correctedBy || '—' }}</el-descriptions-item>
         <el-descriptions-item label="操作时间">{{ formatTime(auditTarget.correctedAt) }}</el-descriptions-item>
-        <el-descriptions-item label="矫正原因">{{ auditTarget.note || '—' }}</el-descriptions-item>
+        <el-descriptions-item label="校正原因">{{ auditTarget.note || '—' }}</el-descriptions-item>
       </el-descriptions>
       <el-table :data="auditTarget.history" border size="small" empty-text="暂无操作记录" style="margin-top: 12px">
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
-            {{ row.action === 'correct' ? '矫正' : '确认' }}
+            {{ row.action === 'correct' ? '校正' : '确认' }}
           </template>
         </el-table-column>
         <el-table-column prop="workHours" label="工时" width="70" />

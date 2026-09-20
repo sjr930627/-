@@ -1,6 +1,5 @@
 import {
   WORKBENCH_DEMO_NOW,
-  WORKBENCH_THRESHOLDS,
 } from '@/constants/workbenchReminder'
 import { recruitmentLeadStatusMap } from '@/constants/recruitment'
 import {
@@ -18,12 +17,14 @@ export interface WorkbenchMetricCard {
   key: string
   label: string
   value: string | number
-  trend?: { direction: 'up' | 'down'; text: string; positive?: boolean }
-  subLabel?: string
+  /** 左下角小字 */
   compareLabel?: string
-  sparkline?: number[]
-  icon: 'users' | 'hire' | 'leave' | 'approval'
-  tone: 'purple' | 'green' | 'red' | 'orange'
+  /** 右下角小字（如紧急数量） */
+  subLabel?: string
+  /** 额外脚注（如完成率） */
+  footExtra?: string
+  icon: 'todo' | 'today' | 'message' | 'users' | 'hire' | 'leave' | 'approval'
+  tone: 'purple' | 'green' | 'red' | 'orange' | 'blue' | 'teal'
 }
 
 export interface RecruitmentProgressItem {
@@ -43,16 +44,31 @@ export type RecruitmentReminderKind =
   | 'onboard_today'
   | 'screening'
   | 'qualified_followup'
+  | 'pipeline'
+
+/** 招聘进度提醒 Tab 分类 */
+export type RecruitmentReminderCategory = 'urgent' | 'remind' | 'watch'
 
 export interface RecruitmentReminderItem {
   id: string
   kind: RecruitmentReminderKind
   level: 'urgent' | 'important' | 'normal'
+  /** Tab：紧急 / 提醒 / 关注 */
+  category: RecruitmentReminderCategory
   title: string
+  /** 主文案，如「今天入职，请跟进」 */
+  alert: string
+  /** 主文案颜色：info=蓝，danger=红 */
+  alertTone: 'info' | 'danger'
   detail: string
+  enterpriseName: string
+  requirementTitle: string
   actionLabel: string
   path: string
   tag: string
+  /** 标签色调 */
+  tagTone: 'green' | 'blue' | 'orange' | 'purple' | 'teal' | 'gray'
+  stalledDays: number
 }
 
 export interface AttendanceAlertItem {
@@ -101,62 +117,51 @@ function formatDaysAgo(iso: string, now: Date) {
 }
 
 export function buildWorkbenchMetrics(input: {
-  employees: Employee[]
-  leads: RecruitmentLead[]
-  pendingApprovals: number
-  urgentTodoCount: number
-  now?: Date
+  /** 当前未办结待办 */
+  todos: Array<{ level: string; isToday: boolean }>
+  /** 今日新增且已办结条数（不含历史存量） */
+  todayCompletedCount: number
+  /** 今日新增且已办结中的紧急条数 */
+  todayCompletedUrgentCount?: number
+  unreadMessageCount: number
 }): WorkbenchMetricCard[] {
-  const now = input.now ?? WORKBENCH_DEMO_NOW
-  const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  const newHires = input.leads.filter(
-    (l) => l.status === 'onboarded' && l.updatedAt.startsWith(monthPrefix),
-  ).length
-  const resignations = input.leads.filter(
-    (l) => l.status === 'closed' && l.updatedAt.startsWith(monthPrefix),
-  ).length
+  const total = input.todos.length
+  const urgentOpen = input.todos.filter((t) => t.level === 'urgent').length
+
+  const todayOpen = input.todos.filter((t) => t.isToday)
+  const todayOpenUrgent = todayOpen.filter((t) => t.level === 'urgent').length
+  const todayCompleted = Math.max(0, input.todayCompletedCount)
+  const todayCompletedUrgent = Math.max(0, input.todayCompletedUrgentCount ?? 0)
+  const todayTotal = todayOpen.length + todayCompleted
+  const todayUrgent = todayOpenUrgent + todayCompletedUrgent
+  const completionRate =
+    todayTotal > 0 ? Math.round((todayCompleted / todayTotal) * 100) : null
 
   return [
     {
-      key: 'employees',
-      label: '在职员工总数',
-      value: input.employees.length.toLocaleString() || '1,728',
-      compareLabel: '上月人数: 1,650',
-      trend: { direction: 'up', text: '4.8%', positive: true },
-      sparkline: [12, 14, 13, 16, 15, 18, 17, 20],
-      icon: 'users',
-      tone: 'purple',
-    },
-    {
-      key: 'hires',
-      label: '本月入职',
-      value: newHires || 24,
-      compareLabel: '上月入职: 21',
-      trend: { direction: 'up', text: '12.5%', positive: true },
-      sparkline: [8, 10, 9, 12, 11, 14, 13, 16],
-      icon: 'hire',
-      tone: 'green',
-    },
-    {
-      key: 'leave',
-      label: '本月离职',
-      value: resignations || 8,
-      compareLabel: '上月离职: 9',
-      trend: { direction: 'down', text: '5.8%', positive: true },
-      sparkline: [10, 9, 11, 8, 9, 7, 8, 6],
-      icon: 'leave',
-      tone: 'red',
-    },
-    {
-      key: 'approval',
-      label: '待审批',
-      value: input.pendingApprovals || 15,
-      compareLabel: input.urgentTodoCount ? `${input.urgentTodoCount} 项紧急` : '上月待审: 12',
-      subLabel: input.urgentTodoCount ? `${input.urgentTodoCount} 项紧急` : undefined,
-      trend: { direction: 'up', text: '8.2%', positive: false },
-      sparkline: [4, 6, 5, 8, 7, 9, 10, 12],
-      icon: 'approval',
+      key: 'todo_total',
+      label: '待办总数',
+      value: total,
+      subLabel: `紧急 ${urgentOpen}`,
+      icon: 'todo',
       tone: 'orange',
+    },
+    {
+      key: 'todo_today',
+      label: '今日新增待办',
+      value: todayTotal,
+      subLabel: `紧急 ${todayUrgent}`,
+      footExtra:
+        completionRate == null ? '今日待办完成率 —' : `今日待办完成率 ${completionRate}%`,
+      icon: 'today',
+      tone: 'blue',
+    },
+    {
+      key: 'unread_messages',
+      label: '未读消息',
+      value: input.unreadMessageCount,
+      icon: 'message',
+      tone: 'teal',
     },
   ]
 }
@@ -213,7 +218,7 @@ function formatDateKey(d: Date): string {
 
 /**
  * 招聘进度提醒（每日早晨）：
- * 今日入职 / 今日面试 / 面试待反馈跟进 + 待筛选 + 已达标节点跟进
+ * 今日入职 / 今日面试 / 面试待反馈跟进 + 待筛选 + 流程中状态 + 已达标节点跟进
  */
 export function buildRecruitmentReminderItems(input: {
   leads: RecruitmentLead[]
@@ -225,96 +230,158 @@ export function buildRecruitmentReminderItems(input: {
   const prefix = input.pathPrefix ?? ''
   const basePath = prefix ? `${prefix}/recruitment/progress` : '/recruitment/progress'
   const items: RecruitmentReminderItem[] = []
-  const kindRank: Record<RecruitmentReminderKind, number> = {
-    onboard_today: 5,
-    interview_today: 4,
-    interview_followup: 3,
-    screening: 2,
-    qualified_followup: 1,
+
+  const statusTagTone: Partial<
+    Record<RecruitmentLead['status'], RecruitmentReminderItem['tagTone']>
+  > = {
+    onboarding_pending: 'green',
+    interview_pending: 'blue',
+    interview_attended: 'blue',
+    feedback_pending: 'orange',
+    salary_negotiation: 'orange',
+    medical_check: 'teal',
+    background_check: 'purple',
+    screening: 'gray',
+    qualified: 'blue',
+  }
+
+  function pushItem(partial: Omit<RecruitmentReminderItem, 'detail'> & { detail?: string }) {
+    items.push({
+      ...partial,
+      detail:
+        partial.detail ??
+        `${partial.enterpriseName} · ${partial.requirementTitle}`,
+    })
+  }
+
+  function resolveStallAlert(stalledDays: number, fallback: string): {
+    alert: string
+    alertTone: 'info' | 'danger'
+    category: RecruitmentReminderCategory
+    level: RecruitmentReminderItem['level']
+  } {
+    if (stalledDays >= 45) {
+      return {
+        alert: `已滞留 ${stalledDays} 天，严重滞后`,
+        alertTone: 'danger',
+        category: 'urgent',
+        level: 'urgent',
+      }
+    }
+    if (stalledDays >= 7) {
+      return {
+        alert: `已滞留 ${stalledDays} 天仍未推进，请跟进`,
+        alertTone: 'danger',
+        category: 'urgent',
+        level: 'urgent',
+      }
+    }
+    return {
+      alert: fallback,
+      alertTone: 'info',
+      category: 'remind',
+      level: stalledDays >= 3 ? 'important' : 'normal',
+    }
   }
 
   for (const lead of input.leads) {
     if (lead.status === 'closed' || lead.status === 'onboarded') continue
     const path = `${basePath}?lead=${encodeURIComponent(lead.id)}`
+    const enterpriseName = lead.enterpriseName
+    const requirementTitle = lead.requirementTitle
+    const stalledDays = Math.max(0, Math.floor(daysSince(lead.updatedAt, now)))
+    const tag = recruitmentStatusLabel(lead.status)
+    const tagTone = statusTagTone[lead.status] ?? 'gray'
 
-    /** 每日早晨：今日入职 */
     if (lead.status === 'onboarding_pending' && lead.onboardDate === today) {
-      items.push({
+      pushItem({
         id: `onboard_today_${lead.id}`,
         kind: 'onboard_today',
         level: 'urgent',
+        category: 'remind',
         title: lead.candidateName,
-        detail: `${lead.requirementTitle} · 今日要入职`,
+        alert: '今天入职，请跟进',
+        alertTone: 'info',
+        enterpriseName,
+        requirementTitle,
         actionLabel: '办理入职',
         path,
-        tag: '今日入职',
+        tag: '待入职',
+        tagTone: 'green',
+        stalledDays,
       })
       continue
     }
 
-    /** 每日早晨：今日面试 */
     if (
       lead.interviewDate === today &&
       (lead.status === 'interview_pending' || lead.status === 'interview_attended')
     ) {
       const timeLabel = lead.interviewTime ? ` ${lead.interviewTime}` : ''
-      items.push({
+      pushItem({
         id: `interview_today_${lead.id}`,
         kind: 'interview_today',
         level: 'urgent',
+        category: 'remind',
         title: lead.candidateName,
-        detail: `${lead.requirementTitle} · 今日面试${timeLabel}`,
+        alert: `今天面试${timeLabel}，请跟进`,
+        alertTone: 'info',
+        enterpriseName,
+        requirementTitle,
         actionLabel: '面试跟进',
         path,
-        tag: '今日面试',
+        tag: '待面试',
+        tagTone: 'blue',
+        stalledDays,
       })
       continue
     }
 
-    /** 每日早晨：面试待反馈，需跟进 */
     if (lead.status === 'feedback_pending') {
-      const interviewHint = lead.interviewDate
-        ? `面试日 ${lead.interviewDate}`
-        : '面试结果待反馈'
-      items.push({
+      const stall = resolveStallAlert(stalledDays, '面试待反馈，请跟进')
+      pushItem({
         id: `interview_followup_${lead.id}`,
         kind: 'interview_followup',
-        level: 'important',
+        level: stall.level,
+        category: stall.category,
         title: lead.candidateName,
-        detail: `${lead.requirementTitle} · ${interviewHint}，请跟进反馈`,
+        alert: stall.alert,
+        alertTone: stall.alertTone,
+        enterpriseName,
+        requirementTitle,
         actionLabel: '填写反馈',
         path,
-        tag: '面试跟进',
+        tag: '面试待反馈',
+        tagTone: 'orange',
+        stalledDays,
       })
       continue
     }
 
-    /** 待筛选 */
     if (lead.status === 'screening') {
-      const daysWaiting = Math.max(0, Math.floor(daysSince(lead.createdAt, now)))
-      const level: RecruitmentReminderItem['level'] =
-        daysWaiting >= WORKBENCH_THRESHOLDS.screeningUrgentDays
-          ? 'urgent'
-          : daysWaiting >= WORKBENCH_THRESHOLDS.screeningImportantDays
-            ? 'important'
-            : 'normal'
-      items.push({
+      const stall = resolveStallAlert(
+        stalledDays,
+        stalledDays === 0 ? '今日待筛选，请跟进' : `待筛选已等待 ${stalledDays} 天，请跟进`,
+      )
+      pushItem({
         id: `screen_${lead.id}`,
         kind: 'screening',
-        level,
+        level: stall.level,
+        category: stall.category,
         title: lead.candidateName,
-        detail:
-          daysWaiting === 0
-            ? `${lead.requirementTitle} · 今日待筛选`
-            : `${lead.requirementTitle} · 已等待 ${daysWaiting} 天`,
+        alert: stall.alert,
+        alertTone: stall.alertTone,
+        enterpriseName,
+        requirementTitle,
         actionLabel: '去筛选',
         path,
         tag: '待筛选',
+        tagTone: 'gray',
+        stalledDays,
       })
       continue
     }
 
-    /** 已达标 1/3/5/10/15 天跟进 */
     if (lead.status === 'qualified') {
       const milestone = getDueQualifiedFollowUpDay(
         getQualifiedAt(lead),
@@ -324,27 +391,193 @@ export function buildRecruitmentReminderItems(input: {
       if (milestone == null) continue
       const level: RecruitmentReminderItem['level'] =
         milestone >= 10 ? 'urgent' : milestone >= 5 ? 'important' : 'normal'
-      items.push({
+      pushItem({
         id: `qualified_d${milestone}_${lead.id}`,
         kind: 'qualified_followup',
         level,
+        category: milestone >= 10 ? 'urgent' : 'watch',
         title: lead.candidateName,
-        detail: `${lead.requirementTitle} · 已达标第 ${milestone} 天跟进`,
+        alert:
+          milestone >= 10
+            ? `已达标第 ${milestone} 天，请重点关注`
+            : `已达标第 ${milestone} 天跟进提醒`,
+        alertTone: milestone >= 10 ? 'danger' : 'info',
+        enterpriseName,
+        requirementTitle,
         actionLabel: '跟进回访',
         path,
         tag: `${milestone}天跟进`,
+        tagTone: 'blue',
+        stalledDays,
+      })
+      continue
+    }
+
+    /** 流程中其它状态：待入职 / 待面试 / 谈薪 / 背调 / 体检 等 */
+    const pipelineStatuses: RecruitmentLead['status'][] = [
+      'onboarding_pending',
+      'interview_pending',
+      'interview_attended',
+      'salary_negotiation',
+      'background_check',
+      'medical_check',
+    ]
+    if (pipelineStatuses.includes(lead.status)) {
+      const fallback =
+        lead.status === 'onboarding_pending'
+          ? lead.onboardDate
+            ? `计划 ${lead.onboardDate} 入职，请跟进`
+            : '待入职，请跟进'
+          : lead.status === 'interview_pending' || lead.status === 'interview_attended'
+            ? '待面试，请跟进'
+            : `${tag}，请跟进`
+      const stall = resolveStallAlert(stalledDays, fallback)
+      const category: RecruitmentReminderCategory =
+        stall.category === 'urgent'
+          ? 'urgent'
+          : lead.status === 'salary_negotiation' ||
+              lead.status === 'background_check' ||
+              lead.status === 'medical_check'
+            ? 'watch'
+            : stall.category
+      pushItem({
+        id: `pipeline_${lead.id}`,
+        kind: 'pipeline',
+        level: stall.level,
+        category,
+        title: lead.candidateName,
+        alert: stall.alert,
+        alertTone: stall.alertTone,
+        enterpriseName,
+        requirementTitle,
+        actionLabel: '去跟进',
+        path,
+        tag,
+        tagTone,
+        stalledDays,
       })
     }
   }
 
   const levelRank = { urgent: 3, important: 2, normal: 1 }
-  return items
-    .sort((a, b) => {
-      const byKind = kindRank[b.kind] - kindRank[a.kind]
-      if (byKind !== 0) return byKind
-      return levelRank[b.level] - levelRank[a.level]
+  const categoryRank = { urgent: 3, remind: 2, watch: 1 }
+  const fromLeads = items.sort((a, b) => {
+    const byCat = categoryRank[b.category] - categoryRank[a.category]
+    if (byCat !== 0) return byCat
+    return levelRank[b.level] - levelRank[a.level]
+  })
+
+  return padRecruitmentReminderDemo(fromLeads, basePath)
+}
+
+function recruitmentStatusLabel(status: RecruitmentLead['status']): string {
+  return recruitmentLeadStatusMap[status] ?? '跟进中'
+}
+
+/** 演示补齐到约 114 条，便于分页与 Tab 计数展示 */
+function padRecruitmentReminderDemo(
+  items: RecruitmentReminderItem[],
+  basePath: string,
+): RecruitmentReminderItem[] {
+  const target = 114
+  if (items.length >= target) return items.slice(0, target)
+
+  const names = [
+    '张伟', '李娜', '王强', '赵敏', '刘洋', '陈静', '杨帆', '黄蕾', '周杰', '吴倩',
+    '徐浩', '孙悦', '马超', '朱琳', '胡军', '郭婷', '何鹏', '高雪', '林峰', '罗倩',
+  ]
+  const enterprises = [
+    '中国移动北京朝阳分公司',
+    '中国移动北京海淀分公司',
+    '中国移动北京西城分公司',
+    '中国石化销售华北分公司',
+  ]
+  const jobs = [
+    '移动营业厅店员',
+    '终端促销员',
+    '号卡销售专员',
+    '客户服务专员',
+    '厅店储备主管',
+  ]
+  const templates: Array<{
+    tag: string
+    tagTone: RecruitmentReminderItem['tagTone']
+    category: RecruitmentReminderCategory
+    alert: (i: number) => string
+    alertTone: 'info' | 'danger'
+  }> = [
+    ...Array.from({ length: 8 }, () => ({
+      tag: '面试待反馈',
+      tagTone: 'orange' as const,
+      category: 'urgent' as const,
+      alert: (i: number) => `已滞留 ${40 + (i % 20)} 天仍未推进，请跟进`,
+      alertTone: 'danger' as const,
+    })),
+    ...Array.from({ length: 6 }, () => ({
+      tag: '谈薪中',
+      tagTone: 'orange' as const,
+      category: 'urgent' as const,
+      alert: (i: number) => `已滞留 ${35 + (i % 25)} 天，严重滞后`,
+      alertTone: 'danger' as const,
+    })),
+    {
+      tag: '待入职',
+      tagTone: 'green',
+      category: 'remind',
+      alert: () => '今天入职，请跟进',
+      alertTone: 'info',
+    },
+    {
+      tag: '待面试',
+      tagTone: 'blue',
+      category: 'remind',
+      alert: () => '今天面试，请跟进',
+      alertTone: 'info',
+    },
+    {
+      tag: '体检中',
+      tagTone: 'teal',
+      category: 'watch',
+      alert: () => '体检进行中，请关注结果',
+      alertTone: 'info',
+    },
+    {
+      tag: '背调中',
+      tagTone: 'purple',
+      category: 'watch',
+      alert: () => '背调进行中，请关注进度',
+      alertTone: 'info',
+    },
+  ]
+
+  const padded = [...items]
+  let i = 0
+  while (padded.length < target) {
+    const tpl = templates[i % templates.length]
+    const name = names[i % names.length]
+    const enterpriseName = enterprises[i % enterprises.length]
+    const requirementTitle = jobs[i % jobs.length]
+    const stalledDays = tpl.alertTone === 'danger' ? 40 + (i % 20) : i % 5
+    padded.push({
+      id: `demo_recruit_${i}`,
+      kind: 'pipeline',
+      level: tpl.category === 'urgent' ? 'urgent' : tpl.category === 'remind' ? 'important' : 'normal',
+      category: tpl.category,
+      title: `${name}${i >= names.length ? i : ''}`,
+      alert: tpl.alert(i),
+      alertTone: tpl.alertTone,
+      detail: `${enterpriseName} · ${requirementTitle}`,
+      enterpriseName,
+      requirementTitle,
+      actionLabel: '去跟进',
+      path: basePath,
+      tag: tpl.tag,
+      tagTone: tpl.tagTone,
+      stalledDays,
     })
-    .slice(0, 12)
+    i++
+  }
+  return padded
 }
 
 export function buildAttendanceAlertItems(input: {

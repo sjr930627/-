@@ -37,6 +37,25 @@ watch(
   { immediate: true },
 )
 
+watch(
+  () => route.query.status,
+  (value) => {
+    if (typeof value !== 'string') return
+    const allowed: Array<'all' | SettlementBill['status']> = [
+      'all',
+      'pending_submit',
+      'pending_confirm',
+      'pending_payment',
+      'paid',
+      'void',
+    ]
+    if (allowed.includes(value as (typeof allowed)[number])) {
+      statusFilter.value = value as typeof statusFilter.value
+    }
+  },
+  { immediate: true },
+)
+
 const dialogVisible = ref(false)
 const saving = ref(false)
 const uploadRef = ref<UploadInstance>()

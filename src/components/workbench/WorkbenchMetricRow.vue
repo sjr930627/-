@@ -1,61 +1,69 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import {
+  Bell,
+  Calendar,
+  List,
+  FolderOpened,
+  User,
+  CircleCheck,
+  CircleClose,
+  DocumentChecked,
+} from '@element-plus/icons-vue'
 import type { WorkbenchMetricCard } from '@/services/workbenchDashboard'
 
-defineProps<{
+const props = defineProps<{
   metrics: WorkbenchMetricCard[]
 }>()
 
-function sparkPath(points: number[]) {
-  if (!points.length) return ''
-  const max = Math.max(...points, 1)
-  const min = Math.min(...points, 0)
-  const span = Math.max(max - min, 1)
-  const w = 72
-  const h = 28
-  return points
-    .map((v, i) => {
-      const x = (i / Math.max(points.length - 1, 1)) * w
-      const y = h - ((v - min) / span) * (h - 4) - 2
-      return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`
-    })
-    .join(' ')
-}
+const iconMap = {
+  todo: List,
+  today: Calendar,
+  message: Bell,
+  users: User,
+  hire: CircleCheck,
+  leave: CircleClose,
+  approval: DocumentChecked,
+} as const
 
-function trendClass(item: WorkbenchMetricCard) {
-  if (!item.trend) return ''
-  const positive = item.trend.positive ?? item.trend.direction === 'up'
-  return positive ? 'up' : 'down'
+const toneClass = computed(() => {
+  const map: Record<string, string> = {}
+  for (const item of props.metrics) {
+    map[item.key] = `tone-${item.tone}`
+  }
+  return map
+})
+
+function resolveIcon(item: WorkbenchMetricCard) {
+  return iconMap[item.icon] ?? FolderOpened
 }
 </script>
 
 <template>
-  <div class="metric-row">
-    <div v-for="item in metrics" :key="item.key" class="metric-card">
+  <div class="metric-row" :class="`cols-${metrics.length}`">
+    <div
+      v-for="item in metrics"
+      :key="item.key"
+      class="metric-card"
+      :class="toneClass[item.key]"
+    >
       <div class="metric-top">
         <div class="metric-icon">
-          <el-icon :size="18"><FolderOpened /></el-icon>
+          <el-icon :size="18"><component :is="resolveIcon(item)" /></el-icon>
         </div>
         <div class="metric-label">{{ item.label }}</div>
       </div>
 
       <div class="metric-mid">
         <div class="metric-value">{{ item.value }}</div>
-        <svg
-          v-if="item.sparkline?.length"
-          class="metric-spark"
-          viewBox="0 0 72 28"
-          preserveAspectRatio="none"
-        >
-          <path :d="sparkPath(item.sparkline)" fill="none" stroke="#3b82f6" stroke-width="2" />
-        </svg>
       </div>
 
-      <div class="metric-foot">
-        <span v-if="item.compareLabel" class="metric-compare">{{ item.compareLabel }}</span>
-        <span v-if="item.subLabel" class="metric-sub urgent">{{ item.subLabel }}</span>
-        <span v-if="item.trend" class="metric-trend" :class="trendClass(item)">
-          较上月 {{ item.trend.direction === 'up' ? '+' : '-' }}{{ item.trend.text }}
-        </span>
+      <div v-if="item.compareLabel || item.subLabel || item.footExtra" class="metric-foot">
+        <div class="metric-foot-main">
+          <span v-if="item.compareLabel" class="metric-compare">{{ item.compareLabel }}</span>
+          <span v-if="item.subLabel" class="metric-sub urgent">{{ item.subLabel }}</span>
+        </div>
+        <div v-if="item.footExtra" class="metric-foot-extra">{{ item.footExtra }}</div>
       </div>
     </div>
   </div>
@@ -64,9 +72,16 @@ function trendClass(item: WorkbenchMetricCard) {
 <style scoped>
 .metric-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.metric-row.cols-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metric-row.cols-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .metric-card {
@@ -88,12 +103,42 @@ function trendClass(item: WorkbenchMetricCard) {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: #eff6ff;
-  color: #2563eb;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.tone-orange .metric-icon {
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.tone-blue .metric-icon {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.tone-teal .metric-icon {
+  background: #f0fdfa;
+  color: #0d9488;
+}
+
+.tone-purple .metric-icon {
+  background: #f5f3ff;
+  color: #7c3aed;
+}
+
+.tone-green .metric-icon {
+  background: #f0fdf4;
+  color: #16a34a;
+}
+
+.tone-red .metric-icon {
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 .metric-label {
@@ -102,10 +147,6 @@ function trendClass(item: WorkbenchMetricCard) {
 }
 
 .metric-mid {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
   margin-bottom: 12px;
 }
 
@@ -116,35 +157,25 @@ function trendClass(item: WorkbenchMetricCard) {
   line-height: 1;
 }
 
-.metric-spark {
-  width: 72px;
-  height: 28px;
-  flex-shrink: 0;
-}
-
 .metric-foot {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
   font-size: 12px;
   color: #94a3b8;
   padding-top: 10px;
   border-top: 1px solid #f1f5f9;
 }
 
+.metric-foot-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .metric-compare {
   color: #64748b;
-}
-
-.metric-trend.up {
-  color: #16a34a;
-  font-weight: 600;
-}
-
-.metric-trend.down {
-  color: #dc2626;
-  font-weight: 600;
 }
 
 .metric-sub.urgent {
@@ -152,9 +183,21 @@ function trendClass(item: WorkbenchMetricCard) {
   font-weight: 600;
 }
 
+.metric-foot-extra {
+  color: #64748b;
+}
+
 @media (max-width: 1200px) {
-  .metric-row {
+  .metric-row.cols-3,
+  .metric-row.cols-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .metric-row.cols-3,
+  .metric-row.cols-4 {
+    grid-template-columns: 1fr;
   }
 }
 </style>

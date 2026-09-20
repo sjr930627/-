@@ -1132,6 +1132,16 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  () => route.query.tab,
+  (tab) => {
+    if (tab === 'publish' || tab === 'slots' || tab === 'calendar' || tab === 'approval') {
+      activeTab.value = tab
+    }
+  },
+  { immediate: true },
+)
 </script>
 
 <template>

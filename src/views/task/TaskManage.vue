@@ -6,6 +6,8 @@ import {
   instanceWorkflowStatusMap,
   resolveInstanceWorkflowStatus,
 } from '@/services/task'
+import { listTaskTimeoutInstances } from '@/services/workbenchTodos'
+import { WORKBENCH_DEMO_NOW } from '@/constants/workbenchReminder'
 import type { TaskInstance } from '@/types'
 
 const store = useAppStore()
@@ -17,10 +19,26 @@ const workerIdFilter = ref('')
 const enterpriseFilter = ref('')
 const taskFilter = ref('')
 const instanceStatusFilter = ref<'all' | 'running' | 'completed' | 'cancelled'>('all')
+const timeoutOnly = ref(false)
 
 onMounted(() => {
   if (typeof route.query.worker === 'string') workerIdFilter.value = route.query.worker
   if (typeof route.query.keyword === 'string') keyword.value = route.query.keyword
+  if (route.query.timeout === '1') {
+    timeoutOnly.value = true
+    instanceStatusFilter.value = 'running'
+  }
+})
+
+const timeoutIdSet = computed(() => {
+  if (!timeoutOnly.value) return null
+  const list = listTaskTimeoutInstances({
+    taskInstances: store.taskInstances,
+    tasks: store.tasks,
+    taskWorkflows: store.taskWorkflows,
+    now: WORKBENCH_DEMO_NOW,
+  })
+  return new Set(list.map((i) => i.id))
 })
 
 const enterpriseOptions = computed(() =>
@@ -50,6 +68,7 @@ function enrichInstance(i: TaskInstance) {
 }
 
 function matchesBaseFilters(i: TaskInstance) {
+  if (timeoutIdSet.value && !timeoutIdSet.value.has(i.id)) return false
   if (workerIdFilter.value && i.workerId !== workerIdFilter.value) return false
   if (taskFilter.value && i.taskId !== taskFilter.value) return false
   if (enterpriseFilter.value && i.enterpriseName !== enterpriseFilter.value) return false

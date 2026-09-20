@@ -583,6 +583,10 @@ export interface Notification {
   title: string
   content: string
   type: 'schedule' | 'system' | 'attendance' | 'approval'
+  /** 工作台消息分类（新） */
+  category?: import('@/constants/workbenchMessage').WorkbenchMessageCategory
+  /** 归属门户，缺省视为 platform */
+  portal?: 'platform' | 'enterprise'
   createdAt: string
   read: boolean
 }
@@ -1457,6 +1461,17 @@ export interface ProviderFundAccount {
   remark?: string
   createdAt: string
   updatedAt: string
+}
+
+/** 平台统一提现限额（元） */
+export interface FundWithdrawLimitConfig {
+  /** 单月提现限额（按服务商累计） */
+  monthlyPerProvider: number
+  /** 单笔提现限额 */
+  perTransaction: number
+  /** 单日提现限额（按服务商累计） */
+  dailyPerProvider: number
+  updatedAt?: string
 }
 
 export type FundTransactionType = 'income' | 'payout' | 'transfer'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -19,9 +19,10 @@ import type { EnterpriseInvoiceProfile, InvoiceApplication, InvoiceStatus, Invoi
 
 const store = useAppStore()
 const router = useRouter()
+const route = useRoute()
 const { pathPrefix, isEnterprise, isPlatform } = usePortal()
 
-const statusFilter = ref<'all' | InvoiceStatus>('all')
+const statusFilter = ref<'pending_review' | 'issuing' | 'issued' | 'rejected'>('pending_review')
 const enterpriseKeyword = ref('')
 const providerKeyword = ref('')
 const applicationNoKeyword = ref('')
@@ -29,6 +30,19 @@ const keyword = ref('')
 const uploadVisible = ref(false)
 const uploadTargetId = ref<string | null>(null)
 const uploadFileName = ref('')
+
+const INVOICE_STATUS_FILTERS = ['pending_review', 'issuing', 'issued', 'rejected'] as const
+
+onMounted(() => {
+  if (typeof route.query.status === 'string') {
+    const s = route.query.status
+    if (s === 'pending' || s === 'reviewing' || s === 'draft') {
+      statusFilter.value = 'pending_review'
+    } else if ((INVOICE_STATUS_FILTERS as readonly string[]).includes(s)) {
+      statusFilter.value = s as typeof statusFilter.value
+    }
+  }
+})
 
 const profileDialogVisible = ref(false)
 const profileSaving = ref(false)
@@ -52,9 +66,17 @@ const enterpriseId = computed(() =>
   isEnterprise.value ? store.currentEnterprise?.id : undefined,
 )
 
+function matchesStatusFilter(status: InvoiceStatus) {
+  if (statusFilter.value === 'pending_review') {
+    return status === 'pending_review' || status === 'reviewing' || status === 'draft'
+  }
+  return status === statusFilter.value
+}
+
 const scopedApplications = computed(() =>
-  invoiceApplicationsForEnterprise(store.invoiceApplications, enterpriseId.value)
-    .filter((item) => item.status !== 'draft'),
+  invoiceApplicationsForEnterprise(store.invoiceApplications, enterpriseId.value).filter(
+    (item) => item.status !== 'draft' || statusFilter.value === 'pending_review',
+  ),
 )
 
 const stats = computed(() =>
@@ -68,7 +90,7 @@ const invoiceProfiles = computed(() =>
 const tableData = computed(() =>
   scopedApplications.value
     .filter((item) => {
-      if (statusFilter.value !== 'all' && item.status !== statusFilter.value) return false
+      if (!matchesStatusFilter(item.status)) return false
       if (isPlatform.value) {
         const entKw = enterpriseKeyword.value.trim().toLowerCase()
         if (entKw && !(item.enterpriseName ?? '').toLowerCase().includes(entKw)) return false
@@ -289,7 +311,7 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
         <div class="stat-card warning">
           <div class="stat-label">待开票金额</div>
           <div class="stat-value">{{ formatMoney(stats.pendingAmount) }}</div>
-          <div class="stat-sub">审核中与开票中的申请</div>
+          <div class="stat-sub">待审核与开具中的申请</div>
         </div>
       </el-col>
       <el-col :span="6">
@@ -365,10 +387,8 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
 
     <div class="page-toolbar">
       <el-radio-group v-model="statusFilter">
-        <el-radio-button value="all">全部</el-radio-button>
         <el-radio-button value="pending_review">待审核</el-radio-button>
-        <el-radio-button value="reviewing">审核中</el-radio-button>
-        <el-radio-button value="issuing">开票中</el-radio-button>
+        <el-radio-button value="issuing">开具中</el-radio-button>
         <el-radio-button value="issued">已开票</el-radio-button>
         <el-radio-button value="rejected">已驳回</el-radio-button>
       </el-radio-group>

@@ -10,20 +10,15 @@ import {
 } from '@/services/workbenchDashboard'
 import {
   buildWorkbenchTodoGroups,
+  countTodayCompletedPlatformTodos,
   countWorkbenchTodos,
   enrichFlatTodos,
 } from '@/services/workbenchTodos'
+import { normalizeWorkbenchMessageCategory } from '@/constants/workbenchMessage'
 
 export function useWorkbenchTodos() {
   const store = useAppStore()
   const { isEnterprise, isPlatform, pathPrefix } = usePortal()
-
-  const scopedEmployees = computed(() => {
-    if (!isEnterprise.value) return store.activeEmployees
-    return store.activeEmployees.filter(
-      (e) => !e.enterpriseId || e.enterpriseId === store.currentEnterpriseId,
-    )
-  })
 
   const scopedLeads = computed(() => {
     if (!isEnterprise.value) return store.recruitmentLeads
@@ -50,6 +45,8 @@ export function useWorkbenchTodos() {
     invoiceApplications: store.invoiceApplications,
     pendingSettlements: store.pendingSettlements,
     overtimePendingCount: store.overtimeRequests.filter((r) => r.status === 'pending').length,
+    serviceContracts: store.serviceContracts,
+    enterprises: store.enterprises.map((e) => ({ id: e.id, name: e.name })),
   }))
 
   const groups = computed(() => buildWorkbenchTodoGroups(todoInput.value))
@@ -57,12 +54,36 @@ export function useWorkbenchTodos() {
   const totalCount = computed(() => countWorkbenchTodos(groups.value))
   const urgentCount = computed(() => flatTodos.value.filter((t) => t.level === 'urgent').length)
 
+  const platformMessages = computed(() =>
+    store.notifications
+      .filter((n) => {
+        if (n.portal && n.portal !== 'platform') return false
+        return Boolean(normalizeWorkbenchMessageCategory(n.category))
+      })
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+  )
+
+  const unreadMessageCount = computed(() =>
+    platformMessages.value.filter((m) => !m.read).length,
+  )
+
+  const todayCompleted = computed(() => {
+    if (!isPlatform.value) return { completed: 0, urgentCompleted: 0 }
+    return countTodayCompletedPlatformTodos({
+      grabShiftSlots: store.grabShiftSlots,
+      tasks: store.tasks,
+      invoiceApplications: store.invoiceApplications,
+      serviceContracts: store.serviceContracts,
+    })
+  })
+
   const metrics = computed(() =>
     buildWorkbenchMetrics({
-      employees: scopedEmployees.value,
-      leads: scopedLeads.value,
-      pendingApprovals: store.pendingApprovalCount,
-      urgentTodoCount: urgentCount.value,
+      todos: flatTodos.value,
+      todayCompletedCount: todayCompleted.value.completed,
+      todayCompletedUrgentCount: todayCompleted.value.urgentCompleted,
+      unreadMessageCount: unreadMessageCount.value,
     }),
   )
 
@@ -95,6 +116,7 @@ export function useWorkbenchTodos() {
     attendanceAlerts,
     recruitmentFunnel,
     departmentOpenRoles,
+    platformMessages,
     isPlatform,
     isEnterprise,
   }

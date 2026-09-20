@@ -96,6 +96,7 @@ import type {
   WorkerJoinApplication,
   ProviderFundAccount,
   FundTransaction,
+  FundWithdrawLimitConfig,
   ReminderRule,
 } from '@/types'
 import {
@@ -158,6 +159,10 @@ import { seedServiceContracts, seedServiceProviders } from '@/mock/partnershipSe
 import { seedEnterpriseWorkforceSnapshots } from '@/mock/workforceSeed'
 import { mergeWorkforceSeed } from '@/mock/enterpriseWorkforceSeed'
 import { seedFundTransactions, seedProviderFundAccounts } from '@/mock/fundManagementSeed'
+import {
+  defaultFundWithdrawLimitConfig,
+  ensureFundWithdrawLimitConfig,
+} from '@/constants/fundManage'
 import {
   computeProviderPendingClaimable,
   summarizeAllProviders,
@@ -302,7 +307,7 @@ import {
   pickContractConfig,
   restoreEffectiveConfig,
 } from '@/services/contractVersion'
-import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureServiceContracts, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage, calcAgeFromIdCard } from '@/utils'
+import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureNotifications, ensureServiceContracts, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage, calcAgeFromIdCard } from '@/utils'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
 import { generateBillNo, resolveBillTaxFlagsFromContract, resolveServiceProviderForEnterprise } from '@/services/billSettlement'
 import { estimateServiceFeeWaiverByQuantity } from '@/constants/payrollBill'
@@ -503,7 +508,10 @@ export const useAppStore = defineStore('app', {
       seedTeamCycleScheduleRules,
     ),
     publishRecords: loadFromStorage<SchedulePublishRecord[]>('publishRecords', seedPublishRecordsWithDemo),
-    notifications: loadFromStorage<Notification[]>('notifications', seedNotifications),
+    notifications: ensureNotifications(
+      loadFromStorage<Notification[]>('notifications', seedNotifications),
+      seedNotifications,
+    ),
     attendanceRule: loadFromStorage<AttendanceRule>('attendanceRule', defaultAttendanceRule),
     punches: loadFromStorage<AttendancePunch[]>('punches', seedPunches),
     leaveRequests: loadFromStorage<LeaveRequest[]>('leaveRequests', seedLeaveRequests),
@@ -677,6 +685,12 @@ export const useAppStore = defineStore('app', {
     fundTransactions: ensureFundTransactions(
       loadFromStorage<FundTransaction[]>('fundTransactions', seedFundTransactions),
       seedFundTransactions,
+    ),
+    fundWithdrawLimits: ensureFundWithdrawLimitConfig(
+      loadFromStorage<FundWithdrawLimitConfig>(
+        'fundWithdrawLimits',
+        defaultFundWithdrawLimitConfig,
+      ),
     ),
     reminderRules: loadFromStorage<ReminderRule[]>('reminderRules', seedReminderRules),
     }
@@ -2155,7 +2169,7 @@ export const useAppStore = defineStore('app', {
     ) {
       const reason = note?.trim()
       if (!reason) {
-        throw new Error('工时矫正必须填写具体原因')
+        throw new Error('工时校正必须填写具体原因')
       }
       if (workHours < 0) {
         throw new Error('工时不能为负数')
@@ -2163,7 +2177,7 @@ export const useAppStore = defineStore('app', {
       const key = `${employeeId}_${date}`
       const prev = this.manualOverrides[key] ?? {}
       if (prev.hoursConfirmed) {
-        throw new Error('工时已确认，不可再矫正')
+        throw new Error('工时已确认，不可再校正')
       }
       const autoConfirm = options?.autoConfirm !== false
       const now = new Date().toISOString()
@@ -3377,6 +3391,15 @@ export const useAppStore = defineStore('app', {
     updatePayrollConfig(config: PayrollConfig) {
       this.payrollConfig = { ...config }
       this.persist('payrollConfig')
+    },
+
+    updateFundWithdrawLimits(config: Partial<FundWithdrawLimitConfig>) {
+      this.fundWithdrawLimits = ensureFundWithdrawLimitConfig({
+        ...this.fundWithdrawLimits,
+        ...config,
+        updatedAt: new Date().toISOString(),
+      })
+      this.persist('fundWithdrawLimits')
     },
 
     addIntegrationLog(log: Omit<IntegrationLog, 'id' | 'createdAt'>) {

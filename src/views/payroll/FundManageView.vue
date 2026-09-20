@@ -37,6 +37,68 @@ const workerDetailVisible = ref(false)
 const selectedWorker = ref<WorkerFundAccountRow | null>(null)
 const workerDetailTab = ref<'pending' | 'settled' | 'withdrawals'>('pending')
 
+const limitForm = reactive({
+  monthlyPerProvider: store.fundWithdrawLimits.monthlyPerProvider,
+  perTransaction: store.fundWithdrawLimits.perTransaction,
+  dailyPerProvider: store.fundWithdrawLimits.dailyPerProvider,
+})
+const limitEditing = ref(false)
+const limitSaving = ref(false)
+
+watch(
+  () => store.fundWithdrawLimits,
+  (limits) => {
+    if (limitEditing.value) return
+    limitForm.monthlyPerProvider = limits.monthlyPerProvider
+    limitForm.perTransaction = limits.perTransaction
+    limitForm.dailyPerProvider = limits.dailyPerProvider
+  },
+  { deep: true },
+)
+
+function syncLimitFormFromStore() {
+  limitForm.monthlyPerProvider = store.fundWithdrawLimits.monthlyPerProvider
+  limitForm.perTransaction = store.fundWithdrawLimits.perTransaction
+  limitForm.dailyPerProvider = store.fundWithdrawLimits.dailyPerProvider
+}
+
+function startEditLimits() {
+  syncLimitFormFromStore()
+  limitEditing.value = true
+}
+
+function cancelEditLimits() {
+  syncLimitFormFromStore()
+  limitEditing.value = false
+}
+
+function saveWithdrawLimits() {
+  if (
+    limitForm.monthlyPerProvider < 0 ||
+    limitForm.perTransaction < 0 ||
+    limitForm.dailyPerProvider < 0
+  ) {
+    ElMessage.warning('限额不能为负数')
+    return
+  }
+  if (limitForm.perTransaction > limitForm.dailyPerProvider) {
+    ElMessage.warning('单笔限额不能大于单日限额')
+    return
+  }
+  if (limitForm.dailyPerProvider > limitForm.monthlyPerProvider) {
+    ElMessage.warning('单日限额不能大于单月限额')
+    return
+  }
+  limitSaving.value = true
+  try {
+    store.updateFundWithdrawLimits({ ...limitForm })
+    limitEditing.value = false
+    ElMessage.success('统一限额已保存')
+  } finally {
+    limitSaving.value = false
+  }
+}
+
 const providerOptions = computed(() =>
   store.serviceProviders.map((item) => ({
     value: item.id,
@@ -388,6 +450,78 @@ function openWorkerDetail(row: WorkerFundAccountRow) {
         <el-icon><Plus /></el-icon>
         新增账户
       </el-button>
+    </div>
+
+    <div class="page-card limit-card">
+      <div class="limit-head">
+        <div>
+          <div class="card-title">统一限额</div>
+          <p class="limit-desc">平台级提现限额；单月、单日按服务商累计统计</p>
+        </div>
+        <div class="limit-actions">
+          <template v-if="limitEditing">
+            <el-button @click="cancelEditLimits">取消</el-button>
+            <el-button type="primary" :loading="limitSaving" @click="saveWithdrawLimits">保存</el-button>
+          </template>
+          <el-button v-else type="primary" @click="startEditLimits">编辑</el-button>
+        </div>
+      </div>
+      <el-form label-width="140px" class="limit-form" @submit.prevent>
+        <el-row :gutter="20">
+          <el-col :span="8">
+            <el-form-item label="单月限额（服务商）">
+              <el-input-number
+                v-if="limitEditing"
+                v-model="limitForm.monthlyPerProvider"
+                :min="0"
+                :precision="2"
+                :step="1000"
+                controls-position="right"
+                style="width: 100%"
+              />
+              <div v-else class="limit-value">
+                {{ formatFundAmount(store.fundWithdrawLimits.monthlyPerProvider) }}
+                <span class="limit-unit-inline">/ 服务商 / 月</span>
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="单笔限额">
+              <el-input-number
+                v-if="limitEditing"
+                v-model="limitForm.perTransaction"
+                :min="0"
+                :precision="2"
+                :step="500"
+                controls-position="right"
+                style="width: 100%"
+              />
+              <div v-else class="limit-value">
+                {{ formatFundAmount(store.fundWithdrawLimits.perTransaction) }}
+                <span class="limit-unit-inline">/ 笔</span>
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="8">
+            <el-form-item label="单日限额（服务商）">
+              <el-input-number
+                v-if="limitEditing"
+                v-model="limitForm.dailyPerProvider"
+                :min="0"
+                :precision="2"
+                :step="1000"
+                controls-position="right"
+                style="width: 100%"
+              />
+              <div v-else class="limit-value">
+                {{ formatFundAmount(store.fundWithdrawLimits.dailyPerProvider) }}
+                <span class="limit-unit-inline">/ 服务商 / 日</span>
+              </div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <p v-if="limitEditing" class="limit-edit-hint">编辑后请点击保存生效；取消将还原为当前已保存值</p>
+      </el-form>
     </div>
 
     <el-tabs v-model="mainTab" class="main-tabs">
@@ -815,8 +949,60 @@ function openWorkerDetail(row: WorkerFundAccountRow) {
 
 .provider-overview-card,
 .filter-card,
-.detail-card {
+.detail-card,
+.limit-card {
   padding: 16px 20px;
+}
+
+.limit-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.limit-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.limit-desc {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.limit-form :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.limit-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 32px;
+}
+
+.limit-unit-inline {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: #94a3b8;
+}
+
+.limit-unit {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.limit-edit-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 .clickable-table :deep(.el-table__row) {
