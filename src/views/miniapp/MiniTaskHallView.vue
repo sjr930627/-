@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, Odometer, User } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowRight, Odometer, User } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import { useMiniWorkerTasks } from '@/composables/useMiniWorkerTasks'
 import { getEnterpriseHallLabel, getTaskHallExtra } from '@/mock/miniTaskHallSeed'
 import {
@@ -14,17 +13,34 @@ import {
   isTaskVisibleToWorker,
   resolvePricingForTask,
 } from '@/services/miniTask'
+import {
+  hasLatestTag,
+  type RecommendFilterOption,
+} from '@/services/miniRecommendFilter'
 
 const store = useAppStore()
 const router = useRouter()
 const { employeeId, employee } = useMiniAppWorker()
-const { ensureActionAllowed } = useMiniAppActionGate()
 const { pendingMyActionCount } = useMiniWorkerTasks()
+
+const HALL_FILTER_CHIPS = [
+  { key: 'brand' as const, label: '品牌', kind: 'options' as const },
+  { key: 'latest' as const, label: '最新发布', kind: 'toggle' as const },
+]
+
+const filters = reactive({
+  brand: [] as string[],
+  latest: false,
+})
+
+const sheetOpen = ref(false)
+const sheetDraft = ref<string[]>([])
 
 const tagToneMap: Record<string, string> = {
   高佣金: 'red',
   急: 'orange',
   新: 'blue',
+  近期发布: 'blue',
   限时: 'yellow',
   长期: 'grey',
   热门: 'red',
@@ -44,8 +60,21 @@ const hallTaskRows = computed(() =>
     }),
 )
 
+const filteredHallRows = computed(() =>
+  hallTaskRows.value.filter((row) => {
+    if (filters.brand.length && !filters.brand.includes(row.enterpriseName)) return false
+    if (filters.latest && !hasLatestTag(row.tags)) return false
+    return true
+  }),
+)
+
+const brandOptions = computed<RecommendFilterOption[]>(() => {
+  const names = [...new Set(hallTaskRows.value.map((r) => r.enterpriseName).filter(Boolean))]
+  return names.map((name) => ({ id: name, label: name }))
+})
+
 const taskCompanies = computed(() =>
-  groupHallTasksByEnterprise(hallTaskRows.value).map((g) => {
+  groupHallTasksByEnterprise(filteredHallRows.value).map((g) => {
     const prices = g.previewTasks.map((t) => t.priceValue)
     const payMin = prices.length ? Math.min(...prices) : 0
     const payMax = prices.length ? Math.max(...prices) : 0
@@ -54,11 +83,12 @@ const taskCompanies = computed(() =>
       id: g.enterpriseId,
       enterpriseName: g.enterpriseName,
       title: g.enterpriseName,
+      orgLabel: g.enterpriseName,
       tags: tags.length ? tags : ['高佣金', '长期'],
       payMin,
       payMax,
-      payUnit: '起',
-      payHint: '· 按次/件结算',
+      payUnit: '/件',
+      payHint: '· 单价',
       storeName: getEnterpriseHallLabel(g.enterpriseId),
       locationHint: `${g.taskCount} 个任务可领`,
       brandLetter: g.enterpriseName.slice(0, 1),
@@ -75,6 +105,45 @@ const taskCompanies = computed(() =>
   }),
 )
 
+function isChipActive(key: 'brand' | 'latest') {
+  if (key === 'latest') return filters.latest
+  return filters.brand.length > 0
+}
+
+function chipLabel(key: 'brand' | 'latest', label: string) {
+  if (key === 'latest') return label
+  const n = filters.brand.length
+  return n > 0 ? `${label} · ${n}` : label
+}
+
+function onChipClick(chip: (typeof HALL_FILTER_CHIPS)[number]) {
+  if (chip.kind === 'toggle') {
+    filters.latest = !filters.latest
+    return
+  }
+  sheetDraft.value = [...filters.brand]
+  sheetOpen.value = true
+}
+
+function toggleSheetOption(id: string) {
+  const idx = sheetDraft.value.indexOf(id)
+  if (idx >= 0) sheetDraft.value.splice(idx, 1)
+  else sheetDraft.value.push(id)
+}
+
+function confirmSheet() {
+  filters.brand = [...sheetDraft.value]
+  sheetOpen.value = false
+}
+
+function resetSheet() {
+  sheetDraft.value = []
+}
+
+function closeSheet() {
+  sheetOpen.value = false
+}
+
 function tagClass(tag: string) {
   return tagToneMap[tag] ?? 'blue'
 }
@@ -86,17 +155,9 @@ function openTaskEnterprise(enterpriseId: string, enterpriseName: string) {
   })
 }
 
-async function openTaskClaim(taskId: string, e: Event) {
+function openTaskDetail(taskId: string, e: Event) {
   e.stopPropagation()
-  const task = store.tasks.find((t) => t.id === taskId)
-  const allowed = await ensureActionAllowed({
-    requireDepartment: true,
-    enterpriseId: task?.enterpriseId,
-    from: 'claim',
-    redirectAfterFace: `/miniapp/task-hall/task/${taskId}/claim`,
-  })
-  if (!allowed) return
-  router.push(`/miniapp/task-hall/task/${taskId}/claim`)
+  router.push(`/miniapp/task-hall/task/${taskId}`)
 }
 
 function goProgress() {
@@ -115,6 +176,24 @@ function goProgress() {
         </span>
       </button>
     </header>
+
+    <div class="hall-chips-wrap">
+      <div class="hall-chips">
+        <button
+          v-for="chip in HALL_FILTER_CHIPS"
+          :key="chip.key"
+          type="button"
+          class="hall-chip"
+          :class="{ active: isChipActive(chip.key) }"
+          @click="onChipClick(chip)"
+        >
+          <span>{{ chipLabel(chip.key, chip.label) }}</span>
+          <el-icon v-if="chip.kind === 'options'" :size="10" class="hall-chip-caret">
+            <ArrowDown />
+          </el-icon>
+        </button>
+      </div>
+    </div>
 
     <article
       v-for="card in taskCompanies"
@@ -139,10 +218,14 @@ function goProgress() {
             <span class="job-post-salary-unit">{{ card.payUnit }}</span>
             <span class="job-post-salary-hint">{{ card.payHint }}</span>
           </div>
-          <div class="job-post-loc">{{ card.storeName }}</div>
-          <div class="job-post-loc-sub">{{ card.locationHint }}</div>
+          <div class="job-post-org">
+            <div class="job-post-logo">{{ card.brandLetter }}</div>
+            <div class="job-post-org-meta">
+              <div class="job-post-org-text">{{ card.orgLabel || card.storeName }}</div>
+              <div v-if="card.locationHint" class="job-post-loc-sub">{{ card.locationHint }}</div>
+            </div>
+          </div>
         </div>
-        <div class="job-post-logo">{{ card.brandLetter }}</div>
       </div>
 
       <div class="job-slot-panel">
@@ -178,7 +261,7 @@ function goProgress() {
             type="button"
             class="job-slot-apply"
             :disabled="slot.disabled"
-            @click="openTaskClaim(slot.id, $event)"
+            @click="openTaskDetail(slot.id, $event)"
           >
             立刻领取
           </button>
@@ -186,7 +269,38 @@ function goProgress() {
       </div>
     </article>
 
-    <div v-if="taskCompanies.length === 0" class="mini-empty">暂无大厅任务</div>
+    <div v-if="taskCompanies.length === 0" class="mini-empty">
+      {{ hallTaskRows.length ? '暂无符合筛选条件的任务' : '暂无大厅任务' }}
+    </div>
+
+    <Teleport to="body">
+      <div v-if="sheetOpen" class="hall-sheet-mask" @click.self="closeSheet">
+        <div class="hall-sheet">
+          <div class="hall-sheet-head">
+            <button type="button" class="hall-sheet-reset" @click="resetSheet">重置</button>
+            <div class="hall-sheet-title">品牌</div>
+            <button type="button" class="hall-sheet-close" @click="closeSheet">×</button>
+          </div>
+          <div class="hall-sheet-body">
+            <button
+              v-for="opt in brandOptions"
+              :key="opt.id"
+              type="button"
+              class="hall-sheet-option"
+              :class="{ active: sheetDraft.includes(opt.id) }"
+              @click="toggleSheetOption(opt.id)"
+            >
+              <span>{{ opt.label }}</span>
+              <span v-if="sheetDraft.includes(opt.id)" class="hall-sheet-check">✓</span>
+            </button>
+            <div v-if="!brandOptions.length" class="hall-sheet-empty">暂无可选项</div>
+          </div>
+          <div class="hall-sheet-foot">
+            <button type="button" class="hall-sheet-ok" @click="confirmSheet">确定</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -243,6 +357,51 @@ function goProgress() {
   text-align: center;
 }
 
+.hall-chips-wrap {
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.hall-chips {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hall-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.hall-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hall-chip.active {
+  background: #E6FFFA;
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.hall-chip-caret {
+  opacity: 0.7;
+}
+
 .company-card {
   margin: 12px 16px 0;
   background: #fff;
@@ -251,83 +410,8 @@ function goProgress() {
   overflow: hidden;
 }
 
-.job-post-head {
-  display: flex;
-  gap: 12px;
-  padding: 14px 14px 12px;
-}
-
 .job-post-head-clickable {
   cursor: pointer;
-}
-
-.job-post-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.job-post-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--mini-text);
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.job-post-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.job-post-salary {
-  margin-top: 10px;
-  font-size: 18px;
-  font-weight: 800;
-  color: #ef4444;
-  line-height: 1.2;
-}
-
-.job-post-salary-unit {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.job-post-salary-hint {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--mini-text-muted);
-}
-
-.job-post-loc {
-  margin-top: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--mini-text);
-}
-
-.job-post-loc-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--mini-text-muted);
-}
-
-.job-post-logo {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #fde68a, #fbbf24);
-  color: #92400e;
-  font-size: 18px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
 }
 
 .job-slot-panel {
@@ -415,14 +499,126 @@ function goProgress() {
   color: #fff;
   font-size: 11px;
   font-weight: 600;
-  white-space: nowrap;
   cursor: pointer;
   flex-shrink: 0;
 }
 
 .job-slot-apply:disabled {
-  background: #f3f4f6;
-  color: var(--mini-text-muted);
+  opacity: 0.45;
   cursor: not-allowed;
+}
+
+.hall-sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.hall-sheet {
+  width: 100%;
+  max-width: 430px;
+  max-height: 70vh;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hall-sheet-head {
+  display: grid;
+  grid-template-columns: 56px 1fr 36px;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.hall-sheet-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--mini-text);
+}
+
+.hall-sheet-reset {
+  border: none;
+  background: none;
+  color: #6b7280;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.hall-sheet-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  justify-self: end;
+}
+
+.hall-sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px 12px;
+}
+
+.hall-sheet-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 4px;
+  border: none;
+  border-bottom: 1px solid #f5f5f5;
+  background: none;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  text-align: left;
+}
+
+.hall-sheet-option.active {
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.hall-sheet-check {
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.hall-sheet-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.hall-sheet-foot {
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #f3f4f6;
+}
+
+.hall-sheet-ok {
+  width: 100%;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background: var(--mini-primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
 }
 </style>

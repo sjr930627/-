@@ -8,7 +8,6 @@ import type {
   Department,
   Employee,
   Enterprise,
-  Team,
   WorkerJoinApplication,
   WorkerJoinApplicationStatus,
 } from '@/types'
@@ -33,7 +32,6 @@ export interface WorkerJoinOrgDisplay {
   departmentName: string
   orgPath: string
   position: string
-  teamName?: string
   hireDate?: string
   primary: boolean
 }
@@ -114,7 +112,6 @@ export function listWorkerCurrentOrgs(
   applications: WorkerJoinApplication[],
   departments: Department[],
   enterprises: Enterprise[],
-  teams: Team[],
 ): WorkerJoinOrgDisplay[] {
   if (!employee) return []
   const emp = employee
@@ -135,7 +132,6 @@ export function listWorkerCurrentOrgs(
     const key = params.departmentId
     if (seen.has(key)) return
     seen.add(key)
-    const team = teams.find((t) => t.memberIds.includes(emp.id) && t.departmentId === params.departmentId)
     items.push({
       key,
       enterpriseId: params.enterpriseId,
@@ -144,7 +140,6 @@ export function listWorkerCurrentOrgs(
       departmentName: dept.name,
       orgPath: buildDepartmentOrgPath(departments, params.departmentId),
       position: params.position || '—',
-      teamName: team?.name,
       hireDate: params.hireDate,
       primary: Boolean(params.primary),
     })

@@ -1,27 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { Component } from 'vue'
 import {
-  AlarmClock,
-  ArrowRight,
-  Bell,
   Calendar,
-  ChatDotRound,
   CircleCheck,
   CircleClose,
   Clock,
-  Document,
   List,
-  Medal,
-  Reading,
-  Select,
   Sunny,
-  Tickets,
   Timer,
-  Wallet,
   FullScreen,
+  WarningFilled,
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
@@ -29,23 +19,91 @@ import { useMiniAppNow } from '@/composables/useMiniAppNow'
 import {
   buildWeekPreview,
   calcWorkedMinutes,
-  countConsecutivePunchDays,
+  countAttendanceDays,
   formatHoursDecimal,
-  formatHoursShort,
+  resolvePunchStatus,
+  resolveDayState,
   sumWorkedMinutesInRange,
 } from '@/composables/useMiniSchedule'
-import { countPendingScheduleConfirms } from '@/constants/miniapp'
+import {
+  freePunchDefaultMinutes,
+  freePunchWindowLabel,
+  getEmployeePunchModes,
+  getFreePunchDepartmentOptions,
+  isFreeClockInOnly,
+  isNoPunchGroup,
+  pickDefaultFreePunchDepartmentId,
+  resolveAttendanceGroupByMode,
+  type MiniPunchMode,
+} from '@/composables/useMiniPunch'
 import { sortedWorkflowNodes } from '@/services/task'
-import { resolveCourseAssignees } from '@/services/training'
 import type { TaskInstance } from '@/types'
 
 const router = useRouter()
 const store = useAppStore()
-const { employeeId, employee, profileExt } = useMiniAppWorker()
+const { employeeId, employee } = useMiniAppWorker()
 const { now } = useMiniAppNow()
 
 const activeMainTab = ref<'schedule' | 'tasks'>('schedule')
-const todoDrawerVisible = ref(false)
+const punchMode = ref<MiniPunchMode>('shift')
+
+const punchModes = computed(() => getEmployeePunchModes(store, employeeId.value))
+const showPunchModeTabs = computed(() => punchModes.value.hasShift && punchModes.value.hasFree)
+
+watch(
+  punchModes,
+  (modes) => {
+    if (!modes.defaultMode) return
+    if (!modes.modes.includes(punchMode.value)) {
+      punchMode.value = modes.defaultMode
+    }
+  },
+  { immediate: true },
+)
+
+const activePunchMode = computed<MiniPunchMode | null>(() => {
+  if (showPunchModeTabs.value) return punchMode.value
+  return punchModes.value.defaultMode
+})
+
+const attendanceGroup = computed(() =>
+  resolveAttendanceGroupByMode(store, employeeId.value, activePunchMode.value),
+)
+const isFreePunch = computed(() => activePunchMode.value === 'free')
+const isNoPunch = computed(() => isNoPunchGroup(attendanceGroup.value))
+const freeClockInOnly = computed(
+  () => isFreePunch.value && isFreeClockInOnly(attendanceGroup.value),
+)
+
+const freeDeptOptions = computed(() =>
+  isFreePunch.value
+    ? getFreePunchDepartmentOptions(store, employeeId.value, attendanceGroup.value)
+    : [],
+)
+const showFreeDeptSelect = computed(() => isFreePunch.value && freeDeptOptions.value.length > 1)
+const freeDeptId = ref<string | null>(null)
+
+watch(
+  [freeDeptOptions, employeeId, isFreePunch],
+  () => {
+    if (!isFreePunch.value) {
+      freeDeptId.value = null
+      return
+    }
+    const opts = freeDeptOptions.value
+    if (!opts.length) {
+      freeDeptId.value = null
+      return
+    }
+    if (freeDeptId.value && opts.some((o) => o.id === freeDeptId.value)) return
+    freeDeptId.value = pickDefaultFreePunchDepartmentId(store, employeeId.value, opts)
+  },
+  { immediate: true },
+)
+
+const freeDeptLabel = computed(
+  () => freeDeptOptions.value.find((o) => o.id === freeDeptId.value)?.name ?? '',
+)
 
 function localDateStr(d: Date) {
   const y = d.getFullYear()
@@ -80,10 +138,18 @@ const todayPunches = computed(() =>
 const hasClockIn = computed(() => todayPunches.value.some((p) => p.type === 'clock_in'))
 const hasClockOut = computed(() => todayPunches.value.some((p) => p.type === 'clock_out'))
 
+const hasScheduledWork = computed(
+  () => Boolean(todayShift.value && todayShift.value.id !== 'shift_rest'),
+)
+
+/** 休息日：班次模式下无有效班次；自由打卡模式仍可打卡 */
 const isRestToday = computed(() => {
+  if (isFreePunch.value) return false
+  if (isNoPunch.value) return true
   if (hasClockIn.value) return false
-  return !todayShift.value || todayShift.value.id === 'shift_rest'
+  return !hasScheduledWork.value
 })
+
 const clockInRecord = computed(() => todayPunches.value.find((p) => p.type === 'clock_in'))
 const clockOutRecord = computed(() => todayPunches.value.find((p) => p.type === 'clock_out'))
 
@@ -92,6 +158,9 @@ const workedMinutes = computed(() =>
 )
 
 const todayGoalMinutes = computed(() => {
+  if (isFreePunch.value) {
+    return freePunchDefaultMinutes(attendanceGroup.value)
+  }
   if (!todayShift.value || todayShift.value.id === 'shift_rest') return 8 * 60
   const [sh, sm] = todayShift.value.startTime.split(':').map(Number)
   const [eh, em] = todayShift.value.endTime.split(':').map(Number)
@@ -104,30 +173,23 @@ const todayProgressPercent = computed(() =>
   Math.min(100, Math.round((workedMinutes.value / todayGoalMinutes.value) * 100)),
 )
 
-const estimatedClockOut = computed(() => {
-  if (hasClockOut.value && clockOutRecord.value) return clockOutRecord.value.time.slice(0, 5)
-  if (todayShift.value && todayShift.value.id !== 'shift_rest') {
-    return todayShift.value.endTime.slice(0, 5)
-  }
-  return '17:00'
-})
-
-const isOnline = computed(() => hasClockIn.value && !hasClockOut.value)
 const isNotPunched = computed(() => !isRestToday.value && !hasClockIn.value)
+const punchFinished = computed(() =>
+  freeClockInOnly.value ? hasClockIn.value : hasClockOut.value,
+)
 
-const punchStatusText = computed(() => {
-  if (isRestToday.value) return '休息日'
-  if (hasClockOut.value) return '已签退'
-  if (hasClockIn.value) return `已打卡 · ${clockInRecord.value?.time.slice(0, 5)}`
-  return '未打卡'
-})
+const punchStatus = computed(() =>
+  resolvePunchStatus(todayShift.value, clockInRecord.value?.time, clockOutRecord.value?.time, {
+    freePunch: isFreePunch.value,
+    noPunch: isNoPunch.value || isRestToday.value,
+  }),
+)
 
-const punchStatusClass = computed(() => {
-  if (isRestToday.value) return 'muted'
-  if (hasClockOut.value) return 'done'
-  if (hasClockIn.value) return 'ok'
-  return 'warn'
-})
+const todayShiftState = computed(() =>
+  resolveDayState(store, employeeId.value, today.value, today.value, now.value),
+)
+
+const freePunchTip = computed(() => freePunchWindowLabel(attendanceGroup.value))
 
 const displayHours = computed(() =>
   hasClockIn.value ? formatHoursDecimal(workedMinutes.value) : '0.0 小时',
@@ -137,19 +199,18 @@ const monthRange = computed(() => {
   const y = now.value.getFullYear()
   const m = now.value.getMonth()
   const start = `${y}-${String(m + 1).padStart(2, '0')}-01`
-  const lastDay = new Date(y, m + 1, 0).getDate()
-  const end = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
-  return { start, end }
+  return { start, end: today.value }
 })
 
 const weekRange = computed(() => {
   const monday = getMonday(now.value)
   const sunday = new Date(monday)
   sunday.setDate(monday.getDate() + 6)
-  return { start: localDateStr(monday), end: localDateStr(sunday) }
+  const weekEnd = localDateStr(sunday)
+  return { start: localDateStr(monday), end: weekEnd < today.value ? weekEnd : today.value }
 })
 
-const monthOnlineMinutes = computed(() =>
+const monthWorkedMinutes = computed(() =>
   sumWorkedMinutesInRange(
     employeeId.value,
     store.punches,
@@ -159,7 +220,7 @@ const monthOnlineMinutes = computed(() =>
   ),
 )
 
-const weekOnlineMinutes = computed(() =>
+const weekWorkedMinutes = computed(() =>
   sumWorkedMinutesInRange(
     employeeId.value,
     store.punches,
@@ -169,132 +230,16 @@ const weekOnlineMinutes = computed(() =>
   ),
 )
 
-const consecutiveDays = computed(() =>
-  countConsecutivePunchDays(employeeId.value, store.punches, today.value),
+const monthAttendanceDays = computed(() =>
+  countAttendanceDays(
+    employeeId.value,
+    store.punches,
+    monthRange.value.start,
+    monthRange.value.end,
+  ),
 )
 
 const weekPreview = computed(() => buildWeekPreview(store, employeeId.value, now.value))
-
-interface TodoItem {
-  id: string
-  icon: Component
-  title: string
-  desc: string
-  tone: 'red' | 'orange' | 'blue'
-  path: string
-}
-
-const todoItems = computed((): TodoItem[] => {
-  const items: TodoItem[] = []
-  const eid = employeeId.value
-  const punchedIn = store.punches.some(
-    (p) => p.employeeId === eid && p.date === today.value && p.type === 'clock_in',
-  )
-  const asn = store.getAssignment(eid, today.value)
-  const shift = asn ? store.shifts.find((s) => s.id === asn.shiftId) : null
-  const restToday = !shift || shift.id === 'shift_rest'
-  if (!restToday && !punchedIn) {
-    items.push({
-      id: 'punch',
-      icon: AlarmClock,
-      title: '今日尚未打卡',
-      desc: shift ? `${shift.name} ${shift.startTime.slice(0, 5)} 开始，请尽快签到` : '请完成今日签到',
-      tone: 'orange',
-      path: '/miniapp/punch',
-    })
-  }
-
-  const unread = store.miniAppMessages.filter((m) => m.employeeId === eid && !m.read).length
-  if (unread > 0) {
-    items.push({
-      id: 'msg',
-      icon: ChatDotRound,
-      title: `${unread} 条未读消息`,
-      desc: '查看收入、排班与系统通知',
-      tone: 'red',
-      path: '/miniapp/messages',
-    })
-  }
-
-  const pendingShifts = countPendingScheduleConfirms(store.miniAppMessages, eid)
-  if (pendingShifts > 0) {
-    items.push({
-      id: 'shift',
-      icon: Select,
-      title: `${pendingShifts} 个班次待确认`,
-      desc: '前往排班通知，点击「去确认」查看详情',
-      tone: 'orange',
-      path: '/miniapp/messages?tab=schedule',
-    })
-  }
-
-  const claimable = store.workerIncomeRecords.filter(
-    (r) => r.employeeId === eid && r.status === 'claimable',
-  )
-  if (claimable.length > 0) {
-    const total = claimable.reduce((s, r) => s + r.amount, 0)
-    items.push({
-      id: 'income',
-      icon: Wallet,
-      title: `${claimable.length} 笔收入待领取`,
-      desc: `合计 ¥${total.toLocaleString()}，点击领取`,
-      tone: 'orange',
-      path: '/miniapp/income',
-    })
-  }
-
-  const unsigned = store.workerAgreements.filter(
-    (a) => a.employeeId === eid && a.required && !a.signed,
-  )
-  if (unsigned.length > 0) {
-    items.push({
-      id: 'agreement',
-      icon: Document,
-      title: `${unsigned.length} 份协议待签署`,
-      desc: unsigned[0]?.title ?? '完成签署后继续接单',
-      tone: 'red',
-      path: '/miniapp/agreements',
-    })
-  }
-
-  const interview = store.miniJobApplications.find(
-    (a) => a.employeeId === eid && a.status === 'interview',
-  )
-  if (interview) {
-    const job = store.jobRequirements.find((j) => j.id === interview.jobRequirementId)
-    items.push({
-      id: 'interview',
-      icon: Tickets,
-      title: '岗位面试待参加',
-      desc: job?.title ?? '查看应聘进度',
-      tone: 'blue',
-      path: '/miniapp/applications',
-    })
-  }
-
-  const assignedCourses = store.trainingCourses.filter((c) => c.status === 'published')
-  for (const course of assignedCourses) {
-    const assigned = resolveCourseAssignees(course, store.employees, store.departments).some(
-      (e) => e.id === eid,
-    )
-    if (!assigned) continue
-    const rec = store.courseLearningRecords.find(
-      (r) => r.courseId === course.id && r.employeeId === eid,
-    )
-    if (rec?.status === 'completed') continue
-    items.push({
-      id: `course_${course.id}`,
-      icon: Reading,
-      title: '培训课程未完成',
-      desc: course.name,
-      tone: 'blue',
-      path: '/miniapp/training',
-    })
-    break
-  }
-
-  return items
-})
 
 function calcInstanceProgress(instance: TaskInstance) {
   const task = store.tasks.find((t) => t.id === instance.taskId)
@@ -320,8 +265,6 @@ const activeTasks = computed(() =>
     .slice(0, 8),
 )
 
-const todoCount = computed(() => todoItems.value.length)
-
 const avatarText = computed(() => employee.value?.name?.slice(0, 1) ?? '员')
 
 function openSchedule(tab: 'schedule' | 'punch', date?: string) {
@@ -332,20 +275,21 @@ function openSchedule(tab: 'schedule' | 'punch', date?: string) {
 }
 
 function goPunch() {
-  router.push('/miniapp/punch')
+  const query: Record<string, string> = {}
+  if (activePunchMode.value) query.mode = activePunchMode.value
+  if (isFreePunch.value && freeDeptId.value) query.dept = freeDeptId.value
+  router.push({
+    path: '/miniapp/punch',
+    query: Object.keys(query).length ? query : undefined,
+  })
 }
 
 function handlePunchAction() {
-  if (isRestToday.value) {
-    ElMessage.info('今日休息，无需打卡')
+  if (isRestToday.value || isNoPunch.value) {
+    ElMessage.info('今日无需打卡')
     return
   }
   goPunch()
-}
-
-function openTodo(path: string) {
-  todoDrawerVisible.value = false
-  router.push(path)
 }
 
 async function openScanJoin() {
@@ -373,27 +317,19 @@ async function openScanJoin() {
 </script>
 
 <template>
-  <div class="wb-page">
+  <div class="wb-page" :class="{ 'has-task-footer': activeMainTab === 'tasks' }">
     <!-- 用户信息 -->
     <div class="wb-hero">
       <div class="wb-profile">
         <div class="wb-avatar">{{ avatarText }}</div>
         <div class="wb-profile-info">
           <div class="wb-name">{{ employee?.name ?? '—' }}</div>
-          <div class="wb-meta">
-            <span>人员ID {{ employee?.employeeNo ?? '—' }}</span>
-            <span v-if="profileExt?.level" class="wb-level-badge">{{ profileExt.level }}</span>
-          </div>
         </div>
         <div class="wb-profile-actions">
           <button class="wb-todo-btn" type="button" aria-label="扫码入驻" @click="openScanJoin">
             <el-icon :size="18"><FullScreen /></el-icon>
           </button>
-          <button class="wb-todo-btn" type="button" aria-label="待办事项" @click="todoDrawerVisible = true">
-            <el-icon :size="18"><Bell /></el-icon>
-            <span v-if="todoCount" class="wb-todo-badge">{{ todoCount > 9 ? '9+' : todoCount }}</span>
-          </button>
-          <button class="wb-cal-btn" type="button" @click="openSchedule('schedule')">
+          <button class="wb-cal-btn" type="button" aria-label="班次日历" @click="openSchedule('schedule')">
             <el-icon :size="18"><Calendar /></el-icon>
           </button>
         </div>
@@ -406,7 +342,7 @@ async function openScanJoin() {
           :class="{ active: activeMainTab === 'schedule' }"
           @click="activeMainTab = 'schedule'"
         >
-          打卡排班
+          班次打卡
         </button>
         <button
           type="button"
@@ -422,36 +358,100 @@ async function openScanJoin() {
 
     <template v-if="activeMainTab === 'schedule'">
       <!-- 今日打卡卡片 -->
-      <div class="wb-punch-card" :class="{ 'not-punched': isNotPunched }">
+      <div
+        class="wb-punch-card"
+        :class="{
+          'not-punched': isNotPunched && !isFreePunch,
+          'free-mode': isFreePunch,
+          'free-pending': isFreePunch && isNotPunched,
+        }"
+      >
+        <div
+          v-if="showPunchModeTabs"
+          class="wb-punch-mode-tabs"
+          role="tablist"
+        >
+          <button
+            type="button"
+            class="wb-punch-mode-tab"
+            :class="{ active: punchMode === 'shift' }"
+            role="tab"
+            @click="punchMode = 'shift'"
+          >
+            班次打卡
+          </button>
+          <button
+            type="button"
+            class="wb-punch-mode-tab"
+            :class="{ active: punchMode === 'free' }"
+            role="tab"
+            @click="punchMode = 'free'"
+          >
+            自由打卡
+          </button>
+        </div>
+
         <div class="wb-punch-head">
           <div class="wb-punch-title">
             <span
               class="wb-dot"
-              :class="{ green: hasClockIn, orange: isNotPunched, grey: isRestToday }"
+              :class="{
+                green: punchStatus.tone === 'ok',
+                orange: punchStatus.tone === 'warn',
+                grey: punchStatus.tone === 'muted',
+              }"
             />
             <span>今日打卡</span>
+            <span v-if="isFreePunch && !showPunchModeTabs" class="wb-mode-chip">自由打卡</span>
           </div>
-          <span class="wb-punched-at" :class="punchStatusClass">{{ punchStatusText }}</span>
+          <span class="wb-punched-at" :class="punchStatus.tone">{{ punchStatus.text }}</span>
         </div>
 
         <div v-if="!isRestToday" class="wb-punch-body">
-          <div v-if="isNotPunched && todayShift" class="wb-shift-tip">
+          <div v-if="!isFreePunch && isNotPunched && hasScheduledWork && todayShift" class="wb-shift-tip">
             今日 {{ todayShift.name }} · {{ todayShift.startTime.slice(0, 5) }}-{{ todayShift.endTime.slice(0, 5) }}
+          </div>
+          <div
+            v-else-if="isFreePunch"
+            class="wb-shift-tip free"
+          >
+            <div class="wb-free-tip-row">
+              <span class="wb-free-tip-main">{{ freePunchTip }}</span>
+              <label v-if="showFreeDeptSelect" class="wb-free-dept">
+                <select v-model="freeDeptId" class="wb-free-dept-select" @click.stop>
+                  <option
+                    v-for="opt in freeDeptOptions"
+                    :key="opt.id"
+                    :value="opt.id"
+                  >
+                    {{ opt.name }}
+                  </option>
+                </select>
+              </label>
+              <span v-else-if="freeDeptLabel" class="wb-free-dept-fixed">{{ freeDeptLabel }}</span>
+            </div>
+            <span class="wb-free-tip-sub">无固定班次 · 按目标工时统计</span>
           </div>
           <div class="wb-punch-main">
             <div class="wb-hours" :class="{ empty: isNotPunched }">{{ displayHours }}</div>
             <div class="wb-punch-action">
-              <span v-if="isOnline" class="wb-online-tag">在线中</span>
-              <span v-else-if="isNotPunched" class="wb-online-tag pending">待上岗</span>
-              <span v-else-if="hasClockOut" class="wb-online-tag done">已下线</span>
+              <span
+                v-if="!isFreePunch && ['upcoming','normal','missing_punch','absent','late','early_leave'].includes(todayShiftState.state)"
+                class="wb-shift-tag"
+                :class="todayShiftState.state"
+              >{{ todayShiftState.stateLabel }}</span>
+              <span
+                v-else-if="isFreePunch && isNotPunched"
+                class="wb-shift-tag upcoming"
+              >待签到</span>
               <button
-                v-if="!hasClockOut"
+                v-if="!punchFinished"
                 class="wb-punch-primary"
-                :class="{ highlight: isNotPunched }"
+                :class="{ highlight: isNotPunched && !isFreePunch, 'free-cta': isFreePunch }"
                 type="button"
                 @click="handlePunchAction"
               >
-                {{ hasClockIn ? '下线打卡' : '上线打卡' }}
+                {{ hasClockIn ? '签退' : '签到' }}
               </button>
               <div v-else class="wb-complete-tip">
                 <el-icon :size="14"><CircleCheck /></el-icon>
@@ -460,18 +460,16 @@ async function openScanJoin() {
             </div>
           </div>
 
-          <div class="wb-progress-wrap">
+          <div v-if="!isFreePunch" class="wb-progress-wrap">
             <div class="wb-progress-bar">
               <div
                 class="wb-progress-fill"
-                :class="{ idle: isNotPunched }"
                 :style="{ width: `${todayProgressPercent}%` }"
               />
             </div>
             <div class="wb-progress-labels">
-              <span>今日目标 {{ (todayGoalMinutes / 60).toFixed(0) }} 小时</span>
-              <span v-if="isNotPunched">计划上班 {{ todayShift?.startTime?.slice(0, 5) ?? '08:00' }}</span>
-              <span v-else>预计下线 {{ estimatedClockOut }}</span>
+              <span>已工作 {{ formatHoursDecimal(workedMinutes) }}</span>
+              <span>班次 {{ (todayGoalMinutes / 60).toFixed(1) }} 小时</span>
             </div>
           </div>
         </div>
@@ -479,7 +477,7 @@ async function openScanJoin() {
         <div v-else class="wb-rest-body">
           <div class="wb-rest-msg">
             <el-icon :size="16" class="wb-rest-icon"><Sunny /></el-icon>
-            今日休息，无需打卡
+            {{ isNoPunch ? '今日无需打卡' : '今日无班次，无需打卡' }}
           </div>
           <button class="wb-rest-link" type="button" @click="router.push('/miniapp/recommend')">
             去抢额外班次 ›
@@ -493,43 +491,36 @@ async function openScanJoin() {
           <div class="wb-stat-icon">
             <el-icon :size="20"><Calendar /></el-icon>
           </div>
-          <div class="wb-stat-title">本月在线</div>
-          <div class="wb-stat-value">{{ formatHoursShort(monthOnlineMinutes) }}</div>
+          <div class="wb-stat-title">本月出勤</div>
+          <div class="wb-stat-value">{{ formatHoursDecimal(monthWorkedMinutes) }}</div>
         </div>
         <div class="wb-stat-card green">
           <div class="wb-stat-icon">
             <el-icon :size="20"><Timer /></el-icon>
           </div>
-          <div class="wb-stat-title">本周在线</div>
-          <div class="wb-stat-value">{{ formatHoursShort(weekOnlineMinutes) }}</div>
+          <div class="wb-stat-title">本周出勤</div>
+          <div class="wb-stat-value">{{ formatHoursDecimal(weekWorkedMinutes) }}</div>
         </div>
         <div class="wb-stat-card orange">
           <div class="wb-stat-icon">
-            <el-icon :size="20"><Medal /></el-icon>
+            <el-icon :size="20"><CircleCheck /></el-icon>
           </div>
-          <div class="wb-stat-title">连续打卡</div>
-          <div class="wb-stat-value">{{ consecutiveDays }} 天</div>
-          <div class="wb-stat-goal">目标 20 天</div>
-          <div class="wb-stat-bar">
-            <div
-              class="wb-stat-bar-fill"
-              :style="{ width: `${Math.min(100, Math.round((consecutiveDays / 20) * 100))}%` }"
-            />
-          </div>
+          <div class="wb-stat-title">出勤天数</div>
+          <div class="wb-stat-value">{{ monthAttendanceDays }}天</div>
         </div>
       </div>
 
-      <!-- 本周排班预览 -->
+      <!-- 本周班次 -->
       <section class="wb-section">
         <div class="wb-section-head">
           <div class="wb-section-title-row">
             <span class="wb-icon wb-icon-purple">
               <el-icon :size="16"><Calendar /></el-icon>
             </span>
-            <span class="wb-section-title">本周排班预览</span>
+            <span class="wb-section-title">本周班次</span>
           </div>
           <button class="wb-view-all" type="button" @click="openSchedule('schedule')">
-            完整排班 ›
+            班次日历 ›
           </button>
         </div>
 
@@ -545,10 +536,13 @@ async function openScanJoin() {
             <div class="wb-day-num">{{ day.dayNum }}</div>
             <div class="wb-day-shift">{{ day.shiftName }}</div>
             <div class="wb-day-time">{{ day.timeRange }}</div>
-            <div class="wb-day-status">
-              <el-icon v-if="day.state === 'done'" class="status-icon green"><CircleCheck /></el-icon>
+            <div class="wb-day-status" :class="day.state">
+              <el-icon v-if="day.state === 'normal'" class="status-icon green"><CircleCheck /></el-icon>
               <el-icon v-else-if="day.state === 'absent'" class="status-icon red"><CircleClose /></el-icon>
-              <span v-else-if="day.state === 'active'" class="status-dot blue" />
+              <el-icon
+                v-else-if="day.state === 'missing_punch' || day.state === 'late' || day.state === 'early_leave'"
+                class="status-icon orange"
+              ><WarningFilled /></el-icon>
               <el-icon v-else-if="day.state === 'upcoming'" class="status-icon grey"><Clock /></el-icon>
               {{ day.stateLabel }}
             </div>
@@ -598,44 +592,14 @@ async function openScanJoin() {
           </div>
         </div>
         <div v-else class="wb-empty-todo">暂无进行中的任务</div>
-        <button class="wb-task-hall-link" type="button" @click="router.push('/miniapp/task-hall')">
-          去任务大厅领取 ›
-        </button>
       </section>
     </template>
 
-    <el-drawer
-      v-model="todoDrawerVisible"
-      title="待办事项"
-      direction="btt"
-      size="auto"
-      class="wb-todo-drawer"
-    >
-      <div v-if="todoItems.length" class="wb-todo-list">
-        <div
-          v-for="item in todoItems"
-          :key="item.id"
-          class="wb-todo-banner"
-          :class="item.tone"
-          @click="openTodo(item.path)"
-        >
-          <span class="wb-todo-icon" :class="item.tone">
-            <el-icon :size="18"><component :is="item.icon" /></el-icon>
-          </span>
-          <div class="wb-todo-text">
-            <div class="wb-todo-title">{{ item.title }}</div>
-            <div class="wb-todo-desc">{{ item.desc }}</div>
-          </div>
-          <span class="wb-chevron">
-            <el-icon :size="16"><ArrowRight /></el-icon>
-          </span>
-        </div>
-      </div>
-      <div v-else class="wb-empty-todo">
-        <el-icon :size="14" class="empty-check"><CircleCheck /></el-icon>
-        暂无待办，一切顺利
-      </div>
-    </el-drawer>
+    <div v-if="activeMainTab === 'tasks'" class="wb-task-footer">
+      <button class="wb-task-hall-btn" type="button" @click="router.push('/miniapp/task-hall')">
+        去任务大厅领取
+      </button>
+    </div>
   </div>
 </template>
 
@@ -644,6 +608,10 @@ async function openScanJoin() {
   min-height: 100%;
   background: #f0f2f5;
   padding-bottom: 16px;
+}
+
+.wb-page.has-task-footer {
+  padding-bottom: 88px;
 }
 
 .wb-hero {
@@ -685,23 +653,6 @@ async function openScanJoin() {
   font-size: 18px;
   font-weight: 700;
   color: #1a1a1a;
-  margin-bottom: 4px;
-}
-
-.wb-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #999;
-}
-
-.wb-level-badge {
-  background: #E6FFFA;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 11px;
-  color: #4FD1C5;
 }
 
 .wb-profile-actions {
@@ -723,22 +674,6 @@ async function openScanJoin() {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.wb-todo-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: #ef4444;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 16px;
-  text-align: center;
 }
 
 .wb-main-tabs {
@@ -813,9 +748,55 @@ async function openScanJoin() {
   z-index: 1;
 }
 
+.wb-punch-mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: -4px 0 14px;
+  padding: 4px;
+  background: #f5f7fa;
+  border-radius: 12px;
+}
+
+.wb-punch-mode-tab {
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #909399;
+  cursor: pointer;
+}
+
+.wb-punch-mode-tab.active {
+  background: #fff;
+  color: #303133;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
 .wb-punch-card.not-punched {
   border: 1.5px solid #ffd591;
   box-shadow: 0 4px 20px rgba(250, 140, 22, 0.12);
+}
+
+.wb-punch-card.free-mode {
+  border: 1.5px solid #d6eaff;
+  box-shadow: 0 4px 20px rgba(64, 158, 255, 0.1);
+}
+
+.wb-punch-card.free-pending {
+  border-color: #b3d8ff;
+}
+
+.wb-mode-chip {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #409EFF;
+  background: #ECF5FF;
 }
 
 .wb-punch-head {
@@ -851,7 +832,6 @@ async function openScanJoin() {
 
 .wb-punched-at.ok { color: #52c41a; }
 .wb-punched-at.warn { color: #fa8c16; }
-.wb-punched-at.done { color: #999; }
 .wb-punched-at.muted { color: #999; }
 
 .wb-shift-tip {
@@ -861,6 +841,60 @@ async function openScanJoin() {
   padding: 8px 10px;
   border-radius: 8px;
   margin-bottom: 12px;
+}
+
+.wb-shift-tip.free {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: linear-gradient(135deg, #ECF5FF, #f5faff);
+  color: #409EFF;
+  border: 1px solid #d6eaff;
+}
+
+.wb-free-tip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wb-free-tip-main {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+
+.wb-free-tip-sub {
+  font-size: 11px;
+  color: #79bbff;
+  font-weight: 400;
+}
+
+.wb-free-dept {
+  flex-shrink: 0;
+  max-width: 46%;
+}
+
+.wb-free-dept-select {
+  width: 100%;
+  max-width: 160px;
+  border: 1px solid #b3d8ff;
+  background: #fff;
+  color: #409EFF;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+}
+
+.wb-free-dept-fixed {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #79bbff;
 }
 
 .wb-punch-body { }
@@ -892,23 +926,33 @@ async function openScanJoin() {
   gap: 8px;
 }
 
-.wb-online-tag {
+.wb-shift-tag {
   font-size: 11px;
   padding: 3px 10px;
   border-radius: 10px;
-  background: #E6FFFA;
-  color: #4FD1C5;
   font-weight: 500;
 }
 
-.wb-online-tag.done {
-  background: #f0f0f0;
-  color: #999;
-}
-
-.wb-online-tag.pending {
+.wb-shift-tag.upcoming {
   background: #fff7e6;
   color: #fa8c16;
+}
+
+.wb-shift-tag.normal {
+  background: #f6ffed;
+  color: #52c41a;
+}
+
+.wb-shift-tag.late,
+.wb-shift-tag.early_leave,
+.wb-shift-tag.missing_punch {
+  background: #fff7e6;
+  color: #fa8c16;
+}
+
+.wb-shift-tag.absent {
+  background: #fff1f0;
+  color: #ff4d4f;
 }
 
 .wb-punch-primary {
@@ -926,6 +970,11 @@ async function openScanJoin() {
 .wb-punch-primary.highlight {
   background: linear-gradient(135deg, #fa8c16, #ff9c2e);
   box-shadow: 0 4px 14px rgba(250, 140, 22, 0.35);
+}
+
+.wb-punch-primary.free-cta {
+  background: linear-gradient(135deg, #409EFF, #66b1ff);
+  box-shadow: 0 4px 14px rgba(64, 158, 255, 0.35);
 }
 
 .wb-complete-tip {
@@ -954,9 +1003,8 @@ async function openScanJoin() {
   transition: width 0.4s ease;
 }
 
-.wb-progress-fill.idle {
-  background: #f0f0f0;
-  width: 0 !important;
+.wb-progress-fill.free {
+  background: linear-gradient(90deg, #409EFF, #79bbff);
 }
 
 .wb-progress-labels {
@@ -1026,42 +1074,21 @@ async function openScanJoin() {
 }
 
 .wb-stat-value {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 800;
   margin-bottom: 2px;
+  white-space: nowrap;
 }
 
 .wb-stat-card.blue .wb-stat-value,
-.wb-stat-card.green .wb-stat-value {
+.wb-stat-card.green .wb-stat-value,
+.wb-stat-card.orange .wb-stat-value {
   margin-bottom: 0;
 }
 
 .wb-stat-card.blue .wb-stat-value { color: #4FD1C5; }
 .wb-stat-card.green .wb-stat-value { color: #52c41a; }
 .wb-stat-card.orange .wb-stat-value { color: #fa8c16; }
-
-.wb-stat-goal {
-  font-size: 10px;
-  color: #bbb;
-  margin-bottom: 6px;
-}
-
-.wb-stat-bar {
-  height: 3px;
-  background: #f0f0f0;
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.wb-stat-bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.3s;
-}
-
-.wb-stat-card.blue .wb-stat-bar-fill { background: #4FD1C5; }
-.wb-stat-card.green .wb-stat-bar-fill { background: #52c41a; }
-.wb-stat-card.orange .wb-stat-bar-fill { background: #fa8c16; }
 
 .wb-section {
   background: #fff;
@@ -1123,76 +1150,6 @@ async function openScanJoin() {
   font-weight: 600;
 }
 
-.wb-todo-list { }
-
-.wb-todo-banner {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  border-radius: 12px;
-  margin-bottom: 8px;
-  cursor: pointer;
-}
-
-.wb-todo-banner:last-child { margin-bottom: 0; }
-.wb-todo-banner.red { background: #fff5f5; }
-.wb-todo-banner.orange { background: #fff7e6; }
-.wb-todo-banner.blue { background: #E6FFFA; }
-
-.wb-todo-icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.wb-todo-icon.red {
-  background: #fee2e2;
-  color: #ef4444;
-}
-
-.wb-todo-icon.orange {
-  background: #ffedd5;
-  color: #f97316;
-}
-
-.wb-todo-icon.blue {
-  background: #CCFBF1;
-  color: #4FD1C5;
-}
-
-.wb-todo-text { flex: 1; min-width: 0; }
-
-.wb-todo-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 2px;
-}
-
-.wb-todo-banner.red .wb-todo-title { color: #cf1322; }
-.wb-todo-banner.orange .wb-todo-title { color: #d46b08; }
-.wb-todo-banner.blue .wb-todo-title { color: #319795; }
-
-.wb-todo-desc {
-  font-size: 12px;
-  color: #999;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wb-chevron {
-  display: flex;
-  align-items: center;
-  color: #d1d5db;
-  flex-shrink: 0;
-}
-
 .wb-empty-todo {
   display: flex;
   align-items: center;
@@ -1202,10 +1159,6 @@ async function openScanJoin() {
   color: #ccc;
   font-size: 13px;
   padding: 16px 0;
-}
-
-.empty-check {
-  color: #22c55e;
 }
 
 .wb-task-list { display: flex; flex-direction: column; gap: 10px; }
@@ -1224,17 +1177,30 @@ async function openScanJoin() {
   margin-top: 12px;
 }
 
-.wb-task-hall-link {
+.wb-task-footer {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  width: 100%;
+  max-width: 430px;
+  padding: 12px 16px;
+  background: #fff;
+  box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.08);
+  box-sizing: border-box;
+}
+
+.wb-task-hall-btn {
   display: block;
   width: 100%;
-  margin-top: 12px;
-  padding: 12px;
-  border: 1px dashed #CCFBF1;
-  border-radius: 12px;
-  background: #f8fbff;
-  color: #4FD1C5;
-  font-size: 14px;
-  font-weight: 600;
+  padding: 14px 0;
+  border: none;
+  border-radius: 999px;
+  background: #4FD1C5;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -1334,10 +1300,14 @@ async function openScanJoin() {
   background: var(--mini-primary-light);
 }
 
-.wb-day-card.done { background: #f0faf4; }
+.wb-day-card.normal { background: #f0faf4; }
 .wb-day-card.absent { background: #fff5f5; }
-.wb-day-card.upcoming { background: #f5f9ff; }
-.wb-day-card.rest { background: #f5f5f5; opacity: 0.85; }
+.wb-day-card.upcoming { background: #fff7e6; }
+.wb-day-card.late,
+.wb-day-card.early_leave,
+.wb-day-card.missing_punch { background: #fff7e6; }
+.wb-day-card.rest,
+.wb-day-card.leave { background: #f5f5f5; opacity: 0.85; }
 
 .wb-day-week {
   font-size: 11px;
@@ -1372,6 +1342,15 @@ async function openScanJoin() {
   gap: 3px;
 }
 
+.wb-day-status.normal { color: #52c41a; }
+.wb-day-status.absent { color: #ff4d4f; }
+.wb-day-status.upcoming { color: #fa8c16; }
+.wb-day-status.late,
+.wb-day-status.early_leave,
+.wb-day-status.missing_punch { color: #fa8c16; }
+.wb-day-status.rest,
+.wb-day-status.leave { color: #999; }
+
 .status-icon {
   font-size: 12px;
 }
@@ -1379,6 +1358,7 @@ async function openScanJoin() {
 .status-icon.green { color: #52c41a; }
 .status-icon.red { color: #ff4d4f; }
 .status-icon.grey { color: #9ca3af; }
+.status-icon.orange { color: #fa8c16; }
 
 .status-dot {
   width: 6px;
@@ -1389,11 +1369,5 @@ async function openScanJoin() {
 
 .status-dot.blue {
   background: var(--mini-primary);
-}
-
-:deep(.wb-todo-drawer .el-drawer__body) {
-  padding: 0 16px 24px;
-  max-height: 70vh;
-  overflow-y: auto;
 }
 </style>

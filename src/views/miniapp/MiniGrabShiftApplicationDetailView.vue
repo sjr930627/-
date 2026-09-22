@@ -2,6 +2,7 @@
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { buildGrabShiftApplicationDisplay, grabStatusTagClass } from '@/services/miniApplication'
@@ -23,7 +24,13 @@ const slot = computed(() =>
 )
 
 const display = computed(() =>
-  app.value ? buildGrabShiftApplicationDisplay(app.value, slot.value) : null,
+  app.value
+    ? buildGrabShiftApplicationDisplay(app.value, slot.value, {
+        enterprises: store.enterprises,
+        departments: store.departments,
+        attendanceGroups: store.attendanceGroups,
+      })
+    : null,
 )
 
 const post = computed(() =>
@@ -34,12 +41,36 @@ const showPunchAction = computed(
   () => display.value?.phase === 'approved_upcoming' || display.value?.phase === 'approved_today',
 )
 
+const departmentName = computed(() => {
+  if (!display.value) return '—'
+  const parts = display.value.orgLabel.split(' · ')
+  return parts[parts.length - 1] || display.value.postTitle || '—'
+})
+
+const hourlyRate = computed(() => {
+  if (!slot.value && !display.value) return 0
+  const fromSlot = slot.value?.effectiveHourlyRate ?? slot.value?.baseHourlyRate
+  if (fromSlot != null && fromSlot > 0) return fromSlot
+  if (display.value && display.value.durationHours > 0) {
+    return Math.round(display.value.pay / display.value.durationHours)
+  }
+  return 0
+})
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString('zh-CN')
 }
 
 function goPunch() {
   router.push('/miniapp/punch')
+}
+
+function openPostDetail() {
+  if (!slot.value) {
+    ElMessage.info('暂无可查看的岗位详情')
+    return
+  }
+  router.push(`/miniapp/recommend/shift/${encodeURIComponent(slot.value.teamId)}`)
 }
 </script>
 
@@ -51,16 +82,17 @@ function goPunch() {
     </div>
 
     <div v-if="display && slot" class="mini-page">
-      <div class="mini-card">
+      <div class="mini-card job-card clickable" @click="openPostDetail">
         <div class="head-row">
-          <h1 class="job-name">{{ post?.title ?? display.postTitle }}</h1>
+          <h1 class="job-name">{{ display.positionName }}</h1>
           <span class="mini-tag" :class="grabStatusTagClass(display.phase, display.status)">
             {{ display.statusLabel }}
           </span>
         </div>
-        <div class="meta-line">{{ post?.storeName ?? display.postTitle }}</div>
+        <div class="meta-line">{{ display.orgLabel }}</div>
         <div class="shift-time">{{ display.date }} {{ display.timeRange }}</div>
         <div class="shift-pay">{{ display.payLabel }}</div>
+        <div class="job-card-hint">查看岗位详情 ›</div>
       </div>
 
       <div class="mini-card status-card" :class="display.phase">
@@ -89,12 +121,17 @@ function goPunch() {
 
       <div class="mini-card">
         <div class="mini-card-title">班次信息</div>
-        <div class="info-row"><span>班次类型</span><span>{{ display.title }}</span></div>
-        <div class="info-row"><span>薪酬方式</span><span class="money-text">{{ display.payLabel }}</span></div>
-        <div class="info-row"><span>工作时长</span><span>{{ display.durationHours }} 小时</span></div>
-        <div class="info-row"><span>工作日期</span><span>{{ display.date }}</span></div>
-        <div class="info-row"><span>工作时段</span><span>{{ display.timeRange }}</span></div>
-        <div class="info-row"><span>所属班组</span><span>{{ display.postTitle }}</span></div>
+        <div class="info-row"><span>班次名称</span><span>{{ display.title }}</span></div>
+        <div class="info-row">
+          <span>收入</span>
+          <span class="money-text">¥{{ display.pay }}</span>
+        </div>
+        <div class="info-row"><span>工时</span><span>{{ display.durationHours }} 小时</span></div>
+        <div class="info-row">
+          <span>时薪</span>
+          <span class="money-text">¥{{ hourlyRate }}/小时</span>
+        </div>
+        <div class="info-row"><span>所属部门</span><span>{{ departmentName }}</span></div>
       </div>
 
       <div class="mini-card">
@@ -103,7 +140,6 @@ function goPunch() {
         <div v-if="display.reviewedAt" class="info-row">
           <span>审核时间</span><span>{{ formatTime(display.reviewedAt) }}</span>
         </div>
-        <div v-if="app?.message" class="info-row"><span>报名说明</span><span>{{ app.message }}</span></div>
       </div>
     </div>
 
@@ -122,6 +158,17 @@ function goPunch() {
   justify-content: space-between;
   align-items: flex-start;
   gap: 8px;
+}
+
+.job-card.clickable {
+  cursor: pointer;
+}
+
+.job-card-hint {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--mini-primary, #4fd1c5);
 }
 
 .job-name {

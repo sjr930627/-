@@ -4,17 +4,28 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { buildGrabShiftApplicationDisplay, buildJobApplicationDisplay, grabStatusTagClass, jobStatusTagClass } from '@/services/miniApplication'
+import {
+  buildGrabInterviewApplicationDisplay,
+  buildGrabShiftApplicationDisplay,
+  grabInterviewStatusTagClass,
+  grabStatusTagClass,
+  isGrabInterviewRegForWorker,
+} from '@/services/miniApplication'
 
 const router = useRouter()
 const store = useAppStore()
-const { employeeId } = useMiniAppWorker()
-const activeTab = ref<'job' | 'shift'>('job')
+const { employeeId, employee } = useMiniAppWorker()
+const activeTab = ref<'job' | 'interview' | 'shift'>('interview')
 
-const jobApps = computed(() =>
-  store.miniJobApplications
-    .filter((a) => a.employeeId === employeeId.value)
-    .map((a) => buildJobApplicationDisplay(a, store.jobRequirements.find((j) => j.id === a.jobRequirementId)))
+const interviewApps = computed(() =>
+  store.grabInterviewRegistrations
+    .filter((r) => isGrabInterviewRegForWorker(r, employee.value ?? { id: employeeId.value }))
+    .map((r) =>
+      buildGrabInterviewApplicationDisplay(r, {
+        enterprises: store.enterprises,
+        departments: store.departments,
+      }),
+    )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
 )
 
@@ -22,13 +33,17 @@ const shiftApps = computed(() =>
   store.grabShiftApplications
     .filter((a) => a.employeeId === employeeId.value)
     .map((a) =>
-      buildGrabShiftApplicationDisplay(a, store.grabShiftSlots.find((s) => s.id === a.slotId)),
+      buildGrabShiftApplicationDisplay(a, store.grabShiftSlots.find((s) => s.id === a.slotId), {
+        enterprises: store.enterprises,
+        departments: store.departments,
+        attendanceGroups: store.attendanceGroups,
+      }),
     )
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
 )
 
-function openJobDetail(id: string) {
-  router.push(`/miniapp/applications/job/${id}`)
+function openInterviewDetail(id: string) {
+  router.push(`/miniapp/applications/interview/${id}`)
 }
 
 function openShiftDetail(id: string) {
@@ -36,7 +51,12 @@ function openShiftDetail(id: string) {
 }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return new Date(iso).toLocaleString('zh-CN', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 </script>
 
@@ -55,7 +75,14 @@ function formatTime(iso: string) {
         @click="activeTab = 'job'"
       >
         岗位报名
-        <span v-if="jobApps.length" class="apps-tab-count">{{ jobApps.length }}</span>
+      </button>
+      <button
+        type="button"
+        class="apps-tab"
+        :class="{ active: activeTab === 'interview' }"
+        @click="activeTab = 'interview'"
+      >
+        抢班面试
       </button>
       <button
         type="button"
@@ -64,27 +91,37 @@ function formatTime(iso: string) {
         @click="activeTab = 'shift'"
       >
         抢班报名
-        <span v-if="shiftApps.length" class="apps-tab-count">{{ shiftApps.length }}</span>
       </button>
     </div>
 
     <div class="mini-page">
       <template v-if="activeTab === 'job'">
+        <div class="dev-placeholder">
+          <div class="dev-placeholder-icon">岗</div>
+          <h3>岗位报名</h3>
+          <p>功能开发中，敬请期待</p>
+        </div>
+      </template>
+
+      <template v-else-if="activeTab === 'interview'">
         <div
-          v-for="a in jobApps"
+          v-for="a in interviewApps"
           :key="a.id"
           class="app-card"
-          @click="openJobDetail(a.id)"
+          @click="openInterviewDetail(a.id)"
         >
           <div class="app-card-head">
-            <div class="app-card-title">{{ a.title }}</div>
-            <span class="mini-tag" :class="jobStatusTagClass(a.status)">{{ a.statusLabel }}</span>
+            <div class="app-card-title">{{ a.positionName }}</div>
+            <span class="mini-tag" :class="grabInterviewStatusTagClass(a.status)">
+              {{ a.statusLabel }}
+            </span>
           </div>
-          <div class="app-card-sub">{{ a.enterprise }} · {{ a.salaryLabel }}</div>
+          <div class="app-card-sub">{{ a.orgLabel }}</div>
+          <div class="app-card-schedule">面试时间 {{ a.scheduleLabel }}</div>
           <div class="app-card-hint">{{ a.detailHint }}</div>
           <div class="app-card-foot">报名时间 {{ formatTime(a.createdAt) }} ›</div>
         </div>
-        <div v-if="jobApps.length === 0" class="mini-empty">暂无岗位报名</div>
+        <div v-if="interviewApps.length === 0" class="mini-empty">暂无抢班面试报名</div>
       </template>
 
       <template v-else>
@@ -95,10 +132,15 @@ function formatTime(iso: string) {
           @click="openShiftDetail(a.id)"
         >
           <div class="app-card-head">
-            <div class="app-card-title">{{ a.postTitle }} · {{ a.title }}</div>
-            <span class="mini-tag" :class="grabStatusTagClass(a.phase, a.status)">{{ a.statusLabel }}</span>
+            <div class="app-card-title">{{ a.positionName }}</div>
+            <span class="mini-tag" :class="grabStatusTagClass(a.phase, a.status)">
+              {{ a.statusLabel }}
+            </span>
           </div>
-          <div class="app-card-sub">{{ a.date }} {{ a.timeRange }} · {{ a.payLabel }}</div>
+          <div class="app-card-sub">{{ a.orgLabel }}</div>
+          <div class="app-card-schedule">
+            {{ a.date }} {{ a.timeRange }} · {{ a.payLabel }}
+          </div>
           <div class="app-card-hint">{{ a.detailHint }}</div>
           <div class="app-card-foot">报名时间 {{ formatTime(a.createdAt) }} ›</div>
         </div>
@@ -116,10 +158,11 @@ function formatTime(iso: string) {
 
 .apps-tabs {
   display: flex;
-  gap: 8px;
-  padding: 12px 12px 0;
+  gap: 4px;
+  padding: 12px 8px 0;
   background: #fff;
   border-bottom: 1px solid #f0f0f0;
+  overflow-x: auto;
 }
 
 .apps-tab {
@@ -127,32 +170,23 @@ function formatTime(iso: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 10px 0;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 4px;
   border: none;
   border-bottom: 2px solid transparent;
   background: none;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   color: #666;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .apps-tab.active {
-  color: var(--app-primary);
-  border-bottom-color: var(--app-primary);
+  color: var(--mini-primary, #4fd1c5);
+  border-bottom-color: var(--mini-primary, #4fd1c5);
   font-weight: 600;
-}
-
-.apps-tab-count {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--app-primary-light);
-  color: var(--app-primary);
-  font-size: 11px;
-  line-height: 18px;
 }
 
 .app-card {
@@ -184,6 +218,13 @@ function formatTime(iso: string) {
   color: #999;
 }
 
+.app-card-schedule {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+}
+
 .app-card-hint {
   margin-top: 8px;
   padding: 8px 10px;
@@ -202,7 +243,42 @@ function formatTime(iso: string) {
 }
 
 .mini-tag.blue {
-  background: var(--app-primary-light);
-  color: var(--app-primary);
+  background: #e6fffa;
+  color: var(--mini-primary, #4fd1c5);
+}
+
+.mini-tag.grey {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.dev-placeholder {
+  margin-top: 48px;
+  text-align: center;
+  color: #999;
+}
+
+.dev-placeholder-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 12px;
+  border-radius: 16px;
+  background: #e6fffa;
+  color: var(--mini-primary, #4fd1c5);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 56px;
+}
+
+.dev-placeholder h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #333;
+}
+
+.dev-placeholder p {
+  margin: 0;
+  font-size: 13px;
 }
 </style>

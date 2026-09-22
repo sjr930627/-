@@ -1,9 +1,37 @@
+import { computeDailyAttendance } from '@/services/attendance'
+import {
+  getEmployeeAttendanceGroup,
+  isFreeClockInOnly,
+  isFreePunchGroup,
+  isNoPunchGroup,
+} from '@/composables/useMiniPunch'
 import type { useAppStore } from '@/stores/app'
-import type { ScheduleAssignment, Shift } from '@/types'
+import type { AttendanceStatus, ScheduleAssignment, Shift } from '@/types'
 
 type Store = ReturnType<typeof useAppStore>
 
-export type DayPreviewState = 'done' | 'absent' | 'active' | 'rest' | 'upcoming'
+export type DayPreviewState =
+  | 'upcoming'
+  | 'normal'
+  | 'missing_punch'
+  | 'absent'
+  | 'late'
+  | 'early_leave'
+  | 'rest'
+  | 'leave'
+
+export type PunchStatusTone = 'muted' | 'ok' | 'warn'
+
+const SHIFT_STATUS_LABEL: Record<DayPreviewState, string> = {
+  upcoming: '待上岗',
+  normal: '正常',
+  missing_punch: '缺卡',
+  absent: '缺勤',
+  late: '迟到',
+  early_leave: '早退',
+  rest: '休息',
+  leave: '请假',
+}
 
 export interface DayPreviewItem {
   date: string
@@ -32,6 +60,11 @@ export interface DayScheduleDetail {
   estimatedPay: number
   hourlyRate: number
   location: string
+  /** 自由打卡（无班次）日 */
+  freePunch?: boolean
+  freePunchLabel?: string
+  freeClockInOnly?: boolean
+  goalMinutes?: number
 }
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -54,6 +87,35 @@ export function getHourlyRate(store: Store, employeeId: string) {
   return team?.hourlyRate ?? store.payrollConfig.defaultHourlyRate ?? 25
 }
 
+function labeled(state: DayPreviewState) {
+  return { state, stateLabel: SHIFT_STATUS_LABEL[state] }
+}
+
+function shiftHasEnded(shift: Shift, now: Date) {
+  let start = parseTimeMinutes(shift.startTime)
+  let end = parseTimeMinutes(shift.endTime)
+  if (end <= start) end += 24 * 60
+  let nowMin = now.getHours() * 60 + now.getMinutes()
+  if (end > 24 * 60 && nowMin < start) nowMin += 24 * 60
+  return nowMin >= end
+}
+
+function isLateClockIn(shift: Shift, clockInTime: string, flexMinutesAfter: number) {
+  const start = parseTimeMinutes(shift.startTime)
+  const inMin = parseTimeMinutes(clockInTime)
+  return inMin > start + flexMinutesAfter
+}
+
+function fromSettledAttendance(status: AttendanceStatus): DayPreviewState {
+  if (status === 'late') return 'late'
+  if (status === 'early_leave') return 'early_leave'
+  if (status === 'missing_punch') return 'missing_punch'
+  if (status === 'absent') return 'absent'
+  if (status === 'leave') return 'leave'
+  if (status === 'rest') return 'rest'
+  return 'normal'
+}
+
 export function resolveDayState(
   store: Store,
   employeeId: string,
@@ -63,30 +125,72 @@ export function resolveDayState(
 ): { state: DayPreviewState; stateLabel: string } {
   const asn = store.getAssignment(employeeId, date)
   const shift = asn ? store.shifts.find((s) => s.id === asn.shiftId) : null
-  if (!shift || shift.id === 'shift_rest') {
-    return { state: 'rest', stateLabel: '休息' }
+  const group = getEmployeeAttendanceGroup(store, employeeId)
+  const freePunch = isFreePunchGroup(group)
+  const noPunch = isNoPunchGroup(group)
+
+  if ((!shift || shift.id === 'shift_rest' || shift.code === 'REST') && freePunch) {
+    if (date > today) return labeled('upcoming')
+    const punches = store.punches.filter((p) => p.employeeId === employeeId && p.date === date)
+    const hasIn = punches.some((p) => p.type === 'clock_in')
+    const hasOut = punches.some((p) => p.type === 'clock_out')
+    const clockInOnly = isFreeClockInOnly(group)
+    if (!hasIn) {
+      if (date < today) return labeled('rest')
+      return labeled('upcoming')
+    }
+    if (clockInOnly || hasOut) return labeled('normal')
+    return labeled('normal')
   }
 
-  const punches = store.punches.filter((p) => p.employeeId === employeeId && p.date === date)
-  const hasIn = punches.some((p) => p.type === 'clock_in')
-  const hasOut = punches.some((p) => p.type === 'clock_out')
-
-  if (date < today) {
-    if (hasIn && hasOut) return { state: 'done', stateLabel: '已签退' }
-    if (!hasIn) return { state: 'absent', stateLabel: '缺勤' }
-    return { state: 'absent', stateLabel: '缺勤' }
+  if (!shift || shift.id === 'shift_rest' || shift.code === 'REST' || noPunch) {
+    return labeled('rest')
   }
 
-  if (date === today) {
-    if (hasIn && hasOut) return { state: 'done', stateLabel: '已签退' }
-    if (hasIn) return { state: 'active', stateLabel: '进行中' }
-    const startMin = parseTimeMinutes(shift.startTime)
-    const nowMin = now.getHours() * 60 + now.getMinutes()
-    if (nowMin >= startMin) return { state: 'active', stateLabel: '进行中' }
-    return { state: 'upcoming', stateLabel: '待上岗' }
+  if (date > today) return labeled('upcoming')
+
+  const day = computeDailyAttendance(
+    employeeId,
+    date,
+    store.assignments,
+    store.shifts,
+    store.punches,
+    store.leaveRequests,
+    store.attendanceRule,
+    store.manualOverrides[`${employeeId}_${date}`],
+  )
+
+  if (day.status === 'leave') return labeled('leave')
+  if (day.status === 'rest') return labeled('rest')
+
+  const hasIn = Boolean(day.clockIn)
+  const hasOut = Boolean(day.clockOut)
+  const ended = date < today || shiftHasEnded(shift, now)
+
+  if (!ended && !hasOut) {
+    if (!hasIn) return labeled('upcoming')
+    if (isLateClockIn(shift, day.clockIn!, store.attendanceRule.flexMinutesAfter)) {
+      return labeled('late')
+    }
+    return labeled('normal')
   }
 
-  return { state: 'upcoming', stateLabel: '待上岗' }
+  return labeled(fromSettledAttendance(day.status))
+}
+
+export function resolvePunchStatus(
+  shift: Shift | null | undefined,
+  clockInTime?: string,
+  clockOutTime?: string,
+  options?: { freePunch?: boolean; noPunch?: boolean },
+): { text: string; tone: PunchStatusTone } {
+  if (clockOutTime) return { text: '已签退', tone: 'muted' }
+  if (clockInTime) return { text: `已签到 · ${clockInTime.slice(0, 5)}`, tone: 'ok' }
+  if (options?.freePunch) return { text: '未打卡', tone: 'warn' }
+  if (options?.noPunch) return { text: '无需打卡', tone: 'muted' }
+  const noShift = !shift || shift.id === 'shift_rest' || shift.code === 'REST'
+  if (noShift) return { text: '无需打卡', tone: 'muted' }
+  return { text: '未打卡', tone: 'warn' }
 }
 
 export function buildWeekPreview(
@@ -108,16 +212,25 @@ export function buildWeekPreview(
     const asn = store.getAssignment(employeeId, date)
     const shift = asn ? store.shifts.find((s) => s.id === asn.shiftId) : null
     const { state, stateLabel } = resolveDayState(store, employeeId, date, today, anchor)
-    const isRest = !shift || shift.id === 'shift_rest'
+    const group = getEmployeeAttendanceGroup(store, employeeId)
+    const freePunch = isFreePunchGroup(group) && (!shift || shift.id === 'shift_rest')
+    const isRest = freePunch ? false : !shift || shift.id === 'shift_rest'
+    const cfg = group?.freePunchConfig
     items.push({
       date,
       weekday: WEEKDAYS[d.getDay()],
       dayNum: `${d.getMonth() + 1}/${d.getDate()}`,
-      shiftName: isRest ? '休息' : shift!.name,
-      timeRange: isRest ? '—' : `${shift!.startTime.slice(0, 5).replace(':', '')}-${shift!.endTime.slice(0, 5).replace(':', '')}`,
+      shiftName: freePunch ? '自由打卡' : isRest ? '无班次' : shift!.name,
+      timeRange: freePunch
+        ? cfg
+          ? `${cfg.startTime.slice(0, 5).replace(':', '')}-${cfg.endTime.slice(0, 5).replace(':', '')}`
+          : '弹性'
+        : isRest
+          ? '—'
+          : `${shift!.startTime.slice(0, 5).replace(':', '')}-${shift!.endTime.slice(0, 5).replace(':', '')}`,
       state,
-      stateLabel,
-      shiftColor: shift?.color ?? '#d9d9d9',
+      stateLabel: state === 'rest' ? '无班次' : stateLabel,
+      shiftColor: freePunch ? '#409EFF' : shift?.color ?? '#d9d9d9',
       isToday: date === today,
     })
   }
@@ -137,11 +250,13 @@ export function calcWorkedMinutes(
   const clockOut = dayPunches.find((p) => p.type === 'clock_out')
   if (!clockIn) return 0
   const [ih, im] = clockIn.time.split(':').map(Number)
+  const inMin = ih * 60 + im
   if (clockOut) {
     const [oh, om] = clockOut.time.split(':').map(Number)
-    return Math.max(0, oh * 60 + om - (ih * 60 + im))
+    return Math.max(0, oh * 60 + om - inMin)
   }
-  return Math.max(0, now.getHours() * 60 + now.getMinutes() - (ih * 60 + im))
+  if (date !== localDateStr(now)) return 0
+  return Math.max(0, now.getHours() * 60 + now.getMinutes() - inMin)
 }
 
 export function formatDuration(minutes: number) {
@@ -158,30 +273,49 @@ export function buildDayDetail(
   date: string,
   now: Date,
 ): DayScheduleDetail {
-  const today = now.toISOString().slice(0, 10)
+  const today = localDateStr(now)
   const d = new Date(date + 'T12:00:00')
   const asn = store.getAssignment(employeeId, date)
   const shift = asn ? store.shifts.find((s) => s.id === asn.shiftId) ?? null : null
   const team = asn?.teamId ? store.teams.find((t) => t.id === asn.teamId) : null
+  const group = getEmployeeAttendanceGroup(store, employeeId)
+  const freePunch =
+    isFreePunchGroup(group) && (!shift || shift.id === 'shift_rest' || shift.code === 'REST')
+  const freeClockInOnly = freePunch && isFreeClockInOnly(group)
+  const cfg = group?.freePunchConfig
+  const freePunchLabel = freePunch
+    ? cfg
+      ? `自由打卡 · ${cfg.startTime.slice(0, 5)}-${cfg.endTime.slice(0, 5)}`
+      : '自由打卡 · 无班次'
+    : undefined
   const hourlyRate = getHourlyRate(store, employeeId)
   const { state, stateLabel } = resolveDayState(store, employeeId, date, today, now)
   const punches = store.punches.filter((p) => p.employeeId === employeeId && p.date === date)
   const clockIn = punches.find((p) => p.type === 'clock_in')?.time
   const clockOut = punches.find((p) => p.type === 'clock_out')?.time
-  const totalMin = shift ? shiftWorkMinutes(shift) : 0
-  const workedMinutes = calcWorkedMinutes(employeeId, date, store.punches, now)
-  const remainingMinutes = Math.max(0, totalMin - workedMinutes)
-  const estimatedPay =
-    totalMin > 0
-      ? Math.round(((totalMin / 60) * hourlyRate) * 100) / 100
+  const goalMinutes = freePunch
+    ? Math.max(1, cfg?.defaultWorkHours ?? 8) * 60
+    : shift
+      ? shiftWorkMinutes(shift)
       : 0
+  const workedMinutes = calcWorkedMinutes(employeeId, date, store.punches, now)
+  const remainingMinutes = Math.max(0, goalMinutes - workedMinutes)
+  const estimatedPay =
+    goalMinutes > 0
+      ? Math.round(((goalMinutes / 60) * hourlyRate) * 100) / 100
+      : 0
+  const teamName =
+    team?.name ??
+    (freePunch
+      ? store.teams.find((t) => t.memberIds.includes(employeeId))?.name ?? '外勤推广组'
+      : '中国移动朝阳营业厅班组')
 
   return {
     date,
     weekday: WEEKDAYS[d.getDay()],
     assignment: asn ?? null,
     shift,
-    teamName: team?.name ?? '中国移动朝阳营业厅班组',
+    teamName,
     state,
     stateLabel,
     clockIn,
@@ -190,7 +324,13 @@ export function buildDayDetail(
     remainingMinutes,
     estimatedPay,
     hourlyRate,
-    location: '北京 · 朝阳区 · 中国移动朝阳营业厅',
+    location: freePunch
+      ? '不限固定点位 · 按打卡范围核算'
+      : '北京 · 朝阳区 · 中国移动朝阳营业厅',
+    freePunch,
+    freePunchLabel,
+    freeClockInOnly,
+    goalMinutes,
   }
 }
 
@@ -248,16 +388,6 @@ export function getWeekCalendarCells(anchorDate: string) {
     cells.push({ date: localDateStr(d), day: d.getDate() })
   }
   return cells
-}
-
-export function shiftBarColor(shiftId: string | undefined) {
-  const map: Record<string, string> = {
-    shift_morning: '#409EFF',
-    shift_afternoon: '#E6A23C',
-    shift_night: '#9B59B6',
-    shift_rest: '#d9d9d9',
-  }
-  return shiftId ? map[shiftId] ?? '#409EFF' : 'transparent'
 }
 
 export function formatTodayLabel(date: Date) {
@@ -328,10 +458,14 @@ export function buildWeekAttendance(
     const isToday = date === today
     const asn = store.getAssignment(employeeId, date)
     const shift = asn ? store.shifts.find((s) => s.id === asn.shiftId) : null
-    const isRest = !shift || shift.id === 'shift_rest'
+    const group = getEmployeeAttendanceGroup(store, employeeId)
+    const freePunch =
+      isFreePunchGroup(group) && (!shift || shift.id === 'shift_rest')
+    const isRest = freePunch ? false : !shift || shift.id === 'shift_rest'
     const punches = store.punches.filter((p) => p.employeeId === employeeId && p.date === date)
     const hasIn = punches.some((p) => p.type === 'clock_in')
     const hasOut = punches.some((p) => p.type === 'clock_out')
+    const clockInOnly = freePunch && isFreeClockInOnly(group)
 
     let state: WeekDayState
     if (isRest) {
@@ -340,10 +474,10 @@ export function buildWeekAttendance(
       state = 'future'
     } else if (isToday) {
       state = 'today'
-    } else if (hasIn && hasOut) {
+    } else if (hasIn && (clockInOnly || hasOut)) {
       state = 'done'
     } else {
-      state = 'missed'
+      state = freePunch && !hasIn ? 'rest' : 'missed'
     }
 
     items.push({
@@ -374,21 +508,19 @@ export function sumWorkedMinutesInRange(
   return total
 }
 
-export function countConsecutivePunchDays(
+export function countAttendanceDays(
   employeeId: string,
   punches: { employeeId: string; date: string; type: string }[],
-  today: string,
+  startDate: string,
+  endDate: string,
 ) {
-  let count = 0
-  const d = new Date(today + 'T12:00:00')
-  while (true) {
-    const date = localDateStr(d)
-    const hasIn = punches.some((p) => p.employeeId === employeeId && p.date === date && p.type === 'clock_in')
-    if (!hasIn) break
-    count += 1
-    d.setDate(d.getDate() - 1)
+  const dates = new Set<string>()
+  for (const p of punches) {
+    if (p.employeeId !== employeeId || p.type !== 'clock_in') continue
+    if (p.date < startDate || p.date > endDate) continue
+    dates.add(p.date)
   }
-  return count
+  return dates.size
 }
 
 export interface PunchRecordItem {
@@ -398,9 +530,17 @@ export interface PunchRecordItem {
   clockIn: string
   clockOut: string
   statusLabel: string
-  statusType: 'online' | 'hours' | 'rest' | 'pending'
+  statusType: 'normal' | 'missing_punch' | 'absent' | 'late' | 'early_leave'
   workedHours: string
 }
+
+const HISTORY_STATUS: ReadonlySet<PunchRecordItem['statusType']> = new Set([
+  'normal',
+  'missing_punch',
+  'absent',
+  'late',
+  'early_leave',
+])
 
 export function buildRecentPunchRecords(
   store: Store,
@@ -411,14 +551,15 @@ export function buildRecentPunchRecords(
   const today = localDateStr(anchor)
   const weekdayFull = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
   const items: PunchRecordItem[] = []
+  const maxLookback = Math.max(limit * 4, 90)
 
-  for (let i = 0; i < limit; i++) {
+  for (let i = 0; i < maxLookback && items.length < limit; i++) {
     const d = new Date(anchor)
     d.setDate(anchor.getDate() - i)
     const date = localDateStr(d)
     const asn = store.getAssignment(employeeId, date)
     const shift = asn ? store.shifts.find((s) => s.id === asn.shiftId) : null
-    const isRest = !shift || shift.id === 'shift_rest'
+    const isRestShift = !shift || shift.id === 'shift_rest'
     const punches = store.punches.filter((p) => p.employeeId === employeeId && p.date === date)
     const clockIn = punches.find((p) => p.type === 'clock_in')?.time.slice(0, 5) ?? '--:--'
     const clockOut = punches.find((p) => p.type === 'clock_out')?.time.slice(0, 5) ?? '--:--'
@@ -426,30 +567,18 @@ export function buildRecentPunchRecords(
     const hasIn = punches.some((p) => p.type === 'clock_in')
     const hasOut = punches.some((p) => p.type === 'clock_out')
 
+    // 休息日且无打卡：不进入历史列表
+    if (isRestShift && !hasIn && !hasOut) continue
+
+    const { state, stateLabel } = resolveDayState(store, employeeId, date, today, anchor)
+    // 仅展示：正常 / 缺卡 / 缺勤 / 迟到 / 早退
+    if (!HISTORY_STATUS.has(state as PunchRecordItem['statusType'])) continue
+
     let relativeLabel = ''
     if (i === 0) relativeLabel = '今天'
     else if (i === 1) relativeLabel = '昨天'
     else if (i === 2) relativeLabel = '前天'
     else relativeLabel = `${d.getMonth() + 1}月${d.getDate()}日`
-
-    let statusLabel = ''
-    let statusType: PunchRecordItem['statusType'] = 'pending'
-    if (isRest) {
-      statusLabel = '休息'
-      statusType = 'rest'
-    } else if (date === today && hasIn && !hasOut) {
-      statusLabel = '在线中'
-      statusType = 'online'
-    } else if (workedMin > 0) {
-      statusLabel = formatHoursShort(workedMin)
-      statusType = 'hours'
-    } else if (!hasIn) {
-      statusLabel = '未打卡'
-      statusType = 'pending'
-    } else {
-      statusLabel = formatHoursShort(workedMin)
-      statusType = 'hours'
-    }
 
     items.push({
       date,
@@ -457,8 +586,8 @@ export function buildRecentPunchRecords(
       dateLabel: `${d.getMonth() + 1}月${d.getDate()}日 ${weekdayFull[d.getDay()]}`,
       clockIn,
       clockOut,
-      statusLabel,
-      statusType,
+      statusLabel: stateLabel,
+      statusType: state as PunchRecordItem['statusType'],
       workedHours: formatHoursShort(workedMin),
     })
   }

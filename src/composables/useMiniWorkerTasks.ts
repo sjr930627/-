@@ -9,7 +9,7 @@ import {
 import { sortedWorkflowNodes } from '@/services/task'
 import type { TaskInstance, TaskWorkflow } from '@/types'
 
-export type WorkerTaskStatus = 'in_progress' | 'completed' | 'settled' | 'cancelled'
+export type WorkerTaskStatus = 'in_progress' | 'completed' | 'ended'
 
 export function isTaskInstanceCancelled(
   instance: TaskInstance,
@@ -29,11 +29,14 @@ export function classifyWorkerTask(
   instance: TaskInstance,
   workflow: TaskWorkflow | undefined,
 ): WorkerTaskStatus {
-  if (isTaskInstanceCancelled(instance, workflow)) return 'cancelled'
-  if (instance.currentNodeName.includes('已结算')) return 'settled'
+  if (isTaskInstanceCancelled(instance, workflow)) return 'ended'
   const nodes = workflow ? sortedWorkflowNodes(workflow) : []
   const node = nodes.find((n) => n.id === instance.currentNodeId)
-  if (node?.nodeType === 'end' || instance.currentNodeName.includes('已完成')) {
+  if (
+    node?.nodeType === 'end' ||
+    instance.currentNodeName.includes('已完成') ||
+    instance.currentNodeName.includes('已结算')
+  ) {
     return 'completed'
   }
   return 'in_progress'
@@ -53,8 +56,7 @@ export function calcInstanceProgress(instance: TaskInstance, workflow: TaskWorkf
 const statusLabelMap: Record<WorkerTaskStatus, string> = {
   in_progress: '进行中',
   completed: '已完成',
-  settled: '已结算',
-  cancelled: '已取消',
+  ended: '已结束',
 }
 
 export function useMiniWorkerTasks() {
@@ -83,8 +85,7 @@ export function useMiniWorkerTasks() {
   const counts = computed(() => ({
     in_progress: myTasks.value.filter((t) => t.status === 'in_progress').length,
     completed: myTasks.value.filter((t) => t.status === 'completed').length,
-    settled: myTasks.value.filter((t) => t.status === 'settled').length,
-    cancelled: myTasks.value.filter((t) => t.status === 'cancelled').length,
+    ended: myTasks.value.filter((t) => t.status === 'ended').length,
   }))
 
   const pendingMyActionCount = computed(

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
-import { computed, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
@@ -17,6 +17,7 @@ import {
 import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
 const route = useRoute()
+const router = useRouter()
 const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const { ensureActionAllowed } = useMiniAppActionGate()
@@ -24,7 +25,6 @@ const { ensureActionAllowed } = useMiniAppActionGate()
 const teamId = computed(() => route.params.teamId as string)
 const subscribed = ref(false)
 const selectedSlotIds = ref<string[]>([])
-const reqExpanded = ref(true)
 
 const worker = computed(() => store.employees.find((e) => e.id === employeeId.value))
 
@@ -53,6 +53,21 @@ const slots = computed(() =>
     .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)),
 )
 
+watch(
+  slots,
+  (list) => {
+    const fromQuery = typeof route.query.slot === 'string' ? route.query.slot : ''
+    if (
+      fromQuery &&
+      list.some((s) => s.id === fromQuery && !s.disabled) &&
+      !selectedSlotIds.value.includes(fromQuery)
+    ) {
+      selectedSlotIds.value = [fromQuery]
+    }
+  },
+  { immediate: true },
+)
+
 const post = computed(() => {
   const first = slots.value[0]
   if (!first) return null
@@ -78,7 +93,9 @@ const post = computed(() => {
 
   return {
     ...extra,
-    title: `${enterpriseName}|${positionName}`,
+    title: positionName,
+    enterpriseName,
+    orgLabel: `${enterpriseName} · ${first.departmentName || department?.name || extra.storeName}`,
     departmentImageUrl:
       department?.imageUrl?.trim() || seedDept?.imageUrl?.trim() || '',
     departmentName: first.departmentName || department?.name || extra.storeName,
@@ -96,25 +113,6 @@ const displayTags = computed(() => {
   return post.value.tags.filter((t) => t !== '免审核' || isWhitelisted.value)
 })
 
-function parsePositionRequirement(text?: string) {
-  if (!text?.trim()) return null
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
-  if (!lines.length) return null
-  return {
-    intro: lines[0],
-    duties: lines.length > 1 ? lines.slice(1) : [],
-    qualifications: [] as string[],
-  }
-}
-
-const requirementDetail = computed(() => {
-  const slot = slots.value[0]
-  const profile = slot ? resolveGrabSlotPositionProfile(slot) : null
-  const fromSlot = parsePositionRequirement(profile?.requirements || slot?.positionRequirement)
-  if (fromSlot) return fromSlot
-  return post.value?.requirementDetail ?? { intro: '', duties: [], qualifications: [] }
-})
-
 const skillRequirements = computed(() => {
   const slot = slots.value[0]
   const profile = slot ? resolveGrabSlotPositionProfile(slot) : null
@@ -128,11 +126,46 @@ const positionProfile = computed(() => {
   return slot ? resolveGrabSlotPositionProfile(slot) : null
 })
 
+const registrationTips: Array<{
+  title: string
+  body?: string
+  items?: Array<{ label: string; value: string }>
+}> = [
+  {
+    title: '1. 取消班次规则',
+    body: '班次开始前可取消班次，但需要企业审批。',
+  },
+  {
+    title: '2. 补卡规则',
+    items: [
+      { label: '补卡次数', value: '不限' },
+      { label: '补卡时间', value: '工时确认前' },
+    ],
+  },
+]
+
 const selectedCount = computed(() => selectedSlotIds.value.length)
 
 function toggleSubscribe() {
   subscribed.value = !subscribed.value
   ElMessage.success(subscribed.value ? '已订阅班次动态' : '已取消订阅')
+}
+
+const myApplication = computed(() => {
+  const slotIds = new Set(slots.value.map((s) => s.id))
+  return (
+    store.grabShiftApplications
+      .filter((a) => a.employeeId === employeeId.value && slotIds.has(a.slotId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null
+  )
+})
+
+function openMyApplication() {
+  if (!myApplication.value) {
+    ElMessage.info('暂无该岗位的报名记录')
+    return
+  }
+  router.push(`/miniapp/applications/shift/${myApplication.value.id}`)
 }
 
 function toggleSlot(slotId: string, disabled: boolean) {
@@ -213,20 +246,26 @@ async function applySelected() {
         </div>
       </section>
 
-      <section class="detail-hero">
+      <section
+        class="detail-hero"
+        :class="{ clickable: !!myApplication }"
+        @click="openMyApplication"
+      >
         <h1 class="detail-title">{{ post.title }}</h1>
         <div class="detail-tags">
           <span v-for="tag in displayTags" :key="tag" class="detail-tag">{{ tag }}</span>
         </div>
+        <div v-if="myApplication" class="hero-app-hint">查看报名详情 ›</div>
       </section>
 
       <section class="detail-location">
-        <div class="detail-location-main">
-          <div class="detail-store">{{ post.storeName }}</div>
-          <div class="detail-address">{{ post.address }}</div>
-          <div class="detail-commute">{{ post.distance }}，{{ post.commute }}</div>
+        <div class="detail-store">{{ post.departmentName }}</div>
+        <div class="detail-address">{{ post.address }}</div>
+        <div class="detail-commute">
+          <span>{{ post.distance }}</span>
+          <span class="detail-commute-sep">·</span>
+          <span>{{ post.commute }}</span>
         </div>
-        <div class="detail-map-placeholder">🗺</div>
       </section>
 
       <div class="detail-insurance">
@@ -284,33 +323,6 @@ async function applySelected() {
         </div>
       </section>
 
-      <section class="detail-section">
-        <div class="detail-section-title solo">任职要求</div>
-        <p v-if="requirementDetail.intro" class="req-intro">
-          {{ requirementDetail.intro }}
-        </p>
-        <template v-if="reqExpanded && requirementDetail.duties.length">
-          <div class="req-block">
-            <div class="req-block-title">工作职责</div>
-            <ol class="req-list">
-              <li v-for="(item, idx) in requirementDetail.duties" :key="`d-${idx}`">
-                {{ item }}
-              </li>
-            </ol>
-          </div>
-        </template>
-        <button
-          v-if="requirementDetail.duties.length"
-          type="button"
-          class="req-toggle"
-          @click="reqExpanded = !reqExpanded"
-        >
-          {{ reqExpanded ? '收起' : '展开' }}
-          <span class="req-toggle-icon">{{ reqExpanded ? '∧' : '∨' }}</span>
-        </button>
-        <p v-else-if="!requirementDetail.intro" class="text-muted-mini">暂无任职要求</p>
-      </section>
-
       <section v-if="positionProfile?.description" class="detail-section">
         <div class="detail-section-title solo">岗位描述</div>
         <p class="req-intro">{{ positionProfile.description }}</p>
@@ -329,17 +341,17 @@ async function applySelected() {
       <section class="detail-section">
         <div class="detail-section-title solo">报名贴士</div>
         <div
-          v-for="(group, gIdx) in post.registrationTips"
+          v-for="(group, gIdx) in registrationTips"
           :key="group.title"
           class="rule-group"
           :class="{ 'rule-group-divider': gIdx > 0 }"
         >
           <div class="rule-group-title">{{ group.title }}</div>
-          <div v-for="item in group.items" :key="item.label" class="rule-row">
+          <p v-if="group.body" class="rule-body">{{ group.body }}</p>
+          <div v-for="item in group.items || []" :key="item.label" class="rule-row">
             <span class="rule-label">{{ item.label }}</span>
             <span class="rule-value">{{ item.value }}</span>
           </div>
-          <p v-if="group.note" class="rule-note">注：{{ group.note }}</p>
         </div>
       </section>
     </div>
@@ -412,12 +424,23 @@ async function applySelected() {
   padding: 16px 16px 12px;
 }
 
+.detail-hero.clickable {
+  cursor: pointer;
+}
+
 .detail-title {
   margin: 0;
   font-size: 22px;
   font-weight: 700;
   color: #1a1a1a;
   line-height: 1.35;
+}
+
+.hero-app-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--mini-primary, #4fd1c5);
+  font-weight: 500;
 }
 
 .detail-tags {
@@ -436,8 +459,6 @@ async function applySelected() {
 }
 
 .detail-location {
-  display: flex;
-  gap: 12px;
   margin: 10px 12px 0;
   padding: 14px;
   background: #fff;
@@ -450,24 +471,26 @@ async function applySelected() {
   color: #333;
 }
 
-.detail-address,
+.detail-address {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #666;
+  line-height: 1.5;
+}
+
 .detail-commute {
   margin-top: 6px;
   font-size: 12px;
   color: #999;
   line-height: 1.5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
-.detail-map-placeholder {
-  width: 72px;
-  height: 72px;
-  border-radius: 8px;
-  background: #f0f2f5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  flex-shrink: 0;
+.detail-commute-sep {
+  color: #ddd;
 }
 
 .detail-insurance {
@@ -538,17 +561,6 @@ async function applySelected() {
   line-height: 1.6;
 }
 
-.req-block {
-  margin-bottom: 12px;
-}
-
-.req-block-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 8px;
-}
-
 .req-list {
   margin: 0;
   padding-left: 18px;
@@ -571,24 +583,6 @@ async function applySelected() {
   color: #999;
 }
 
-.req-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  border: none;
-  background: none;
-  color: var(--app-primary);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0;
-}
-
-.req-toggle-icon {
-  font-size: 12px;
-}
-
 .rule-group-divider {
   margin-top: 14px;
   padding-top: 14px;
@@ -600,6 +594,13 @@ async function applySelected() {
   font-weight: 700;
   color: #1a1a1a;
   margin-bottom: 10px;
+}
+
+.rule-body {
+  margin: 0;
+  font-size: 13px;
+  color: #666;
+  line-height: 1.6;
 }
 
 .rule-row {
@@ -619,13 +620,6 @@ async function applySelected() {
 .rule-value {
   color: #999;
   text-align: right;
-}
-
-.rule-note {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: #999;
-  line-height: 1.5;
 }
 
 .shift-grid {

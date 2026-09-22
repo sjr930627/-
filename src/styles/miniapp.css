@@ -506,3 +506,91 @@
 .mini-dialog-actions .mini-footer-primary {
   flex: 1;
 }
+
+/* 抢班/任务列表卡片：岗位标题 + 左下角企业·部门与 logo */
+.job-post-head {
+  padding: 14px 14px 12px;
+}
+
+.job-post-main {
+  min-width: 0;
+}
+
+.job-post-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--mini-text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.job-post-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.job-post-salary {
+  margin-top: 10px;
+  font-size: 18px;
+  font-weight: 800;
+  color: #ef4444;
+  line-height: 1.2;
+}
+
+.job-post-salary-unit {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.job-post-salary-hint {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mini-text-muted);
+}
+
+.job-post-loc-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--mini-text-muted);
+}
+
+.job-post-org {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.job-post-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fde68a, #fbbf24);
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.job-post-org-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.job-post-org-text {
+  font-size: 12px;
+  color: var(--mini-text-secondary, #666);
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

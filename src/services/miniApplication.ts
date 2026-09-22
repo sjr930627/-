@@ -1,6 +1,18 @@
-import type { GrabShiftApplication, GrabShiftSlot, MiniJobApplication, JobRequirement } from '@/types'
+import type {
+  GrabInterviewRegistration,
+  GrabInterviewRegStatus,
+  GrabShiftApplication,
+  GrabShiftSlot,
+  MiniJobApplication,
+  JobRequirement,
+  Department,
+  Enterprise,
+  AttendanceGroup,
+} from '@/types'
 import { MINIAPP_DEMO_ANCHOR_DATE, jobApplicationStatusMap } from '@/constants/miniapp'
+import { grabInterviewRegStatusMap, grabInterviewWeekdayMap } from '@/constants/grabInterview'
 import { getGrabShiftSlotExtra, getJobDetailExtra } from '@/mock/miniappDetailSeed'
+import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
 
 export type JobApplicationPhase = 'pending' | 'interview' | 'approved' | 'rejected'
 
@@ -30,6 +42,8 @@ export interface GrabShiftApplicationDisplay {
   id: string
   title: string
   postTitle: string
+  positionName: string
+  orgLabel: string
   date: string
   timeRange: string
   pay: number
@@ -43,6 +57,27 @@ export interface GrabShiftApplicationDisplay {
   slotId: string
   payLabel: string
   durationHours: number
+}
+
+export interface GrabInterviewApplicationDisplay {
+  id: string
+  positionName: string
+  enterpriseName: string
+  departmentName: string
+  orgLabel: string
+  interviewDate: string
+  timeSlotLabel: string
+  interviewExactTime?: string
+  scheduleLabel: string
+  weekdayLabel: string
+  status: GrabInterviewRegStatus
+  statusLabel: string
+  detailHint: string
+  failReason?: string
+  feedbackAt?: string
+  createdAt: string
+  phone: string
+  name: string
 }
 
 const grabStatusLabel: Record<string, string> = {
@@ -108,16 +143,40 @@ export function buildJobApplicationDisplay(
 export function buildGrabShiftApplicationDisplay(
   app: GrabShiftApplication,
   slot: GrabShiftSlot | undefined,
-  today = MINIAPP_DEMO_ANCHOR_DATE,
+  ctx?: {
+    today?: string
+    enterprises?: Enterprise[]
+    departments?: Department[]
+    attendanceGroups?: AttendanceGroup[]
+  },
 ): GrabShiftApplicationDisplay {
+  const today = ctx?.today ?? MINIAPP_DEMO_ANCHOR_DATE
   const extra = slot ? getGrabShiftSlotExtra(slot.id, slot.date) : null
+  const positionName = slot?.positionName?.trim() || slot?.shiftName || '—'
   const postTitle = slot?.teamName ?? '—'
-  const title = slot ? `${slot.shiftName}` : '—'
+  const title = slot?.shiftName ?? '—'
   const date = slot?.date ?? '—'
   const timeRange = slot ? `${slot.startTime}-${slot.endTime}` : '—'
   const pay = extra?.pay ?? 0
   const durationHours = extra?.durationHours ?? 8
   const payLabel = formatGrabShiftDailyPay(pay)
+
+  let enterpriseName = ''
+  let departmentName = slot?.departmentName?.trim() || ''
+  if (slot && ctx?.attendanceGroups && ctx.departments && ctx.enterprises) {
+    const enterpriseId = resolveEnterpriseIdByAttendanceGroupId(
+      slot.attendanceGroupId,
+      ctx.attendanceGroups,
+      ctx.departments,
+    )
+    enterpriseName =
+      ctx.enterprises.find((e) => e.id === enterpriseId)?.name?.trim() || ''
+    if (!departmentName && slot.departmentId) {
+      departmentName =
+        ctx.departments.find((d) => d.id === slot.departmentId)?.name?.trim() || ''
+    }
+  }
+  const orgLabel = [enterpriseName, departmentName || postTitle].filter(Boolean).join(' · ') || postTitle
 
   let phase: GrabShiftApplicationPhase = 'pending'
   let statusLabel = grabStatusLabel[app.status] ?? app.status
@@ -150,6 +209,8 @@ export function buildGrabShiftApplicationDisplay(
     id: app.id,
     title,
     postTitle,
+    positionName,
+    orgLabel,
     date,
     timeRange,
     pay,
@@ -166,6 +227,73 @@ export function buildGrabShiftApplicationDisplay(
   }
 }
 
+export function buildGrabInterviewApplicationDisplay(
+  reg: GrabInterviewRegistration,
+  ctx?: {
+    enterprises?: Enterprise[]
+    departments?: Department[]
+    today?: string
+  },
+): GrabInterviewApplicationDisplay {
+  const today = ctx?.today ?? MINIAPP_DEMO_ANCHOR_DATE
+  const enterpriseName =
+    ctx?.enterprises?.find((e) => e.id === reg.enterpriseId)?.name?.trim() || '企业'
+  const departmentName =
+    ctx?.departments?.find((d) => d.id === reg.departmentId)?.name?.trim() || '部门'
+  const weekdayLabel =
+    reg.weekday != null ? grabInterviewWeekdayMap[reg.weekday] ?? '' : ''
+  const exact = reg.interviewExactTime?.trim()
+  const scheduleLabel = exact
+    ? `${reg.interviewDate} ${weekdayLabel} ${exact}（${reg.timeSlotLabel}）`.replace(/\s+/g, ' ').trim()
+    : `${reg.interviewDate} ${weekdayLabel} ${reg.timeSlotLabel}`.replace(/\s+/g, ' ').trim()
+
+  const statusLabel = grabInterviewRegStatusMap[reg.status]?.label ?? reg.status
+  let detailHint = ''
+  switch (reg.status) {
+    case 'pending':
+      if (reg.interviewDate > today) {
+        detailHint = `已锁定面试名额，请于 ${scheduleLabel} 准时参加面试`
+      } else if (reg.interviewDate === today) {
+        detailHint = `今日面试：${scheduleLabel}，请提前到达面试地点`
+      } else {
+        detailHint = '面试日已过，等待企业反馈结果'
+      }
+      break
+    case 'passed':
+      detailHint = '面试已通过，可优先参与该企业抢班报名'
+      break
+    case 'failed':
+      detailHint = reg.failReason?.trim()
+        ? `面试未通过：${reg.failReason}`
+        : '很遗憾，本次面试未通过'
+      break
+    case 'no_show_cancelled':
+      detailHint = '未按时到面或面试已取消，可重新选择时段报名'
+      break
+  }
+
+  return {
+    id: reg.id,
+    positionName: reg.position,
+    enterpriseName,
+    departmentName,
+    orgLabel: `${enterpriseName} · ${departmentName}`,
+    interviewDate: reg.interviewDate,
+    timeSlotLabel: reg.timeSlotLabel,
+    interviewExactTime: reg.interviewExactTime,
+    scheduleLabel,
+    weekdayLabel,
+    status: reg.status,
+    statusLabel,
+    detailHint,
+    failReason: reg.failReason,
+    feedbackAt: reg.feedbackAt,
+    createdAt: reg.createdAt,
+    phone: reg.phone,
+    name: reg.name,
+  }
+}
+
 export function jobStatusTagClass(status: JobApplicationPhase) {
   if (status === 'approved') return 'green'
   if (status === 'rejected') return 'red'
@@ -178,4 +306,24 @@ export function grabStatusTagClass(phase: GrabShiftApplicationPhase, status: str
   if (status === 'pending') return 'orange'
   if (phase === 'approved_upcoming' || phase === 'approved_today') return 'green'
   return 'blue'
+}
+
+export function grabInterviewStatusTagClass(status: GrabInterviewRegStatus) {
+  if (status === 'passed') return 'green'
+  if (status === 'failed') return 'red'
+  if (status === 'no_show_cancelled') return 'grey'
+  return 'orange'
+}
+
+/** 是否为当前灵工的面试报名（兼容仅填手机号的旧数据） */
+export function isGrabInterviewRegForWorker(
+  reg: GrabInterviewRegistration,
+  worker: { id: string; phone?: string; name?: string } | null | undefined,
+) {
+  if (!worker) return false
+  if (reg.employeeId && reg.employeeId === worker.id) return true
+  if (reg.employeeId) return false
+  const phone = worker.phone?.trim()
+  if (phone && reg.phone === phone) return true
+  return false
 }

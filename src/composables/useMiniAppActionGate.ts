@@ -12,7 +12,8 @@ export type MiniAppActionFrom =
   | 'onboarding'
 
 /**
- * 敏感操作统一门禁：实名 → 不定时人脸（2/4h）→（可选）企业部门入驻
+ * 敏感操作统一门禁：实名 →（可选）人脸 →（可选）企业部门入驻
+ * 打卡、领取任务跳过人脸核验
  */
 export function useMiniAppActionGate() {
   const store = useAppStore()
@@ -33,28 +34,14 @@ export function useMiniAppActionGate() {
       jobs: store.jobRequirements,
       requireDepartment: options?.requireDepartment,
       enterpriseId: options?.enterpriseId,
+      // 打卡、领取任务不再做人脸核验拦截
+      skipFaceVerify: from === 'punch' || from === 'claim',
     })
 
     if (result.ok) return true
 
     if (result.reason === 'real_name') {
-      try {
-        await ElMessageBox.confirm(
-          '报名、打卡与领取任务前需先完成实名认证。',
-          '请先实名认证',
-          {
-            confirmButtonText: '去实名认证',
-            cancelButtonText: '取消',
-            type: 'warning',
-          },
-        )
-        await router.push({
-          path: '/miniapp/onboarding',
-          query: { step: 'realname' },
-        })
-      } catch {
-        /* cancelled */
-      }
+      ElMessage.info('实名认证功能开发中，敬请期待')
       return false
     }
 

@@ -24,6 +24,15 @@ const request = computed(() =>
   ),
 )
 
+const batchRequests = computed(() => {
+  const req = request.value
+  if (!req) return []
+  if (!req.batchId) return [req]
+  return store.makeupRequests
+    .filter((r) => r.batchId === req.batchId && r.employeeId === employeeId.value)
+    .sort((a, b) => (a.punchType === 'clock_in' ? -1 : 1) - (b.punchType === 'clock_in' ? -1 : 1))
+})
+
 const dayDetail = computed(() =>
   request.value
     ? buildDayDetail(store, employeeId.value, request.value.date, now.value)
@@ -83,11 +92,11 @@ function formatTime(iso: string) {
         <div class="card-title">补卡申请</div>
         <div class="info-row">
           <span class="info-label">补卡类型</span>
-          <span>{{ punchTypeLabel(request.punchType) }}</span>
+          <span>{{ batchRequests.map((r) => punchTypeLabel(r.punchType)).join('、') }}</span>
         </div>
-        <div class="info-row">
-          <span class="info-label">补卡时间</span>
-          <span>{{ request.time.slice(0, 5) }}</span>
+        <div v-for="item in batchRequests" :key="item.id" class="info-row">
+          <span class="info-label">{{ punchTypeLabel(item.punchType) }}时间</span>
+          <span>{{ item.time.slice(0, 5) }}</span>
         </div>
         <div class="info-row">
           <span class="info-label">申请时间</span>

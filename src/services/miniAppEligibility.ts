@@ -98,6 +98,8 @@ export function evaluateSensitiveActionGate(options: {
   requireDepartment?: boolean
   enterpriseId?: string
   now?: Date
+  /** 跳过人脸核验（如打卡） */
+  skipFaceVerify?: boolean
 }): MiniAppGateBlock {
   const {
     employee,
@@ -107,12 +109,13 @@ export function evaluateSensitiveActionGate(options: {
     requireDepartment = false,
     enterpriseId,
     now = new Date(),
+    skipFaceVerify = false,
   } = options
 
   if (!isRealNameVerified(employee, profileExt)) {
     return { ok: false, reason: 'real_name' }
   }
-  if (needsFaceReverify(profileExt, now)) {
+  if (!skipFaceVerify && needsFaceReverify(profileExt, now)) {
     return {
       ok: false,
       reason: 'face_expired',

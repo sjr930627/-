@@ -7,8 +7,6 @@ import {
   ArrowRight,
   Clock,
   Document,
-  Lock,
-  OfficeBuilding,
   Top,
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
@@ -24,6 +22,7 @@ import {
   listInterviewSlotsForPost,
   type MiniGrabInterviewSlotPreview,
 } from '@/services/miniGrabInterview'
+import { isGrabInterviewRegForWorker } from '@/services/miniApplication'
 import type { GrabInterviewWeekday } from '@/types'
 
 const route = useRoute()
@@ -35,7 +34,6 @@ const { ensureActionAllowed } = useMiniAppActionGate()
 const postId = computed(() => decodeURIComponent(String(route.params.postId || '')))
 const showAllSlots = ref(false)
 const selectedSlotId = ref<string | null>(null)
-const reqExpanded = ref(true)
 
 const post = computed(() => findGrabInterviewPost(store, postId.value, employeeId.value))
 
@@ -56,22 +54,6 @@ const departmentName = computed(
 )
 
 const positionProfile = computed(() => post.value?.profile ?? null)
-
-function parsePositionRequirement(text?: string) {
-  if (!text?.trim()) return null
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
-  if (!lines.length) return null
-  return {
-    intro: lines[0],
-    duties: lines.length > 1 ? lines.slice(1) : [],
-  }
-}
-
-const requirementDetail = computed(() => {
-  const fromProfile = parsePositionRequirement(positionProfile.value?.requirements)
-  if (fromProfile) return fromProfile
-  return { intro: '', duties: [] as string[] }
-})
 
 const skillRequirements = computed(() => positionProfile.value?.skills ?? [])
 
@@ -132,12 +114,27 @@ function openInsurance() {
   ElMessage.info('出勤保险说明（演示）')
 }
 
-function openProcessDetail() {
-  ElMessage.info('抢班直面流程说明：选时锁定名额 → 线下面试评估 → 通过后优先抢班')
-}
+const myRegistration = computed(() => {
+  if (!post.value) return null
+  return (
+    store.grabInterviewRegistrations
+      .filter(
+        (r) =>
+          isGrabInterviewRegForWorker(r, employee.value ?? { id: employeeId.value }) &&
+          r.enterpriseId === post.value!.enterpriseId &&
+          r.departmentId === post.value!.departmentId &&
+          r.position === post.value!.positionName,
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0] ?? null
+  )
+})
 
-function openStarBenefit() {
-  ElMessage.info('企业星级灵工权益：面试通过后可享受优先抢班等星级福利（演示）')
+function openMyRegistration() {
+  if (!myRegistration.value) {
+    ElMessage.info('暂无该岗位的面试报名记录')
+    return
+  }
+  router.push(`/miniapp/applications/interview/${myRegistration.value.id}`)
 }
 
 async function submitRegistration() {
@@ -162,7 +159,7 @@ async function submitRegistration() {
   const phone = employee.value?.phone?.trim() || '13800000000'
 
   try {
-    store.addGrabInterviewRegistration({
+    const item = store.addGrabInterviewRegistration({
       enterpriseId: post.value.enterpriseId,
       departmentId: post.value.departmentId,
       name,
@@ -177,9 +174,7 @@ async function submitRegistration() {
       status: 'pending',
     })
     ElMessage.success('报名成功，请按时参加面试')
-    router.replace({
-      path: `/miniapp/recommend/interview/${encodeURIComponent(postId.value)}`,
-    })
+    router.replace(`/miniapp/applications/interview/${item.id}`)
   } catch (e) {
     ElMessage.warning(e instanceof Error ? e.message : '报名失败')
   }
@@ -206,7 +201,11 @@ async function submitRegistration() {
         </div>
       </section>
 
-      <section class="detail-hero">
+      <section
+        class="detail-hero"
+        :class="{ clickable: !!myRegistration }"
+        @click="openMyRegistration"
+      >
         <h1 class="hero-title">{{ post.title }}</h1>
         <div class="hero-tags">
           <span
@@ -226,6 +225,7 @@ async function submitRegistration() {
           <span class="hero-pay-unit">{{ post.payUnit }}</span>
           <span class="hero-pay-hint">{{ post.payHint }}</span>
         </div>
+        <div v-if="myRegistration" class="hero-app-hint">查看报名详情 ›</div>
       </section>
 
       <section class="detail-location">
@@ -240,10 +240,6 @@ async function submitRegistration() {
       <section class="panel">
         <div class="panel-head">
           <span class="panel-title">报名抢班直面流程</span>
-          <button type="button" class="panel-link" @click="openProcessDetail">
-            详情
-            <el-icon :size="12"><ArrowRight /></el-icon>
-          </button>
         </div>
         <div class="process-row">
           <div
@@ -308,23 +304,6 @@ async function submitRegistration() {
       </section>
 
       <section class="panel">
-        <div class="panel-title solo">此岗位开放星级权益</div>
-        <button type="button" class="star-card" @click="openStarBenefit">
-          <div class="star-left">
-            <div class="star-icon">
-              <el-icon :size="18"><OfficeBuilding /></el-icon>
-            </div>
-            <span>企业星级灵工</span>
-          </div>
-          <div class="star-right">
-            <el-icon :size="12" class="star-lock"><Lock /></el-icon>
-            <span>1项权益</span>
-            <el-icon :size="12"><ArrowRight /></el-icon>
-          </div>
-        </button>
-      </section>
-
-      <section class="panel">
         <div class="panel-title solo">岗位信息</div>
         <div class="profile-rows">
           <div class="rule-row">
@@ -344,33 +323,6 @@ async function submitRegistration() {
             <span class="rule-value">{{ positionProfile?.experience || '不限' }}</span>
           </div>
         </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-title solo">任职要求</div>
-        <p v-if="requirementDetail.intro" class="req-intro">
-          {{ requirementDetail.intro }}
-        </p>
-        <template v-if="reqExpanded && requirementDetail.duties.length">
-          <div class="req-block">
-            <div class="req-block-title">工作职责</div>
-            <ol class="req-list">
-              <li v-for="(item, idx) in requirementDetail.duties" :key="`d-${idx}`">
-                {{ item }}
-              </li>
-            </ol>
-          </div>
-        </template>
-        <button
-          v-if="requirementDetail.duties.length"
-          type="button"
-          class="req-toggle"
-          @click="reqExpanded = !reqExpanded"
-        >
-          {{ reqExpanded ? '收起' : '展开' }}
-          <span class="req-toggle-icon">{{ reqExpanded ? '∧' : '∨' }}</span>
-        </button>
-        <p v-else-if="!requirementDetail.intro" class="text-muted-mini">暂无任职要求</p>
       </section>
 
       <section v-if="positionProfile?.description" class="panel">
@@ -448,6 +400,17 @@ async function submitRegistration() {
 .detail-hero {
   background: #fff;
   padding: 16px 16px 12px;
+}
+
+.detail-hero.clickable {
+  cursor: pointer;
+}
+
+.hero-app-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--mini-primary, #4fd1c5);
+  font-weight: 500;
 }
 
 .detail-location {
@@ -748,50 +711,6 @@ async function submitRegistration() {
   color: #f97316;
 }
 
-.star-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 12px;
-  border: 1px solid #f0f0f0;
-  border-radius: 10px;
-  background: #fafafa;
-  cursor: pointer;
-}
-
-.star-left {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a1a1a;
-}
-
-.star-icon {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  background: #E6FFFA;
-  color: #4FD1C5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.star-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #999;
-}
-
-.star-lock {
-  margin-right: 2px;
-}
-
 .profile-rows {
   display: flex;
   flex-direction: column;
@@ -824,17 +743,6 @@ async function submitRegistration() {
   line-height: 1.6;
 }
 
-.req-block {
-  margin-bottom: 12px;
-}
-
-.req-block-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 8px;
-}
-
 .req-list {
   margin: 0;
   padding-left: 18px;
@@ -855,24 +763,6 @@ async function submitRegistration() {
   margin: 0;
   font-size: 13px;
   color: #999;
-}
-
-.req-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  border: none;
-  background: none;
-  color: var(--app-primary, #4FD1C5);
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  padding: 0;
-}
-
-.req-toggle-icon {
-  font-size: 12px;
 }
 
 .detail-footer {

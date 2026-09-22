@@ -14,12 +14,19 @@ import {
   buildPunchLocationLabel,
   buildPunchTargets,
   calcNearestTarget,
-  getEmployeeAttendanceGroup,
+  freePunchWindowLabel,
+  getEmployeePunchModes,
+  getFreePunchDepartmentOptions,
+  isFreeClockInOnly,
+  isNoPunchGroup,
   localDateStr,
+  pickDefaultFreePunchDepartmentId,
+  resolveAttendanceGroupByMode,
   resolveAvailableMethods,
   useMiniPunchClock,
   useMiniPunchLocation,
   useMiniPunchWifi,
+  type MiniPunchMode,
 } from '@/composables/useMiniPunch'
 import {
   miniPunchMethodIcon,
@@ -37,7 +44,6 @@ const { now } = useMiniPunchClock()
 const { locating, lat, lng, address, locateError, refreshLocation } = useMiniPunchLocation()
 
 const punchMethod = ref<MiniPunchMethod>('gps')
-const fieldRemark = ref('')
 const qrScanned = ref(false)
 const qrScanning = ref(false)
 const selectedTargetId = ref<string | null>(null)
@@ -51,10 +57,43 @@ const fromTaskInstance = computed(() =>
     : undefined,
 )
 
-const attendanceGroup = computed(() => getEmployeeAttendanceGroup(store, employeeId.value))
+const punchModes = computed(() => getEmployeePunchModes(store, employeeId.value))
+
+/** 以工作台带入的 mode 为准；无参数时回退默认模式 */
+const activePunchMode = computed<MiniPunchMode | null>(() => {
+  const q = route.query.mode
+  if ((q === 'free' || q === 'shift') && punchModes.value.modes.includes(q)) {
+    return q
+  }
+  return punchModes.value.defaultMode
+})
+
+const attendanceGroup = computed(() =>
+  resolveAttendanceGroupByMode(store, employeeId.value, activePunchMode.value),
+)
 const punchTargets = computed(() => buildPunchTargets(attendanceGroup.value))
 const availableMethods = computed(() => resolveAvailableMethods(attendanceGroup.value))
-const { connectedSsid, wifiMatched, rescanWifi } = useMiniPunchWifi(attendanceGroup.value)
+const { connectedSsid, wifiMatched, rescanWifi } = useMiniPunchWifi(() => attendanceGroup.value)
+
+const freeDeptOptions = computed(() =>
+  activePunchMode.value === 'free'
+    ? getFreePunchDepartmentOptions(store, employeeId.value, attendanceGroup.value)
+    : [],
+)
+
+/** 详情页只读：沿用工作台带入的 dept，不可切换 */
+const freeDeptId = computed(() => {
+  if (activePunchMode.value !== 'free') return null
+  const opts = freeDeptOptions.value
+  if (!opts.length) return null
+  const q = typeof route.query.dept === 'string' ? route.query.dept : null
+  if (q && opts.some((o) => o.id === q)) return q
+  return pickDefaultFreePunchDepartmentId(store, employeeId.value, opts)
+})
+
+const freeDeptLabel = computed(
+  () => freeDeptOptions.value.find((o) => o.id === freeDeptId.value)?.name ?? '',
+)
 
 const radiusMeters = computed(() => attendanceGroup.value?.gpsRadiusMeters ?? 300)
 
@@ -90,7 +129,21 @@ const todayShift = computed(() => {
   if (!asn) return null
   return store.shifts.find((s) => s.id === asn.shiftId) ?? null
 })
-const isRestToday = computed(() => !todayShift.value || todayShift.value.id === 'shift_rest')
+const isFreePunch = computed(() => activePunchMode.value === 'free')
+const isNoPunch = computed(() => isNoPunchGroup(attendanceGroup.value))
+const freeClockInOnly = computed(
+  () => isFreePunch.value && isFreeClockInOnly(attendanceGroup.value),
+)
+const hasScheduledWork = computed(
+  () => Boolean(todayShift.value && todayShift.value.id !== 'shift_rest'),
+)
+/** 休息日：班次模式下无有效班次；自由打卡模式仍可打卡 */
+const isRestToday = computed(() => {
+  if (isFreePunch.value) return false
+  if (isNoPunch.value) return true
+  return !hasScheduledWork.value
+})
+const freePunchTip = computed(() => freePunchWindowLabel(attendanceGroup.value))
 
 const todayPunches = computed(() =>
   store.punches
@@ -100,14 +153,17 @@ const todayPunches = computed(() =>
 const hasClockIn = computed(() => todayPunches.value.some((p) => p.type === 'clock_in'))
 const hasClockOut = computed(() => todayPunches.value.some((p) => p.type === 'clock_out'))
 const nextPunchType = computed<'clock_in' | 'clock_out' | null>(() => {
+  if (freeClockInOnly.value) {
+    if (hasClockIn.value) return null
+    return 'clock_in'
+  }
   if (hasClockOut.value) return null
   if (hasClockIn.value) return 'clock_out'
   return 'clock_in'
 })
 
 const canPunch = computed(() => {
-  if (isRestToday.value || !nextPunchType.value) return false
-  if (punchMethod.value === 'field') return fieldRemark.value.trim().length >= 4
+  if (isRestToday.value || isNoPunch.value || !nextPunchType.value) return false
   if (punchMethod.value === 'wifi') return wifiMatched.value
   if (punchMethod.value === 'qrcode') return qrScanned.value
   return locationStatus.value.inRange
@@ -118,9 +174,6 @@ const rangeHint = computed(() => {
     return wifiMatched.value
       ? `已连接考勤 WiFi：${connectedSsid.value}`
       : `请连接 ${attendanceGroup.value?.wifiName ?? '考勤 WiFi'}`
-  }
-  if (punchMethod.value === 'field') {
-    return '外勤打卡需填写事由，提交后进入审批流程（演示）'
   }
   if (punchMethod.value === 'qrcode') {
     return qrScanned.value ? '扫码成功，可以打卡' : '扫描门店考勤二维码后打卡'
@@ -133,9 +186,13 @@ const rangeHint = computed(() => {
   return `距「${activeTarget.value?.name}」${dist}m，超出 ${radiusMeters.value}m 范围`
 })
 
+const punchModeTitle = computed(() =>
+  activePunchMode.value === 'free' ? '自由打卡' : '班次打卡',
+)
+
 const punchBtnLabel = computed(() => {
   if (!nextPunchType.value) return '今日已完成'
-  return nextPunchType.value === 'clock_in' ? '上班打卡' : '下班打卡'
+  return nextPunchType.value === 'clock_in' ? '签到' : '签退'
 })
 
 function selectMethod(m: MiniPunchMethod) {
@@ -160,10 +217,16 @@ function buildInsuranceDialogInfo(
 ): InsuranceSuccessInfo {
   const product = store.insuranceProducts.find((p) => p.id === policy.productId)
   const shift = todayShift.value
+  const shiftLabel =
+    isFreePunch.value
+      ? freePunchTip.value
+      : shift
+        ? `${shift.name} ${shift.startTime}–${shift.endTime}`
+        : '—'
   return {
     productName: product?.name ?? '工伤保险',
     workDate: policy.workDate,
-    shiftLabel: shift ? `${shift.name} ${shift.startTime}–${shift.endTime}` : '—',
+    shiftLabel,
     location: punch.location ?? policy.location ?? '—',
     premium: policy.premium,
     policyNo: policy.policyNo,
@@ -185,17 +248,18 @@ async function submitPunch() {
   const punchType = nextPunchType.value
   const method = punchMethod.value as PunchMethod
   const target = activeTarget.value
-  const locationLabel = buildPunchLocationLabel(
+  let locationLabel = buildPunchLocationLabel(
     method,
     target?.name,
-    method === 'field' ? fieldRemark.value.trim() : target?.address ?? address.value,
+    target?.address ?? address.value,
   )
+  if (isFreePunch.value && freeDeptLabel.value) {
+    locationLabel = `${locationLabel} · ${freeDeptLabel.value}`
+  }
   const inRange =
-    method === 'field'
-      ? false
-      : method === 'wifi'
-        ? !!wifiMatched.value
-        : locationStatus.value.inRange
+    method === 'wifi'
+      ? !!wifiMatched.value
+      : locationStatus.value.inRange
 
   try {
     const { punch, insurancePolicy } = store.addPunch({
@@ -207,7 +271,6 @@ async function submitPunch() {
       location: locationLabel,
       inRange,
       punchMethod: method,
-      remark: method === 'field' ? fieldRemark.value.trim() : undefined,
     })
     const action = punchType === 'clock_in' ? '上班' : '下班'
     if (punchType === 'clock_in' && insurancePolicy) {
@@ -217,7 +280,6 @@ async function submitPunch() {
       ElMessage.success(`${action}打卡成功`)
       returnToTaskIfNeeded()
     }
-    if (method === 'field') fieldRemark.value = ''
     if (method === 'qrcode') qrScanned.value = false
   } catch (e) {
     ElMessage.warning(e instanceof Error ? e.message : '打卡失败')
@@ -329,17 +391,6 @@ function methodPunchLabel(method?: PunchMethod) {
         <div class="mp-wifi-hint">需连接考勤组配置的「{{ attendanceGroup?.wifiName }}」方可打卡</div>
       </template>
 
-      <template v-else-if="punchMethod === 'field'">
-        <div class="mp-panel-title">外勤打卡</div>
-        <textarea
-          v-model="fieldRemark"
-          class="mp-field-input"
-          rows="3"
-          placeholder="请填写外勤事由，如：客户现场巡检、跨店支援…"
-        />
-        <div class="mp-field-hint">外勤打卡将记录当前位置并标记为范围外，需主管审批（演示）</div>
-      </template>
-
       <template v-else-if="punchMethod === 'qrcode'">
         <div class="mp-panel-title">扫码打卡</div>
         <div class="mp-qr-box">
@@ -355,22 +406,35 @@ function methodPunchLabel(method?: PunchMethod) {
       </template>
     </div>
 
-    <!-- 班次信息 -->
-    <div v-if="!isRestToday && todayShift" class="mp-shift-bar">
+    <!-- 班次 / 自由打卡信息 -->
+    <div v-if="isFreePunch" class="mp-shift-bar free">
+      <div class="mp-free-bar-main">
+        <span>今日考勤</span>
+        <span>{{ freePunchTip }}</span>
+      </div>
+      <div v-if="freeDeptLabel" class="mp-free-dept-fixed">部门 · {{ freeDeptLabel }}</div>
+    </div>
+    <div v-else-if="!isRestToday && hasScheduledWork && todayShift" class="mp-shift-bar">
       <span>今日班次</span>
       <span>{{ todayShift.name }} {{ todayShift.startTime.slice(0, 5) }}-{{ todayShift.endTime.slice(0, 5) }}</span>
     </div>
+    <div v-else-if="isNoPunch" class="mp-shift-bar rest">今日无需打卡</div>
     <div v-else class="mp-shift-bar rest">今日休息</div>
 
     <!-- 大打卡按钮 -->
     <div class="mp-punch-area">
       <button
         class="mp-punch-circle"
-        :class="{ out: nextPunchType === 'clock_out', disabled: !canPunch }"
+        :class="{
+          out: nextPunchType === 'clock_out',
+          disabled: !canPunch,
+          free: isFreePunch,
+        }"
         type="button"
         :disabled="!canPunch"
         @click="submitPunch"
       >
+        <span class="mp-punch-mode">{{ punchModeTitle }}</span>
         <span class="mp-punch-time">{{ clockText }}</span>
         <span class="mp-punch-label">{{ punchBtnLabel }}</span>
         <span class="mp-punch-method">{{ miniPunchMethodMap[punchMethod] }}</span>
@@ -382,7 +446,7 @@ function methodPunchLabel(method?: PunchMethod) {
       <div class="mp-records-title">今日打卡记录</div>
       <div v-if="todayPunches.length === 0" class="mp-records-empty">暂无记录</div>
       <div v-for="p in todayPunches" :key="p.id" class="mp-record-row">
-        <span class="mp-record-type" :class="p.type">{{ p.type === 'clock_in' ? '上班' : '下班' }}</span>
+        <span class="mp-record-type" :class="p.type">{{ p.type === 'clock_in' ? '签到' : '签退' }}</span>
         <span class="mp-record-time">{{ p.time.slice(0, 5) }}</span>
         <span class="mp-record-meta">
           {{ methodPunchLabel(p.punchMethod) }}
@@ -669,23 +733,6 @@ function methodPunchLabel(method?: PunchMethod) {
   margin-top: 8px;
 }
 
-.mp-field-input {
-  width: 100%;
-  border: 1px solid #e8e8e8;
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 14px;
-  resize: none;
-  box-sizing: border-box;
-  font-family: inherit;
-}
-
-.mp-field-hint {
-  font-size: 11px;
-  color: #999;
-  margin-top: 8px;
-}
-
 .mp-qr-box {
   display: flex;
   flex-direction: column;
@@ -733,6 +780,26 @@ function methodPunchLabel(method?: PunchMethod) {
 
 .mp-shift-bar.rest { color: #999; justify-content: center; }
 
+.mp-shift-bar.free {
+  color: #409EFF;
+  background: #ECF5FF;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.mp-free-bar-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mp-free-dept-fixed {
+  font-size: 12px;
+  color: #79bbff;
+  font-weight: 600;
+}
+
 .mp-punch-area {
   display: flex;
   justify-content: center;
@@ -750,8 +817,14 @@ function methodPunchLabel(method?: PunchMethod) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   cursor: pointer;
   box-shadow: 0 12px 32px rgba(79, 209, 197, 0.45);
+}
+
+.mp-punch-circle.free {
+  background: linear-gradient(145deg, #409EFF, #66b1ff);
+  box-shadow: 0 12px 32px rgba(64, 158, 255, 0.4);
 }
 
 .mp-punch-circle.out {
@@ -759,11 +832,23 @@ function methodPunchLabel(method?: PunchMethod) {
   box-shadow: 0 12px 32px rgba(71, 85, 105, 0.35);
 }
 
+.mp-punch-circle.out.free {
+  background: linear-gradient(145deg, #337ecc, #409EFF);
+  box-shadow: 0 12px 32px rgba(64, 158, 255, 0.35);
+}
+
 .mp-punch-circle.disabled {
   background: #e8e8e8;
   box-shadow: none;
   cursor: not-allowed;
   color: #aaa;
+}
+
+.mp-punch-mode {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.92;
+  letter-spacing: 0.5px;
 }
 
 .mp-punch-time {
@@ -776,13 +861,13 @@ function methodPunchLabel(method?: PunchMethod) {
 .mp-punch-label {
   font-size: 18px;
   font-weight: 700;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .mp-punch-method {
   font-size: 11px;
   opacity: 0.85;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .mp-records {

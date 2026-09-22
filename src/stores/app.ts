@@ -307,7 +307,7 @@ import {
   pickContractConfig,
   restoreEffectiveConfig,
 } from '@/services/contractVersion'
-import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureNotifications, ensureServiceContracts, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage, calcAgeFromIdCard } from '@/utils'
+import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureGrabInterviewRegistrations, ensureNotifications, ensureServiceContracts, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage, calcAgeFromIdCard } from '@/utils'
 import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
 import { generateBillNo, resolveBillTaxFlagsFromContract, resolveServiceProviderForEnterprise } from '@/services/billSettlement'
 import { estimateServiceFeeWaiverByQuantity } from '@/constants/payrollBill'
@@ -494,8 +494,11 @@ export const useAppStore = defineStore('app', {
     ),
     grabInterviewConfigs: workforceSeed.grabInterviewConfigs,
     enterprisePositions: workforceSeed.enterprisePositions,
-    grabInterviewRegistrations: loadFromStorage<GrabInterviewRegistration[]>(
-      'grabInterviewRegistrations',
+    grabInterviewRegistrations: ensureGrabInterviewRegistrations(
+      loadFromStorage<GrabInterviewRegistration[]>(
+        'grabInterviewRegistrations',
+        seedGrabInterviewRegistrations,
+      ),
       seedGrabInterviewRegistrations,
     ),
     scheduleTemplates: loadFromStorage<ScheduleTemplate[]>('scheduleTemplates', seedScheduleTemplates),
@@ -1817,22 +1820,34 @@ export const useAppStore = defineStore('app', {
           related.length === 1
             ? first.date
             : `${related.length} 个日期（含 ${first.date}）`
+        const hourlyRate = team.hourlyRate ?? this.payrollConfig.defaultHourlyRate ?? 25
+        let estimatedIncome = 0
+        if (shift && shift.code !== 'REST') {
+          const [sh, sm] = shift.startTime.split(':').map(Number)
+          const [eh, em] = shift.endTime.split(':').map(Number)
+          let mins = eh * 60 + em - (sh * 60 + sm) - (shift.breakMinutes || 0)
+          if (mins <= 0) mins += 24 * 60
+          estimatedIncome = Math.round((Math.max(0, mins) / 60) * hourlyRate * 100) / 100
+        }
         this.miniAppMessages.unshift({
           id: generateId('msg'),
           employeeId,
           category: 'schedule',
           actionType: 'schedule_confirm',
-          title: `排班已更新，请确认【${team.name}】${shiftLabel}`,
-          content: `班次：【${team.name}】${shiftLabel}${shiftTime ? ` · ${shiftTime}` : ''} · ${dateText}，请确认是否可出勤。`,
+          title: `排班已更新，请确认【${group?.name ?? team.name}】${shiftLabel}`,
+          content: `班次：【${group?.name ?? team.name}】${shiftLabel}${shiftTime ? ` · ${shiftTime}` : ''} · ${dateText}，请确认是否可出勤。`,
           read: false,
           createdAt: new Date().toISOString(),
           scheduleDetail: {
-            enterpriseName: group?.name ?? team.name,
-            groupName: team.name,
+            enterpriseName: this.departments.find((d) => d.id === team.departmentId)?.name
+              ?? group?.name
+              ?? team.name,
+            groupName: group?.name ?? team.name,
             shiftLabel,
             shiftTime,
             date: first.date,
-            hourlyRate: team.hourlyRate ?? 0,
+            hourlyRate,
+            estimatedIncome,
             confirmBefore: `${first.date}T23:59:00`,
             confirmStatus: 'pending',
           },
@@ -2449,38 +2464,63 @@ export const useAppStore = defineStore('app', {
     },
 
     submitMakeupRequest(data: Omit<MakeupPunchRequest, 'id' | 'status' | 'createdAt'>) {
-      const pending = this.makeupRequests.find(
-        (r) =>
-          r.employeeId === data.employeeId &&
-          r.date === data.date &&
-          r.status === 'pending',
-      )
-      if (pending) throw new Error('该日期已有待审批的补卡申请')
+      const created = this.submitMakeupRequestBatch([data])
+      return created[0]
+    },
 
-      const month = data.date.slice(0, 7)
-      const count = this.makeupRequests.filter(
+    /** 一次提交一条或多条补卡（缺卡可同时补签到、签退，各生成一条记录） */
+    submitMakeupRequestBatch(items: Omit<MakeupPunchRequest, 'id' | 'status' | 'createdAt' | 'batchId'>[]) {
+      if (!items.length) throw new Error('请选择补卡类型')
+      const first = items[0]
+      const month = first.date.slice(0, 7)
+      const approvedCount = this.makeupRequests.filter(
         (r) =>
-          r.employeeId === data.employeeId &&
+          r.employeeId === first.employeeId &&
           r.date.startsWith(month) &&
           r.status === 'approved',
       ).length
-      if (count >= this.attendanceRule.maxMakeupPerMonth) {
+      if (approvedCount + items.length > this.attendanceRule.maxMakeupPerMonth) {
         throw new Error(`每月补卡不能超过 ${this.attendanceRule.maxMakeupPerMonth} 次`)
       }
-      const item: MakeupPunchRequest = {
-        ...data,
-        id: generateId('makeup'),
-        status: 'pending',
-        createdAt: new Date().toISOString(),
+      for (const data of items) {
+        const pending = this.makeupRequests.find(
+          (r) =>
+            r.employeeId === data.employeeId &&
+            r.date === data.date &&
+            r.punchType === data.punchType &&
+            r.status === 'pending',
+        )
+        if (pending) {
+          throw new Error(
+            `该日期已有待审批的${data.punchType === 'clock_in' ? '签到' : '签退'}补卡申请`,
+          )
+        }
       }
-      this.makeupRequests.unshift(item)
+      const batchId = items.length > 1 ? generateId('mkbatch') : undefined
+      const createdAt = new Date().toISOString()
+      const created: MakeupPunchRequest[] = items.map((data) => {
+        const item: MakeupPunchRequest = {
+          ...data,
+          id: generateId('makeup'),
+          status: 'pending',
+          createdAt,
+          batchId,
+        }
+        this.makeupRequests.unshift(item)
+        return item
+      })
       this.persist('makeupRequests')
+      const name = this.employees.find((e) => e.id === first.employeeId)?.name
+      const detail = [...created]
+        .reverse()
+        .map((r) => `${r.punchType === 'clock_in' ? '签到' : '签退'} ${r.time}`)
+        .join('、')
       this.pushNotification({
         title: '补卡申请待审批',
-        content: `${this.employees.find((e) => e.id === data.employeeId)?.name} 申请补卡（${data.date} ${data.time}）`,
+        content: `${name} 申请补卡（${first.date} ${detail}）`,
         type: 'approval',
       })
-      return item
+      return created
     },
 
     reviewMakeupRequest(id: string, approved: boolean, reviewNote = '', reviewedBy = '排班员') {
@@ -7132,7 +7172,12 @@ export const useAppStore = defineStore('app', {
       return item
     },
 
-    acceptTaskFromHall(taskId: string, employeeId: string, quantity = 1) {
+    acceptTaskFromHall(
+      taskId: string,
+      employeeId: string,
+      quantity = 1,
+      fieldValues: Record<string, string | number | boolean> = {},
+    ) {
       const task = this.tasks.find((t) => t.id === taskId)
       if (!task || task.status !== 'active') throw new Error('任务不可领取')
       if (task.dispatchMode && task.dispatchMode !== 'hall') throw new Error('该任务不支持大厅抢单')
@@ -7164,6 +7209,7 @@ export const useAppStore = defineStore('app', {
       const pricing = resolveTaskPricing(task, this.taskTypes)
       const claimNode = getWorkflowClaimNode(workflow)
       if (!claimNode) throw new Error('工作流节点异常')
+      validateWorkflowNodeFields(workflow, claimNode.id, fieldValues)
       const settlementUnit =
         task.settlementUnitPrice != null
           ? task.settlementUnitPrice
@@ -7185,7 +7231,7 @@ export const useAppStore = defineStore('app', {
         currentNodeName: claimNode.name,
         claimQuantity: q,
         amount,
-        fieldValues: {},
+        fieldValues: { ...fieldValues },
         createdAt: now,
         updatedAt: now,
       }
@@ -7194,6 +7240,14 @@ export const useAppStore = defineStore('app', {
       this.persist('taskInstances')
       this.persist('tasks')
       this.addMiniAppMessage(employeeId, 'task', '任务领取成功', `您已领取「${task.name}」${q} 件/次，请尽快执行。`)
+      const submitAction = pickWorkerSubmitAction(workflow, claimNode.id)
+      if (submitAction) {
+        try {
+          this.submitTaskInstanceWorkflow(item.id, fieldValues, submitAction)
+        } catch {
+          // 字段已写入领取节点；流转失败时留在领取节点，由任务详情继续提交
+        }
+      }
       return item
     },
 
@@ -7282,10 +7336,20 @@ export const useAppStore = defineStore('app', {
       employeeId: string,
       channel: 'alipay' | 'bank' = 'alipay',
     ) {
-      const records = this.workerIncomeRecords.filter(
-        (r) => ids.includes(r.id) && r.employeeId === employeeId && r.status === 'claimable',
+      return this.claimWorkerIncomeItems(
+        ids.map((recordId) => ({ recordId, itemIds: [] })),
+        employeeId,
+        channel,
       )
-      if (records.length === 0) throw new Error('没有可领取的收入')
+    },
+
+    /** 按明细领取；同一记录可部分领取，剩余明细仍留在待领取 */
+    claimWorkerIncomeItems(
+      selections: { recordId: string; itemIds: string[] }[],
+      employeeId: string,
+      channel: 'alipay' | 'bank' = 'alipay',
+    ) {
+      if (!selections.length) throw new Error('没有可领取的收入')
       const binding = this.workerPaymentBindings.find((b) => b.employeeId === employeeId)
       if (channel === 'alipay' && !binding?.alipay) {
         throw new Error('请先绑定支付宝账号')
@@ -7293,19 +7357,83 @@ export const useAppStore = defineStore('app', {
       if (channel === 'bank' && (!binding?.bankName || !binding?.bankCardLast4)) {
         throw new Error('请先绑定银行卡')
       }
+
       const now = new Date().toISOString()
       const batchId = generateId('claim')
-      for (const r of records) {
-        r.tax = Math.round(r.amount * 0.03 * 100) / 100
-        r.netAmount = Math.round((r.amount - r.tax) * 100) / 100
-        r.status = 'claimed'
-        r.claimedAt = now
-        r.claimBatchId = batchId
+      const claimedRecords: WorkerIncomeRecord[] = []
+
+      for (const sel of selections) {
+        const record = this.workerIncomeRecords.find(
+          (r) =>
+            r.id === sel.recordId &&
+            r.employeeId === employeeId &&
+            r.status === 'claimable',
+        )
+        if (!record) continue
+
+        const allItems =
+          record.items?.length
+            ? [...record.items]
+            : [
+                {
+                  id: `${record.id}_fallback`,
+                  title: record.title,
+                  unitPrice: record.amount,
+                  quantity: 1,
+                  calcType:
+                    record.source === 'attendance'
+                      ? ('hourly' as const)
+                      : ('task' as const),
+                  amount: record.amount,
+                },
+              ]
+
+        const selectedIds = new Set(
+          sel.itemIds.length ? sel.itemIds : allItems.map((i) => i.id),
+        )
+        const picked = allItems.filter((i) => selectedIds.has(i.id))
+        const remain = allItems.filter((i) => !selectedIds.has(i.id))
+        if (!picked.length) continue
+
+        const amount = Math.round(picked.reduce((s, i) => s + i.amount, 0) * 100) / 100
+        const tax = Math.round(amount * 0.03 * 100) / 100
+        const netAmount = Math.round((amount - tax) * 100) / 100
+
+        if (!remain.length) {
+          record.amount = amount
+          record.items = picked
+          record.tax = tax
+          record.netAmount = netAmount
+          record.status = 'claimed'
+          record.claimedAt = now
+          record.claimBatchId = batchId
+          claimedRecords.push(record)
+        } else {
+          const claimed: WorkerIncomeRecord = {
+            ...record,
+            id: generateId('inc'),
+            title: record.title,
+            amount,
+            tax,
+            netAmount,
+            status: 'claimed',
+            items: picked,
+            createdAt: record.createdAt,
+            claimedAt: now,
+            claimBatchId: batchId,
+          }
+          record.items = remain
+          record.amount = Math.round(remain.reduce((s, i) => s + i.amount, 0) * 100) / 100
+          this.workerIncomeRecords.unshift(claimed)
+          claimedRecords.push(claimed)
+        }
       }
+
+      if (!claimedRecords.length) throw new Error('没有可领取的收入')
       this.persist('workerIncomeRecords')
-      const gross = records.reduce((s, r) => s + r.amount, 0)
-      const tax = records.reduce((s, r) => s + (r.tax ?? 0), 0)
-      const total = records.reduce((s, r) => s + (r.netAmount ?? 0), 0)
+      const gross = claimedRecords.reduce((s, r) => s + r.amount, 0)
+      const tax = claimedRecords.reduce((s, r) => s + (r.tax ?? 0), 0)
+      const total = claimedRecords.reduce((s, r) => s + (r.netAmount ?? 0), 0)
       const dest =
         channel === 'alipay'
           ? `支付宝 ${binding!.alipay}`
@@ -7316,7 +7444,7 @@ export const useAppStore = defineStore('app', {
         '收入领取成功',
         `已成功领取 ¥${total.toFixed(2)}（税前 ¥${gross.toFixed(2)}，个税 ¥${tax.toFixed(2)}），将转入${dest}。`,
       )
-      return records
+      return claimedRecords
     },
 
     addMiniAppMessage(

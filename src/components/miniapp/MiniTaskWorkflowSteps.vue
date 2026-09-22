@@ -31,6 +31,18 @@ function lineClass(current: TaskWorkflowStepItem) {
       <div class="wf-step-body">
         <div class="wf-step-title">{{ step.title }}</div>
         <div v-if="step.description" class="wf-step-desc">{{ step.description }}</div>
+        <div v-if="step.operatedAt" class="wf-step-time">操作时间：{{ step.operatedAt }}</div>
+        <div v-if="step.fieldEntries?.length" class="wf-step-fields">
+          <div class="wf-step-fields-title">录入信息</div>
+          <div
+            v-for="entry in step.fieldEntries"
+            :key="entry.fieldId"
+            class="wf-step-field-row"
+          >
+            <span class="wf-step-field-name">{{ entry.name }}</span>
+            <span class="wf-step-field-value">{{ entry.value }}</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -150,5 +162,48 @@ function lineClass(current: TaskWorkflowStepItem) {
 
 .wf-step.active .wf-step-desc {
   color: #4b5563;
+}
+
+.wf-step-time {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.wf-step.completed .wf-step-time {
+  color: #6b7280;
+}
+
+.wf-step-fields {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.wf-step-fields-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 6px;
+}
+
+.wf-step-field-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+.wf-step-field-name {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.wf-step-field-value {
+  color: #374151;
+  text-align: right;
+  word-break: break-all;
 }
 </style>

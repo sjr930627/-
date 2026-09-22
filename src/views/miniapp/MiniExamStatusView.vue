@@ -7,7 +7,6 @@ const router = useRouter()
 const { examTasks } = useMiniWorkerTraining()
 
 const statusMap = {
-  locked: { label: '未解锁', cls: 'grey' },
   ready: { label: '待考试', cls: 'orange' },
   passed: { label: '已通过', cls: 'green' },
   failed: { label: '未通过', cls: 'red' },
@@ -17,7 +16,7 @@ function takeExam(courseId: string) {
   router.push(`/miniapp/training/exam/${courseId}`)
 }
 
-function viewReview(courseId: string, attemptId: string) {
+function viewDetail(courseId: string, attemptId: string) {
   router.push(`/miniapp/training/exam/${courseId}/review/${attemptId}`)
 }
 
@@ -46,15 +45,14 @@ function formatDate(iso: string) {
           时长 {{ task.exam.durationMinutes }} 分钟 · 及格 {{ task.exam.passScore }} 分
           · 已考 {{ task.attemptCount }}/{{ task.exam.maxRetakes < 0 ? '∞' : task.exam.maxRetakes }} 次
         </div>
-        <div v-if="task.status === 'locked'" class="exam-tip">请先完成课程学习（当前 {{ task.progress }}%）</div>
-        <div v-else class="exam-tip muted">图题识别 · 单选/多选 · 答完可查看解析</div>
 
         <div v-if="task.attempts.length" class="attempt-list">
+          <div class="attempt-list-title">考试明细</div>
           <div
             v-for="att in task.attempts"
             :key="att.id"
             class="attempt-row clickable"
-            @click="viewReview(task.courseId, att.id)"
+            @click="viewDetail(task.courseId, att.id)"
           >
             <div class="attempt-left">
               <span class="mini-tag" :class="att.passed ? 'green' : 'red'">
@@ -65,7 +63,6 @@ function formatDate(iso: string) {
             <div class="attempt-right">
               <span class="attempt-score" :class="{ pass: att.passed }">{{ att.score }}分</span>
               <span class="attempt-time">{{ formatDate(att.submittedAt) }}</span>
-              <span class="attempt-link">查看解析 ›</span>
             </div>
           </div>
         </div>
@@ -80,7 +77,7 @@ function formatDate(iso: string) {
           开始考试
         </button>
       </div>
-      <div v-if="examTasks.length === 0" class="mini-empty">暂无考核</div>
+      <div v-if="examTasks.length === 0" class="mini-empty">暂无已解锁考核</div>
     </div>
   </div>
 </template>
@@ -90,9 +87,6 @@ function formatDate(iso: string) {
 .exam-name { font-size: 16px; font-weight: 600; color: #333; }
 .exam-course { font-size: 12px; color: #999; margin-top: 4px; }
 .exam-meta { font-size: 12px; color: #666; }
-.exam-tip { font-size: 12px; color: #fa8c16; margin-top: 8px; }
-.exam-tip.muted { color: #999; }
-.mini-tag.grey { background: #f5f5f5; color: #999; }
 .mini-tag.red { background: #fff0f0; color: #e60012; }
 .attempt-list {
   margin-top: 12px;
@@ -101,6 +95,11 @@ function formatDate(iso: string) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.attempt-list-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #333;
 }
 .attempt-row {
   display: flex;
@@ -121,5 +120,4 @@ function formatDate(iso: string) {
 .attempt-score { font-size: 16px; font-weight: 700; color: #e60012; display: block; }
 .attempt-score.pass { color: #52c41a; }
 .attempt-time { font-size: 11px; color: #bbb; display: block; }
-.attempt-link { font-size: 11px; color: #e60012; display: block; margin-top: 2px; }
 </style>

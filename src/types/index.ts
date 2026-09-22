@@ -958,6 +958,8 @@ export interface MakeupPunchRequest {
   reviewedBy?: string
   reviewedAt?: string
   reviewNote?: string
+  /** 同一次申请同时补签到、签退时共用，详情页成对展示 */
+  batchId?: string
 }
 
 export interface AttendanceMonthlySummary {
@@ -2725,11 +2727,14 @@ export type MiniMessageActionType =
 
 export interface MiniAppMessageScheduleDetail {
   enterpriseName: string
+  /** 考勤组名称 */
   groupName: string
   shiftLabel: string
   shiftTime: string
   date: string
   hourlyRate: number
+  /** 预计收入（元） */
+  estimatedIncome: number
   confirmBefore: string
   confirmStatus?: 'pending' | 'accepted' | 'rejected'
 }
@@ -2772,9 +2777,10 @@ export interface WorkerIncomeRecord {
   netAmount?: number
   status: WorkerIncomeStatus
   source: 'task' | 'attendance' | 'bonus'
-  /** 所属企业（待结算按企业+工时/任务汇总） */
+  /** 所属企业（待结算/待领取按企业汇总工时与任务明细） */
   enterpriseId?: string
   enterpriseName?: string
+  /** @deprecated 待结算/待领取不再按月展示 */
   period?: string
   createdAt: string
   claimedAt?: string

@@ -1,29 +1,60 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   ArrowDown,
   ArrowRight,
   RefreshRight,
+  Search,
   User,
 } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { useMiniAppActionGate } from '@/composables/useMiniAppActionGate'
 import { getGrabShiftPostExtra, getGrabShiftSlotExtra } from '@/mock/miniappDetailSeed'
 import { TASK_PREVIEW_LIMIT } from '@/services/miniTask'
 import { isGrabSlotVisibleToWorker } from '@/services/grabShift'
 import { listOpenGrabInterviewPosts } from '@/services/miniGrabInterview'
 import { resolveEnterpriseIdByAttendanceGroupId } from '@/utils/enterpriseScope'
+import {
+  DISTANCE_OPTIONS,
+  SETTLEMENT_OPTIONS,
+  SHIFT_FILTER_CHIPS,
+  SHIFT_REQ_HOT_OPTIONS,
+  SHIFT_REQ_TYPE_OPTIONS,
+  SHIFT_REQ_WEEKDAY_OPTIONS,
+  buildFilterSlotMeta,
+  chipDisplayLabel,
+  cloneShiftReqFilter,
+  createDefaultShiftReqFilter,
+  createEmptyRecommendFilters,
+  isChipActive,
+  isNoExperienceRequired,
+  matchRecommendCard,
+  toggleShiftReqHot,
+  toggleShiftReqType,
+  toggleShiftReqWeekday,
+  type RecommendFilterChipDef,
+  type RecommendFilterChipKey,
+  type RecommendFilterOption,
+  type ShiftReqFilterState,
+  type ShiftReqTypeId,
+} from '@/services/miniRecommendFilter'
+import { MINIAPP_DEMO_ANCHOR_DATE } from '@/constants/miniapp'
 
 const store = useAppStore()
 const route = useRoute()
 const router = useRouter()
 const { employeeId } = useMiniAppWorker()
-const { ensureActionAllowed } = useMiniAppActionGate()
 const activeTab = ref<'jobs' | 'shifts'>('shifts')
 const city = ref('上海市')
+const keyword = ref('')
+
+const filters = reactive(createEmptyRecommendFilters())
+const sheetOpen = ref(false)
+const sheetKey = ref<RecommendFilterChipKey | null>(null)
+const sheetDraft = ref<string[]>([])
+const shiftReqDraft = ref<ShiftReqFilterState>(createDefaultShiftReqFilter())
 
 const tabs = [
   { key: 'jobs' as const, label: '岗位招聘' },
@@ -127,6 +158,10 @@ const shiftCompanies = computed(() => {
         hourly,
         disabled: applied || remain <= 0,
         applied,
+        startTime: s.startTime,
+        shiftName: s.shiftName,
+        date: s.date,
+        durationHours: extra.durationHours || s.workHours || 8,
       }
     })
     const hourlies = slots.map((s) => s.hourly)
@@ -140,10 +175,27 @@ const shiftCompanies = computed(() => {
     const enterpriseName =
       store.enterprises.find((e) => e.id === enterpriseId)?.name?.trim() ||
       post.storeName
+    const team = store.teams.find((t) => t.id === teamId)
+    const departmentId = first.departmentId || team?.departmentId
+    const departmentName =
+      first.departmentName?.trim() ||
+      (departmentId
+        ? store.departments.find((d) => d.id === departmentId)?.name?.trim()
+        : '') ||
+      post.storeName
     const positionName = first.positionName?.trim() || post.title
+    const filterSlots = slots.map((s) =>
+      buildFilterSlotMeta({
+        date: s.date,
+        startTime: s.startTime,
+        durationHours: s.durationHours,
+      }),
+    )
     return {
       id: teamId,
-      title: `${enterpriseName}|${positionName}`,
+      title: positionName,
+      brand: enterpriseName,
+      orgLabel: `${enterpriseName} · ${departmentName}`,
       tags,
       payMin: hourlyMin,
       payMax: hourlyMax,
@@ -153,10 +205,16 @@ const shiftCompanies = computed(() => {
       locationHint: `${post.distance} · ${post.commute}`,
       locationMain: '',
       locationSide: '',
-      brandLetter: post.storeName.slice(0, 1),
+      brandLetter: enterpriseName.slice(0, 1),
       slotCount: slots.length,
       previewSlots: slots.slice(0, TASK_PREVIEW_LIMIT),
       hasMoreSlots: slots.length > TASK_PREVIEW_LIMIT,
+      filterSlots,
+      noExperience: isNoExperienceRequired({
+        tags,
+        requirements: post.requirements,
+      }),
+      keywordText: `${positionName} ${enterpriseName} ${departmentName} ${post.storeName} ${tags.join(' ')}`,
     }
   })
 })
@@ -165,13 +223,26 @@ const interviewPosts = computed(() =>
   listOpenGrabInterviewPosts(store, employeeId.value, { previewLimit: TASK_PREVIEW_LIMIT }),
 )
 
-const feedCards = computed(() => {
+const rawFeedCards = computed(() => {
   if (activeTab.value === 'jobs') return []
   const interviews = interviewPosts.value.map((card) => ({
     ...card,
+    brand: card.enterpriseName,
     tab: 'shifts' as const,
     kind: 'interview' as const,
     panelTitle: '可面试时间',
+    filterSlots: card.previewSlots.map((s) =>
+      buildFilterSlotMeta({
+        date: s.date,
+        startTime: s.interviewExactTime || s.timeRange.split('~')[0] || '09:00',
+        durationHours: s.durationHours || 1,
+      }),
+    ),
+    noExperience: isNoExperienceRequired({
+      tags: card.tags,
+      requirementsLine: card.requirementsLine,
+    }),
+    keywordText: `${card.title} ${card.orgLabel} ${card.storeName} ${card.tags.join(' ')}`,
   }))
   const shifts = shiftCompanies.value.map((card) => ({
     ...card,
@@ -182,10 +253,108 @@ const feedCards = computed(() => {
   return [...interviews, ...shifts]
 })
 
+const feedCards = computed(() =>
+  rawFeedCards.value.filter((card) =>
+    matchRecommendCard(card, filters, keyword.value, city.value, MINIAPP_DEMO_ANCHOR_DATE),
+  ),
+)
+
+const brandOptions = computed<RecommendFilterOption[]>(() => {
+  const names = [...new Set(rawFeedCards.value.map((c) => c.brand).filter(Boolean))]
+  return names.map((name) => ({ id: name, label: name }))
+})
+
+const sheetOptions = computed<RecommendFilterOption[]>(() => {
+  if (sheetKey.value === 'brand') return brandOptions.value
+  if (sheetKey.value === 'distance') return DISTANCE_OPTIONS
+  if (sheetKey.value === 'settlement') return SETTLEMENT_OPTIONS
+  return []
+})
+
+const isShiftReqSheet = computed(() => sheetKey.value === 'shiftReq')
+
+const sheetTitle = computed(() => {
+  const def = SHIFT_FILTER_CHIPS.find((c) => c.key === sheetKey.value)
+  return def?.label || '筛选'
+})
+
 const feedEmptyText = computed(() => {
   if (activeTab.value === 'jobs') return '岗位招聘开发中，敬请期待'
+  if (rawFeedCards.value.length > 0 && feedCards.value.length === 0) {
+    return '暂无符合筛选条件的抢班'
+  }
   return '暂无抢班班次或抢班直面'
 })
+
+function onChipClick(def: RecommendFilterChipDef) {
+  if (def.kind === 'toggle') {
+    const key = def.key as 'latest' | 'noExp'
+    filters[key] = !filters[key]
+    return
+  }
+  sheetKey.value = def.key
+  if (def.key === 'shiftReq') {
+    shiftReqDraft.value = cloneShiftReqFilter(filters.shiftReq)
+  } else {
+    const current = filters[def.key]
+    sheetDraft.value = Array.isArray(current) ? [...current] : []
+  }
+  sheetOpen.value = true
+}
+
+function toggleSheetOption(id: string) {
+  const idx = sheetDraft.value.indexOf(id)
+  if (idx >= 0) sheetDraft.value.splice(idx, 1)
+  else sheetDraft.value.push(id)
+}
+
+function confirmSheet() {
+  if (!sheetKey.value) return
+  const key = sheetKey.value
+  if (key === 'shiftReq') {
+    const draft = cloneShiftReqFilter(shiftReqDraft.value)
+    if (!draft.types.length) draft.types = ['shift', 'interview']
+    filters.shiftReq = draft
+    // 只勾选一种类型：自动切到对应内容（同处抢班 Tab 内用类型过滤；仅直面时提示仍留在抢班）
+    if (draft.types.length === 1) {
+      activeTab.value = 'shifts'
+      router.replace({ path: '/miniapp/recommend', query: { tab: 'shifts' } })
+    }
+  } else if (key === 'brand' || key === 'distance' || key === 'settlement') {
+    filters[key] = [...sheetDraft.value]
+  }
+  sheetOpen.value = false
+  sheetKey.value = null
+}
+
+function resetSheet() {
+  if (sheetKey.value === 'shiftReq') {
+    shiftReqDraft.value = createDefaultShiftReqFilter()
+    return
+  }
+  sheetDraft.value = []
+}
+
+function closeSheet() {
+  sheetOpen.value = false
+  sheetKey.value = null
+}
+
+function isShiftReqTypeOn(id: string) {
+  return shiftReqDraft.value.types.includes(id as ShiftReqTypeId)
+}
+
+function onToggleShiftReqType(id: string) {
+  toggleShiftReqType(shiftReqDraft.value, id as ShiftReqTypeId)
+}
+
+function onToggleShiftReqHot(id: string) {
+  toggleShiftReqHot(shiftReqDraft.value, id)
+}
+
+function onToggleShiftReqWeekday(id: string) {
+  toggleShiftReqWeekday(shiftReqDraft.value, id)
+}
 
 function openCard(card: (typeof feedCards.value)[number]) {
   if (card.kind === 'interview') openInterview(card.id)
@@ -195,14 +364,20 @@ function openCard(card: (typeof feedCards.value)[number]) {
 function slotActionLabel(
   slot: (typeof feedCards.value)[number]['previewSlots'][number],
 ) {
-  return slot.applied ? '已报名' : '立刻抢班'
+  return slot.applied ? '已报名' : '立刻报名'
 }
 
 function onSlotAction(
+  card: (typeof feedCards.value)[number],
   slot: (typeof feedCards.value)[number]['previewSlots'][number],
   e: Event,
 ) {
-  applyShiftSlot(slot.id, e)
+  e.stopPropagation()
+  if (card.kind !== 'shift') return
+  router.push({
+    path: `/miniapp/recommend/shift/${encodeURIComponent(card.id)}`,
+    query: { slot: slot.id },
+  })
 }
 
 function tagClass(tag: string, kind?: string) {
@@ -225,38 +400,6 @@ function openInterview(postId: string, slotId?: string) {
   })
 }
 
-async function applyShiftSlot(slotId: string, e: Event) {
-  e.stopPropagation()
-  const slot = store.grabShiftSlots.find((s) => s.id === slotId)
-  const enterpriseId = slot
-    ? resolveEnterpriseIdByAttendanceGroupId(
-        slot.attendanceGroupId,
-        store.attendanceGroups,
-        store.departments,
-      )
-    : undefined
-  const allowed = await ensureActionAllowed({
-    requireDepartment: true,
-    enterpriseId,
-    from: 'grab',
-  })
-  if (!allowed) return
-  try {
-    const app = store.submitGrabShiftApplication({
-      slotId,
-      employeeId: employeeId.value,
-      message: '小程序抢班报名',
-    })
-    if (app.status === 'approved') {
-      ElMessage.success('抢班成功，已自动通过')
-    } else {
-      ElMessage.success('抢班成功，待审核')
-    }
-  } catch (err) {
-    ElMessage.warning(err instanceof Error ? err.message : '报名失败')
-  }
-}
-
 function onLoadMore() {
   ElMessage.info('加载更多（演示）')
 }
@@ -269,6 +412,16 @@ function onLoadMore() {
         {{ city }}
         <el-icon :size="12"><ArrowDown /></el-icon>
       </button>
+      <div class="rec-search">
+        <el-icon :size="14" class="rec-search-icon"><Search /></el-icon>
+        <input
+          v-model="keyword"
+          type="search"
+          class="rec-search-input"
+          placeholder="搜索岗位 / 企业"
+          enterkeyhint="search"
+        />
+      </div>
     </header>
 
     <div class="rec-tabs-wrap">
@@ -286,6 +439,24 @@ function onLoadMore() {
           {{ tab.label }}
         </button>
         <span class="rec-tab-indicator" :style="indicatorStyle" />
+      </div>
+    </div>
+
+    <div v-if="activeTab === 'shifts'" class="rec-chips-wrap">
+      <div class="rec-chips">
+        <button
+          v-for="chip in SHIFT_FILTER_CHIPS"
+          :key="chip.key"
+          type="button"
+          class="rec-chip"
+          :class="{ active: isChipActive(chip, filters) }"
+          @click="onChipClick(chip)"
+        >
+          <span>{{ chipDisplayLabel(chip, filters) }}</span>
+          <el-icon v-if="chip.kind === 'options'" :size="10" class="rec-chip-caret">
+            <ArrowDown />
+          </el-icon>
+        </button>
       </div>
     </div>
 
@@ -318,10 +489,14 @@ function onLoadMore() {
             <span class="job-post-salary-unit">{{ card.payUnit }}</span>
             <span class="job-post-salary-hint">{{ card.payHint }}</span>
           </div>
-          <div class="job-post-loc">{{ card.storeName }}</div>
-          <div class="job-post-loc-sub">{{ card.locationHint }}</div>
+          <div class="job-post-org">
+            <div class="job-post-logo">{{ card.brandLetter }}</div>
+            <div class="job-post-org-meta">
+              <div class="job-post-org-text">{{ card.orgLabel || card.storeName }}</div>
+              <div v-if="card.locationHint" class="job-post-loc-sub">{{ card.locationHint }}</div>
+            </div>
+          </div>
         </div>
-        <div class="job-post-logo">{{ card.brandLetter }}</div>
       </div>
 
       <div
@@ -364,7 +539,7 @@ function onLoadMore() {
             class="job-slot-apply"
             :class="{ applied: slot.applied }"
             :disabled="slot.disabled"
-            @click="onSlotAction(slot, $event)"
+            @click="onSlotAction(card, slot, $event)"
           >
             {{ slotActionLabel(slot) }}
           </button>
@@ -388,6 +563,84 @@ function onLoadMore() {
       <p>功能开发中，敬请期待</p>
     </div>
     <div v-else-if="feedCards.length === 0" class="mini-empty">{{ feedEmptyText }}</div>
+
+    <Teleport to="body">
+      <div v-if="sheetOpen" class="rec-sheet-mask" @click.self="closeSheet">
+        <div class="rec-sheet" :class="{ 'rec-sheet-tall': isShiftReqSheet }">
+          <div class="rec-sheet-head">
+            <button type="button" class="rec-sheet-reset" @click="resetSheet">重置</button>
+            <div class="rec-sheet-title">{{ sheetTitle }}</div>
+            <button type="button" class="rec-sheet-close" @click="closeSheet">×</button>
+          </div>
+          <div class="rec-sheet-body">
+            <template v-if="isShiftReqSheet">
+              <div class="req-group">
+                <div class="req-group-title">类型</div>
+                <div class="req-tags">
+                  <button
+                    v-for="opt in SHIFT_REQ_TYPE_OPTIONS"
+                    :key="opt.id"
+                    type="button"
+                    class="req-tag"
+                    :class="{ active: isShiftReqTypeOn(opt.id) }"
+                    @click="onToggleShiftReqType(opt.id)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="req-group">
+                <div class="req-group-title">热门筛选</div>
+                <div class="req-tags">
+                  <button
+                    v-for="opt in SHIFT_REQ_HOT_OPTIONS"
+                    :key="opt.id"
+                    type="button"
+                    class="req-tag"
+                    :class="{ active: shiftReqDraft.hot.includes(opt.id) }"
+                    @click="onToggleShiftReqHot(opt.id)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
+              </div>
+              <div class="req-group">
+                <div class="req-group-title">班次日期</div>
+                <div class="req-tags">
+                  <button
+                    v-for="opt in SHIFT_REQ_WEEKDAY_OPTIONS"
+                    :key="opt.id"
+                    type="button"
+                    class="req-tag"
+                    :class="{ active: shiftReqDraft.weekdays.includes(opt.id) }"
+                    @click="onToggleShiftReqWeekday(opt.id)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <button
+                v-for="opt in sheetOptions"
+                :key="opt.id"
+                type="button"
+                class="rec-sheet-option"
+                :class="{ active: sheetDraft.includes(opt.id) }"
+                @click="toggleSheetOption(opt.id)"
+              >
+                <span>{{ opt.label }}</span>
+                <span v-if="sheetDraft.includes(opt.id)" class="rec-sheet-check">✓</span>
+              </button>
+              <div v-if="!sheetOptions.length" class="rec-sheet-empty">暂无可选项</div>
+            </template>
+          </div>
+          <div class="rec-sheet-foot">
+            <button type="button" class="rec-sheet-ok" @click="confirmSheet">确定</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -401,6 +654,7 @@ function onLoadMore() {
 .rec-header {
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 12px 16px 8px;
   background: #E6FFFA;
 }
@@ -414,6 +668,241 @@ function onLoadMore() {
   font-size: 16px;
   font-weight: 700;
   color: var(--mini-text);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.rec-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(79, 209, 197, 0.25);
+}
+
+.rec-search-icon {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.rec-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 13px;
+  color: var(--mini-text);
+}
+
+.rec-search-input::placeholder {
+  color: #9ca3af;
+}
+
+.rec-chips-wrap {
+  background: #fff;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.rec-chips {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.rec-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.rec-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rec-chip.active {
+  background: #E6FFFA;
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.rec-chip-caret {
+  opacity: 0.7;
+}
+
+.rec-sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.rec-sheet {
+  width: 100%;
+  max-width: 430px;
+  max-height: 70vh;
+  background: #fff;
+  border-radius: 16px 16px 0 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rec-sheet-head {
+  display: grid;
+  grid-template-columns: 56px 1fr 36px;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.rec-sheet-title {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--mini-text);
+}
+
+.rec-sheet-reset {
+  border: none;
+  background: none;
+  color: #6b7280;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.rec-sheet-close {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: #f3f4f6;
+  color: #6b7280;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  justify-self: end;
+}
+
+.rec-sheet-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px 12px;
+}
+
+.rec-sheet-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 4px;
+  border: none;
+  border-bottom: 1px solid #f5f5f5;
+  background: none;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rec-sheet-option.active {
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.rec-sheet-check {
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.rec-sheet-empty {
+  padding: 24px 0;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.rec-sheet-foot {
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid #f3f4f6;
+}
+
+.rec-sheet-tall {
+  max-height: 82vh;
+}
+
+.req-group {
+  padding: 12px 0 4px;
+}
+
+.req-group + .req-group {
+  border-top: 1px solid #f5f5f5;
+  margin-top: 4px;
+}
+
+.req-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  margin-bottom: 10px;
+}
+
+.req-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.req-tag {
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #4b5563;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.req-tag.active {
+  background: #E6FFFA;
+  color: var(--mini-primary);
+  font-weight: 700;
+}
+
+.rec-sheet-ok {
+  width: 100%;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background: var(--mini-primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -508,82 +997,6 @@ function onLoadMore() {
 
 .job-post-head-clickable {
   cursor: pointer;
-}
-
-.job-post-head {
-  display: flex;
-  gap: 12px;
-  padding: 14px 14px 12px;
-  cursor: pointer;
-}
-
-.job-post-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.job-post-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--mini-text);
-  line-height: 1.35;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.job-post-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.job-post-salary {
-  margin-top: 10px;
-  font-size: 18px;
-  font-weight: 800;
-  color: #ef4444;
-  line-height: 1.2;
-}
-
-.job-post-salary-unit {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.job-post-salary-hint {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--mini-text-muted);
-}
-
-.job-post-loc {
-  margin-top: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--mini-text);
-}
-
-.job-post-loc-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--mini-text-muted);
-}
-
-.job-post-logo {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #fde68a, #fbbf24);
-  color: #92400e;
-  font-size: 18px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
 }
 
 .job-slot-panel {

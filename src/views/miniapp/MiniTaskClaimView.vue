@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
-import { computed, ref } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
@@ -14,7 +14,11 @@ import {
   resolvePricingForTask,
   taskPricingUnitMap,
 } from '@/services/miniTask'
-import { getTaskClaimableCount } from '@/services/task'
+import {
+  getTaskClaimableCount,
+  getWorkflowClaimNode,
+  getWorkflowFieldsForNode,
+} from '@/services/task'
 import { getTaskHallExtra } from '@/mock/miniTaskHallSeed'
 
 const route = useRoute()
@@ -23,13 +27,35 @@ const store = useAppStore()
 const { employeeId } = useMiniAppWorker()
 const { ensureActionAllowed } = useMiniAppActionGate()
 
-const quantity = ref(1)
+const CLAIM_QUANTITY = 1
 
 const task = computed(() => store.tasks.find((t) => t.id === route.params.taskId))
 const pricing = computed(() =>
   task.value ? resolvePricingForTask(task.value, store.taskTypes) : undefined,
 )
 const extra = computed(() => (task.value ? getTaskHallExtra(task.value.id) : { tags: [] }))
+const workflow = computed(() =>
+  task.value ? store.taskWorkflows.find((w) => w.id === task.value!.workflowId) : undefined,
+)
+const claimNode = computed(() => (workflow.value ? getWorkflowClaimNode(workflow.value) : undefined))
+const claimFields = computed(() =>
+  workflow.value && claimNode.value
+    ? getWorkflowFieldsForNode(workflow.value, claimNode.value.id)
+    : [],
+)
+
+const form = reactive<Record<string, string | number | boolean>>({})
+
+function initClaimForm() {
+  for (const key of Object.keys(form)) delete form[key]
+  for (const field of claimFields.value) {
+    if (field.fieldType === 'switch') form[field.id] = false
+    else if (field.fieldType === 'amount') form[field.id] = ''
+    else form[field.id] = ''
+  }
+}
+
+watch(claimFields, initClaimForm, { immediate: true })
 
 const pricingUnit = computed(() => getTaskPricingUnit(pricing.value))
 const unitLabel = computed(() => taskPricingUnitMap[pricingUnit.value])
@@ -39,24 +65,28 @@ const myClaimed = computed(() =>
 )
 
 const maxClaimable = computed(() => {
-  if (!task.value) return 1
+  if (!task.value) return 0
   const byPerson = task.value.maxPerPerson
     ? Math.max(0, task.value.maxPerPerson - myClaimed.value)
     : 99
-  const workflow = store.taskWorkflows.find((w) => w.id === task.value!.workflowId)
-  const claimable = getTaskClaimableCount(task.value, store.taskInstances, workflow)
+  const wf = workflow.value
+  const claimable = getTaskClaimableCount(task.value, store.taskInstances, wf)
   const byQuota = claimable == null ? 99 : claimable
   return Math.min(byPerson, byQuota, 99)
 })
 
 const previewAmount = computed(() =>
-  pricing.value ? calcTaskClaimAmount(pricing.value, quantity.value) : 0,
+  pricing.value ? calcTaskClaimAmount(pricing.value, CLAIM_QUANTITY) : 0,
 )
+
+function setAttachmentDemo(fieldId: string) {
+  form[fieldId] = `附件_${Date.now()}.jpg`
+}
 
 async function submitClaim() {
   if (!task.value) return
-  if (quantity.value < 1 || quantity.value > maxClaimable.value) {
-    ElMessage.warning(`请输入 1-${maxClaimable.value} 的领取数量`)
+  if (maxClaimable.value < 1) {
+    ElMessage.warning('当前已无剩余可领名额')
     return
   }
   const allowed = await ensureActionAllowed({
@@ -65,9 +95,18 @@ async function submitClaim() {
     from: 'claim',
   })
   if (!allowed) return
+  const payload: Record<string, string | number | boolean> = {}
+  for (const field of claimFields.value) {
+    payload[field.id] = form[field.id]
+  }
   try {
-    const instance = store.acceptTaskFromHall(task.value.id, employeeId.value, quantity.value)
-    ElMessage.success('领取成功，请填写任务信息')
+    const instance = store.acceptTaskFromHall(
+      task.value.id,
+      employeeId.value,
+      CLAIM_QUANTITY,
+      payload,
+    )
+    ElMessage.success('领取成功')
     router.replace(`/miniapp/tasks/${instance.id}`)
   } catch (e) {
     ElMessage.warning(e instanceof Error ? e.message : '领取失败')
@@ -98,36 +137,90 @@ async function submitClaim() {
 
       <div class="claim-card">
         <div class="field-label">领取数量（{{ unitLabel }}）</div>
-        <div class="qty-row">
-          <button
-            type="button"
-            class="qty-btn"
-            :disabled="quantity <= 1"
-            @click="quantity = Math.max(1, quantity - 1)"
-          >
-            −
-          </button>
-          <input v-model.number="quantity" type="number" class="qty-input" min="1" :max="maxClaimable" />
-          <button
-            type="button"
-            class="qty-btn"
-            :disabled="quantity >= maxClaimable"
-            @click="quantity = Math.min(maxClaimable, quantity + 1)"
-          >
-            +
-          </button>
+        <div class="qty-fixed">
+          <span class="qty-value">{{ CLAIM_QUANTITY }}</span>
           <span class="qty-unit">{{ unitLabel }}</span>
         </div>
-        <div class="qty-tip">
-          已领 {{ myClaimed }} {{ unitLabel }}，本次最多可领 {{ maxClaimable }} {{ unitLabel }}
-        </div>
+        <div class="qty-tip">每次固定领取 1 {{ unitLabel }}，已领 {{ myClaimed }} {{ unitLabel }}</div>
         <div class="preview-row">
           <span>预估收入</span>
           <span class="preview-amount">¥{{ previewAmount.toFixed(2) }}</span>
         </div>
       </div>
 
-      <button type="button" class="mini-btn-primary" @click="submitClaim">确认领取</button>
+      <div v-if="claimFields.length" class="claim-card">
+        <div class="field-label">领取信息</div>
+        <p class="fields-tip">请填写「{{ claimNode?.name || '领取任务' }}」节点要求的信息</p>
+        <div v-for="field in claimFields" :key="field.id" class="wf-field">
+          <label class="wf-label">
+            {{ field.name }}
+            <span v-if="field.required" class="req">*</span>
+          </label>
+
+          <input
+            v-if="field.fieldType === 'text'"
+            v-model="form[field.id] as string"
+            class="wf-input"
+            type="text"
+            :placeholder="`请输入${field.name}`"
+          />
+
+          <select
+            v-else-if="field.fieldType === 'select'"
+            v-model="form[field.id] as string"
+            class="wf-input"
+          >
+            <option value="">请选择</option>
+            <option v-for="opt in field.options" :key="opt" :value="opt">{{ opt }}</option>
+          </select>
+
+          <input
+            v-else-if="field.fieldType === 'date'"
+            v-model="form[field.id] as string"
+            class="wf-input"
+            type="date"
+          />
+
+          <input
+            v-else-if="field.fieldType === 'amount'"
+            v-model.number="form[field.id] as number"
+            class="wf-input"
+            type="number"
+            min="0"
+            step="0.01"
+            :placeholder="`请输入${field.name}`"
+          />
+
+          <textarea
+            v-else-if="field.fieldType === 'textarea'"
+            v-model="form[field.id] as string"
+            class="wf-textarea"
+            rows="3"
+            :placeholder="`请输入${field.name}`"
+          />
+
+          <label v-else-if="field.fieldType === 'switch'" class="wf-switch">
+            <input v-model="form[field.id] as boolean" type="checkbox" />
+            {{ field.name }}
+          </label>
+
+          <div v-else-if="field.fieldType === 'attachment'" class="wf-upload">
+            <button type="button" class="upload-btn" @click="setAttachmentDemo(field.id)">
+              {{ form[field.id] ? '重新上传（演示）' : '上传附件（演示）' }}
+            </button>
+            <div v-if="form[field.id]" class="upload-name">{{ form[field.id] }}</div>
+          </div>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        class="mini-btn-primary"
+        :disabled="maxClaimable < 1"
+        @click="submitClaim"
+      >
+        确认领取
+      </button>
     </div>
 
     <div v-else class="mini-empty">任务不存在或已下架</div>
@@ -142,6 +235,7 @@ async function submitClaim() {
 
 .claim-body {
   padding: 12px;
+  padding-bottom: 24px;
 }
 
 .claim-card {
@@ -203,35 +297,25 @@ async function submitClaim() {
   margin-bottom: 10px;
 }
 
-.qty-row {
+.qty-fixed {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
-.qty-btn {
-  width: 36px;
+.qty-value {
+  min-width: 48px;
   height: 36px;
+  padding: 0 14px;
   border: 1px solid var(--mini-border);
   border-radius: 10px;
-  background: #fff;
-  font-size: 18px;
-  cursor: pointer;
-}
-
-.qty-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.qty-input {
-  width: 72px;
-  height: 36px;
-  border: 1px solid var(--mini-border);
-  border-radius: 10px;
-  text-align: center;
+  background: #f9fafb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
+  color: var(--mini-text);
 }
 
 .qty-unit {
@@ -259,5 +343,86 @@ async function submitClaim() {
   font-size: 20px;
   font-weight: 800;
   color: #ef4444;
+}
+
+.fields-tip {
+  margin: -4px 0 12px;
+  font-size: 12px;
+  color: var(--mini-text-muted);
+}
+
+.wf-field {
+  margin-bottom: 14px;
+}
+
+.wf-field:last-child {
+  margin-bottom: 0;
+}
+
+.wf-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mini-text);
+  margin-bottom: 6px;
+}
+
+.req {
+  color: #ef4444;
+  margin-left: 2px;
+}
+
+.wf-input,
+.wf-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--mini-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--mini-text);
+  background: #fff;
+}
+
+.wf-textarea {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.wf-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--mini-text-secondary);
+}
+
+.wf-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.upload-btn {
+  align-self: flex-start;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px dashed var(--mini-border);
+  border-radius: 10px;
+  background: #f9fafb;
+  font-size: 13px;
+  color: var(--mini-text-secondary);
+  cursor: pointer;
+}
+
+.upload-name {
+  font-size: 12px;
+  color: var(--mini-text-muted);
+  word-break: break-all;
+}
+
+.mini-btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 </style>

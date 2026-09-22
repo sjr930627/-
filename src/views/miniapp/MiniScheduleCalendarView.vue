@@ -24,7 +24,6 @@ import {
   getMonthStats,
   getWeekCalendarCells,
   resolveDayState,
-  shiftBarColor,
 } from '@/composables/useMiniSchedule'
 import {
   approvalStatusLabel,
@@ -65,7 +64,7 @@ syncFromRoute()
 watch(() => route.query, syncFromRoute)
 
 const isPastDay = computed(() => selectedDate.value < today.value)
-const panelTitle = computed(() => (isPastDay.value ? '当天打卡' : '当天排班'))
+const panelTitle = computed(() => (isPastDay.value ? '当天打卡' : '当天班次'))
 
 const selectedDayDetail = computed(() =>
   buildDayDetail(store, employeeId.value, selectedDate.value, now.value),
@@ -101,7 +100,7 @@ const pendingExceptionCount = computed(
 
 const canApplyMakeup = computed(() => {
   const detail = selectedDayDetail.value
-  if (detail.state === 'rest') return false
+  if (detail.state === 'rest' || detail.state === 'leave') return false
   if (
     store.makeupRequests.some(
       (r) =>
@@ -113,6 +112,10 @@ const canApplyMakeup = computed(() => {
     return false
   }
   if (detail.state === 'absent') return true
+  if (isPastDay.value && detail.freePunch) {
+    if (detail.freeClockInOnly) return !detail.clockIn
+    return !detail.clockIn || !detail.clockOut
+  }
   if (isPastDay.value && (!detail.clockIn || !detail.clockOut)) return true
   return false
 })
@@ -163,13 +166,24 @@ function cellShiftId(date: string) {
   return asn?.shiftId
 }
 
+function cellHasShift(date: string) {
+  const shiftId = cellShiftId(date)
+  if (shiftId && shiftId !== 'shift_rest') return true
+  const detail = buildDayDetail(store, employeeId.value, date, now.value)
+  return Boolean(detail.freePunch)
+}
+
 function cellClass(date: string) {
-  if (date === selectedDate.value) return 'selected'
-  if (date === today.value) return 'today'
-  const { state } = resolveDayState(store, employeeId.value, date, today.value, now.value)
-  if (date < today.value && state === 'done') return 'past-ok'
-  if (date < today.value && state === 'absent') return 'past-bad'
-  return ''
+  const classes: string[] = []
+  if (date === selectedDate.value) classes.push('selected')
+  if (date === today.value) classes.push('today')
+  if (date < today.value) {
+    const { state } = resolveDayState(store, employeeId.value, date, today.value, now.value)
+    if (state === 'normal' || state === 'late' || state === 'early_leave') classes.push('past-ok')
+    if (state === 'absent' || state === 'missing_punch') classes.push('past-bad')
+  }
+  if (cellHasShift(date)) classes.push('has-shift')
+  return classes
 }
 
 function prevMonth() {
@@ -278,20 +292,16 @@ function goMakeupDetail(id: string) {
 }
 
 function progressPercent(detail: ReturnType<typeof buildDayDetail>) {
-  const total = detail.workedMinutes + detail.remainingMinutes
+  const total = detail.goalMinutes ?? detail.workedMinutes + detail.remainingMinutes
   if (total <= 0) return 0
-  return Math.round((detail.workedMinutes / total) * 100)
+  return Math.min(100, Math.round((detail.workedMinutes / total) * 100))
 }
 
 function formatDateHead(detail: ReturnType<typeof buildDayDetail>) {
   const [, month, day] = detail.date.split('-')
-  const prefix =
-    detail.date === today.value
-      ? '今日'
-      : detail.date > today.value
-        ? detail.weekday
-        : detail.weekday
-  return `${prefix} · ${Number(month)}月${Number(day)}日 ${detail.weekday}`
+  const datePart = `${Number(month)}月${Number(day)}日 ${detail.weekday}`
+  if (detail.date === today.value) return `今日·${datePart}`
+  return datePart
 }
 
 function shiftIcon(shiftId?: string) {
@@ -311,7 +321,7 @@ function shiftIconTone(shiftId?: string) {
   <div class="sc-page">
     <div class="mini-nav-bar">
       <MiniNavBack fallback="/miniapp/workbench" />
-      <div class="mini-nav-title">排班日历</div>
+      <div class="mini-nav-title">班次日历</div>
       <button class="sc-record-btn" type="button" @click="goExceptionRecords">
         异常申请记录
         <span v-if="pendingExceptionCount" class="sc-record-badge">{{ pendingExceptionCount }}</span>
@@ -333,7 +343,7 @@ function shiftIconTone(shiftId?: string) {
     <div class="sc-stats-row">
       <div class="sc-stat blue">
         <div class="sc-stat-val">{{ monthStats.days }}</div>
-        <div class="sc-stat-label">排班天数</div>
+        <div class="sc-stat-label">班次天数</div>
       </div>
       <div class="sc-stat green">
         <div class="sc-stat-val">{{ monthStats.totalHours }}h</div>
@@ -364,20 +374,10 @@ function shiftIconTone(shiftId?: string) {
           >
             <template v-if="cell.day">
               <div class="sc-cal-day">{{ cell.day }}</div>
-              <div
-                v-if="cellShiftId(cell.date!) !== 'shift_rest'"
-                class="sc-cal-bar"
-                :style="{ background: shiftBarColor(cellShiftId(cell.date!)) }"
-              />
+              <div v-if="cellHasShift(cell.date!)" class="sc-cal-bar" />
             </template>
           </div>
         </div>
-      </div>
-      <div class="sc-legend">
-        <span><i style="background:#409EFF" />早班</span>
-        <span><i style="background:#E6A23C" />中班</span>
-        <span><i style="background:#9B59B6" />夜班</span>
-        <span><i style="background:#d9d9d9" />休息</span>
       </div>
       <button type="button" class="sc-expand-btn" @click="toggleCalendarExpanded">
         <span>{{ calendarExpanded ? '收起本周' : '展开本月' }}</span>
@@ -400,7 +400,7 @@ function shiftIconTone(shiftId?: string) {
           <span class="sc-shift-badge" :class="selectedDayDetail.state">{{ selectedDayDetail.stateLabel }}</span>
         </div>
 
-        <template v-if="selectedDayDetail.state === 'rest'">
+        <template v-if="selectedDayDetail.state === 'rest' || selectedDayDetail.state === 'leave'">
           <div class="sc-rest-box">
             <div class="sc-rest-icon">☺</div>
             <span>{{ isPastDay ? '当日休息，无打卡记录' : '今日休息，好好放松一下吧~' }}</span>
@@ -441,19 +441,30 @@ function shiftIconTone(shiftId?: string) {
           <div class="sc-shift-body">
             <div
               class="sc-shift-icon-box"
-              :class="shiftIconTone(selectedDayDetail.shift?.id)"
+              :class="selectedDayDetail.freePunch ? 'free' : shiftIconTone(selectedDayDetail.shift?.id)"
             >
               <el-icon :size="20">
-                <component :is="shiftIcon(selectedDayDetail.shift?.id)" />
+                <component :is="selectedDayDetail.freePunch ? Sunny : shiftIcon(selectedDayDetail.shift?.id)" />
               </el-icon>
             </div>
             <div class="sc-shift-left">
               <div class="sc-shift-title">
-                {{ selectedDayDetail.shift?.name }} · {{ selectedDayDetail.teamName }}
+                <template v-if="selectedDayDetail.freePunch">
+                  自由打卡 · {{ selectedDayDetail.teamName }}
+                </template>
+                <template v-else>
+                  {{ selectedDayDetail.shift?.name }} · {{ selectedDayDetail.teamName }}
+                </template>
               </div>
               <div class="sc-shift-time">
-                {{ selectedDayDetail.shift?.startTime?.slice(0, 5) }} - {{ selectedDayDetail.shift?.endTime?.slice(0, 5) }}
-                · {{ Math.round((selectedDayDetail.workedMinutes + selectedDayDetail.remainingMinutes) / 60) }}小时
+                <template v-if="selectedDayDetail.freePunch">
+                  {{ selectedDayDetail.freePunchLabel?.replace('自由打卡 · ', '') ?? '弹性时段' }}
+                  · 目标 {{ Math.round((selectedDayDetail.goalMinutes ?? 0) / 60) }}小时
+                </template>
+                <template v-else>
+                  {{ selectedDayDetail.shift?.startTime?.slice(0, 5) }} - {{ selectedDayDetail.shift?.endTime?.slice(0, 5) }}
+                  · {{ Math.round((selectedDayDetail.workedMinutes + selectedDayDetail.remainingMinutes) / 60) }}小时
+                </template>
               </div>
               <div v-if="isPastDay && pastShiftIncomeLabel" class="sc-shift-pay past">
                 收入 {{ pastShiftIncomeLabel }}
@@ -475,12 +486,15 @@ function shiftIconTone(shiftId?: string) {
           </div>
 
           <div
-            v-if="selectedDayDetail.state === 'active' && selectedDayDetail.workedMinutes > 0"
+            v-if="selectedDayDetail.shift || selectedDayDetail.freePunch"
             class="sc-progress-wrap"
           >
             <div class="sc-progress-labels">
               <span>已工作 {{ formatDuration(selectedDayDetail.workedMinutes) }}</span>
-              <span>剩余 {{ formatDuration(selectedDayDetail.remainingMinutes) }}</span>
+              <span>
+                {{ selectedDayDetail.freePunch ? '目标' : '班次' }}
+                {{ formatDuration(selectedDayDetail.goalMinutes ?? selectedDayDetail.workedMinutes + selectedDayDetail.remainingMinutes) }}
+              </span>
             </div>
             <div class="sc-progress-bar">
               <div class="sc-progress-fill" :style="{ width: `${progressPercent(selectedDayDetail)}%` }" />
@@ -488,11 +502,23 @@ function shiftIconTone(shiftId?: string) {
           </div>
 
           <div
-            v-if="!isPastDay && !selectedDayDetail.clockOut && selectedDayDetail.clockIn"
+            v-if="
+              !isPastDay &&
+              selectedDayDetail.clockIn &&
+              !selectedDayDetail.clockOut &&
+              !selectedDayDetail.freeClockInOnly
+            "
             class="sc-punch-row pending"
           >
             <el-icon :size="14"><Clock /></el-icon>
             待签退 {{ selectedDayDetail.shift?.endTime?.slice(0, 5) ?? '--:--' }}
+          </div>
+          <div
+            v-else-if="!isPastDay && selectedDayDetail.freeClockInOnly && selectedDayDetail.clockIn"
+            class="sc-punch-row ok"
+          >
+            <el-icon :size="14"><CircleCheck /></el-icon>
+            仅需签到，今日已完成
           </div>
 
           <div class="sc-location">
@@ -527,19 +553,21 @@ function shiftIconTone(shiftId?: string) {
           <button
             v-if="
               selectedDayDetail.date === today &&
-              (selectedDayDetail.state === 'active' || selectedDayDetail.state === 'upcoming') &&
-              !selectedDayDetail.clockOut
+              !(selectedDayDetail.freeClockInOnly
+                ? selectedDayDetail.clockIn
+                : selectedDayDetail.clockOut)
             "
             class="sc-punch-primary"
             type="button"
             @click="goPunch"
           >
-            立即打卡
+            {{ selectedDayDetail.clockIn ? '签退' : '签到' }}
           </button>
           <button
             v-else-if="
               selectedDayDetail.date > today &&
               selectedDayDetail.state === 'upcoming' &&
+              !selectedDayDetail.freePunch &&
               hasPendingCancel(selectedDayDetail.date)
             "
             class="sc-punch-secondary pending"
@@ -549,7 +577,11 @@ function shiftIconTone(shiftId?: string) {
             取消申请审批中 · 可撤销
           </button>
           <button
-            v-else-if="selectedDayDetail.date > today && selectedDayDetail.state === 'upcoming'"
+            v-else-if="
+              selectedDayDetail.date > today &&
+              selectedDayDetail.state === 'upcoming' &&
+              !selectedDayDetail.freePunch
+            "
             class="sc-punch-secondary"
             type="button"
             @click="applyCancelShift(selectedDayDetail)"
@@ -747,18 +779,34 @@ function shiftIconTone(shiftId?: string) {
   align-items: center;
   justify-content: center;
   border-radius: 10px;
+  border: 2px solid transparent;
+  box-sizing: border-box;
   cursor: pointer;
   padding: 4px;
 }
 
 .sc-cal-cell.empty { cursor: default; }
 .sc-cal-cell.selected {
-  background: #E6FFFA;
-  border: 2px solid #4FD1C5;
+  border: 2px solid #409EFF;
+  background: #fff;
 }
-.sc-cal-cell.today:not(.selected) { background: #f0faf4; }
-.sc-cal-cell.past-ok { background: #f6ffed; }
-.sc-cal-cell.past-bad { background: #fff1f0; }
+.sc-cal-cell.today {
+  background: #ECF5FF;
+}
+.sc-cal-cell.today.selected {
+  background: #ECF5FF;
+  border-color: #409EFF;
+}
+.sc-cal-cell.past-ok {
+  background: #f0f9eb;
+}
+.sc-cal-cell.past-bad {
+  background: #fef0f0;
+}
+.sc-cal-cell.selected.past-ok,
+.sc-cal-cell.selected.past-bad {
+  background: #fff;
+}
 
 .sc-cal-day {
   font-size: 14px;
@@ -771,15 +819,7 @@ function shiftIconTone(shiftId?: string) {
   height: 3px;
   border-radius: 2px;
   margin-top: 4px;
-}
-
-.sc-legend {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 12px;
-  font-size: 11px;
-  color: #999;
+  background: #409EFF;
 }
 
 .sc-expand-btn {
@@ -807,15 +847,6 @@ function shiftIconTone(shiftId?: string) {
 
 .sc-expand-icon.up {
   transform: rotate(-90deg);
-}
-
-.sc-legend i {
-  display: inline-block;
-  width: 12px;
-  height: 4px;
-  border-radius: 2px;
-  margin-right: 4px;
-  vertical-align: middle;
 }
 
 .sc-day-panel {
@@ -918,10 +949,13 @@ function shiftIconTone(shiftId?: string) {
   border-radius: 8px;
 }
 
-.sc-shift-badge.active { background: #E6FFFA; color: #4FD1C5; }
-.sc-shift-badge.upcoming { background: #f0fdf4; color: #22c55e; }
-.sc-shift-badge.done { background: #f0f0f0; color: #999; }
-.sc-shift-badge.rest { background: #f5f5f5; color: #bbb; }
+.sc-shift-badge.upcoming { background: #fff7e6; color: #fa8c16; }
+.sc-shift-badge.normal { background: #f6ffed; color: #52c41a; }
+.sc-shift-badge.late,
+.sc-shift-badge.early_leave,
+.sc-shift-badge.missing_punch { background: #fff7e6; color: #d46b08; }
+.sc-shift-badge.rest,
+.sc-shift-badge.leave { background: #f5f5f5; color: #bbb; }
 .sc-shift-badge.absent { background: #fff1f0; color: #ff4d4f; }
 
 .sc-shift-body {
@@ -953,6 +987,11 @@ function shiftIconTone(shiftId?: string) {
 .sc-shift-icon-box.night {
   background: #faf5ff;
   color: #a855f7;
+}
+
+.sc-shift-icon-box.free {
+  background: #ECF5FF;
+  color: #409EFF;
 }
 
 .sc-shift-left {

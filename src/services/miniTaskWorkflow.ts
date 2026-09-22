@@ -1,10 +1,16 @@
 import { getWorkflowFieldsForNode, pickWorkerSubmitAction } from '@/services/miniTask'
-import { sortedWorkflowNodes } from '@/services/task'
+import { buildNodeFieldEntries, sortedWorkflowNodes } from '@/services/task'
 import { isTaskInstanceCancelled } from '@/composables/useMiniWorkerTasks'
 import { workflowActionMap } from '@/constants/task'
-import type { TaskInstance, TaskWorkflow, WorkflowNode } from '@/types'
+import type { TaskInstance, TaskInstanceLog, TaskWorkflow, WorkflowNode } from '@/types'
 
 export type WorkflowStepStatus = 'completed' | 'active' | 'pending'
+
+export interface TaskWorkflowStepFieldEntry {
+  fieldId: string
+  name: string
+  value: string
+}
 
 export interface TaskWorkflowStepItem {
   id: string
@@ -12,6 +18,10 @@ export interface TaskWorkflowStepItem {
   title: string
   description: string
   status: WorkflowStepStatus
+  /** 该步骤操作完成时间（展示用） */
+  operatedAt?: string
+  /** 该步骤已录入的自定义字段 */
+  fieldEntries?: TaskWorkflowStepFieldEntry[]
 }
 
 function parseProcessStep(raw: string): { title: string; description: string } {
@@ -23,9 +33,15 @@ function parseProcessStep(raw: string): { title: string; description: string } {
   }
 }
 
-function formatClaimDate(iso: string) {
+function pad2(n: number) {
+  return String(n).padStart(2, '0')
+}
+
+/** 流程步骤操作时间展示 */
+export function formatWorkflowOperateTime(iso: string) {
   const d = new Date(iso)
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
 function getDisplayNodes(workflow: TaskWorkflow) {
@@ -50,20 +66,65 @@ function getStoppedStepIndex(workflow: TaskWorkflow, instance: TaskInstance) {
   return 0
 }
 
-function buildCompletedDesc(
+function findNodeOperateLog(
+  instance: TaskInstance,
+  node: WorkflowNode,
+): TaskInstanceLog | undefined {
+  const logs = instance.logs ?? []
+  const reversed = [...logs].reverse()
+  const bySubmit = reversed.find(
+    (l) =>
+      l.title.includes(`提交：${node.name}`) ||
+      l.title.includes(`完成：${node.name}`) ||
+      (l.title.includes(node.name) && !!l.fieldEntries?.length),
+  )
+  if (bySubmit) return bySubmit
+  return reversed.find((l) => l.title.includes(`进入「${node.name}」`) || l.title.includes(node.name))
+}
+
+function resolveCompletedMeta(
   stepIndex: number,
   instance: TaskInstance,
+  workflow: TaskWorkflow,
+  node: WorkflowNode | undefined,
+) {
+  const fieldEntries = node
+    ? buildNodeFieldEntries(workflow, node.id, instance.fieldValues)
+    : []
+  const log = node ? findNodeOperateLog(instance, node) : undefined
+  let operatedIso = log?.time
+  if (!operatedIso) {
+    if (stepIndex === 0 || node?.nodeType === 'start') operatedIso = instance.createdAt
+    else if (node?.nodeType === 'end' || node?.name.includes('完成')) operatedIso = instance.updatedAt
+  }
+  const logFields =
+    log?.fieldEntries?.map((e) => ({
+      fieldId: e.fieldId,
+      name: e.name,
+      value: e.value,
+    })) ?? []
+  const merged = fieldEntries.length
+    ? fieldEntries
+    : logFields
+
+  return {
+    operatedAt: operatedIso ? formatWorkflowOperateTime(operatedIso) : undefined,
+    fieldEntries: merged,
+  }
+}
+
+function buildCompletedDesc(
+  stepIndex: number,
   node: WorkflowNode | undefined,
   fallback: string,
 ) {
   if (stepIndex === 0 || node?.nodeType === 'start') {
-    return `已于 ${formatClaimDate(instance.createdAt)} 领取`
+    return fallback || '已领取'
   }
   if (node?.nodeType === 'end' || node?.name.includes('完成')) {
-    return `已于 ${formatClaimDate(instance.updatedAt)} 完成`
+    return fallback || '已完成'
   }
-  if (fallback) return fallback
-  return `已于 ${formatClaimDate(instance.updatedAt)} 完成`
+  return fallback || '已完成'
 }
 
 function buildActiveDesc(
@@ -82,8 +143,7 @@ function buildActiveDesc(
     const fields = getWorkflowFieldsForNode(workflow, node.id)
     const action = pickWorkerSubmitAction(workflow, node.id)
     if (fields.length) {
-      const names = fields.map((f) => f.name).join('、')
-      return `请填写或上传：${names}`
+      return '请点击下方按钮填写信息并提交'
     }
     if (action) {
       return `${workflowActionMap[action]}，${fallback || '按任务要求完成当前步骤'}`
@@ -139,10 +199,17 @@ export function buildTaskWorkflowSteps(
     }
 
     let description = baseDesc
+    let operatedAt: string | undefined
+    let fieldEntries: TaskWorkflowStepFieldEntry[] | undefined
+
     if (cancelled && i === currentIdx) {
-      description = `已于 ${formatClaimDate(instance.updatedAt)} 取消，任务中途结束`
+      description = '任务已取消，中途结束'
+      operatedAt = formatWorkflowOperateTime(instance.updatedAt)
     } else if (status === 'completed') {
-      description = buildCompletedDesc(i, instance, node, baseDesc)
+      description = buildCompletedDesc(i, node, baseDesc)
+      const meta = resolveCompletedMeta(i, instance, workflow, node)
+      operatedAt = meta.operatedAt
+      fieldEntries = meta.fieldEntries.length ? meta.fieldEntries : undefined
     } else if (status === 'active') {
       description = buildActiveDesc(node, instance, workflow, baseDesc)
     }
@@ -153,6 +220,8 @@ export function buildTaskWorkflowSteps(
       title,
       description,
       status,
+      operatedAt,
+      fieldEntries,
     }
   })
 }

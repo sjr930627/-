@@ -2,7 +2,7 @@
 import MiniNavBack from '@/components/miniapp/MiniNavBack.vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Clock, OfficeBuilding, Document, Share } from '@element-plus/icons-vue'
+import { Clock, OfficeBuilding, Document, Share, Location } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { formatTaskUnitPrice, getTaskPricingUnit, resolvePricingForTask, taskPricingUnitMap } from '@/services/miniTask'
 import { getTaskDetailExtra, getTaskHallExtra } from '@/mock/miniTaskHallSeed'
@@ -37,6 +37,22 @@ const remainText = computed(() => {
 const workflowSteps = computed(() =>
   detail.value ? buildTaskWorkflowSteps(detail.value.processSteps) : [],
 )
+
+const workflowName = computed(() => {
+  if (!task.value) return ''
+  const wf = store.taskWorkflows.find((w) => w.id === task.value!.workflowId)
+  return wf?.name?.trim() || task.value.taskTypeName || ''
+})
+
+const locationText = computed(() => {
+  if (!task.value) return ''
+  const region = task.value.region?.trim() || ''
+  const detailAddr = task.value.addressDetail?.trim() || ''
+  if (region && detailAddr) return `${region} · ${detailAddr}`
+  return region || detailAddr || detail.value?.address || detail.value?.location || ''
+})
+
+const metadataFields = computed(() => task.value?.metadataFields ?? [])
 
 async function goClaim() {
   if (!task.value) return
@@ -73,7 +89,7 @@ async function goClaim() {
         </div>
         <div class="reward-box">
           <div>
-            <div class="reward-label">任务奖励</div>
+            <div class="reward-label">任务金额</div>
             <div class="reward-value">{{ priceLabel }}</div>
           </div>
           <div class="reward-side">
@@ -91,13 +107,8 @@ async function goClaim() {
         <div class="ent-row">
           <div class="ent-logo">{{ task.enterpriseName.slice(0, 1) }}</div>
           <div>
-            <div class="ent-name">
-              {{ task.enterpriseName }}
-              <span class="ent-badge">认证</span>
-            </div>
-            <div class="ent-meta">
-              {{ detail.enterpriseMeta ?? `${task.region ?? '全国'} · ${task.taskTypeName}` }}
-            </div>
+            <div class="ent-name">{{ task.enterpriseName }}</div>
+            <div v-if="workflowName" class="ent-meta">关联工作流：{{ workflowName }}</div>
           </div>
         </div>
       </div>
@@ -107,10 +118,32 @@ async function goClaim() {
           <el-icon :size="16"><Document /></el-icon>
           任务内容
         </div>
-        <p class="desc">{{ task.description }}</p>
-        <ul class="bullets">
+        <p class="desc">{{ task.description || '暂无任务内容说明' }}</p>
+        <ul v-if="detail.bullets.length" class="bullets">
           <li v-for="(item, idx) in detail.bullets" :key="idx">{{ item }}</li>
         </ul>
+      </div>
+
+      <div class="section-card">
+        <div class="section-head">
+          <el-icon :size="16"><Location /></el-icon>
+          任务地点
+        </div>
+        <p class="desc location-text">{{ locationText || '未填写任务地点' }}</p>
+      </div>
+
+      <div class="section-card">
+        <div class="section-head">
+          <el-icon :size="16"><Document /></el-icon>
+          任务元数据
+        </div>
+        <div v-if="metadataFields.length" class="meta-list">
+          <div v-for="meta in metadataFields" :key="meta.key" class="meta-row">
+            <span class="meta-label">{{ meta.label }}</span>
+            <span class="meta-value">{{ meta.value || '—' }}</span>
+          </div>
+        </div>
+        <p v-else class="desc muted">暂无任务元数据</p>
       </div>
 
       <div class="section-card">
@@ -278,15 +311,6 @@ async function goClaim() {
   font-weight: 600;
 }
 
-.ent-badge {
-  margin-left: 6px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #f0fdf4;
-  color: #22c55e;
-  font-size: 10px;
-}
-
 .ent-meta {
   margin-top: 4px;
   font-size: 12px;
@@ -298,6 +322,49 @@ async function goClaim() {
   font-size: 14px;
   color: var(--mini-text-secondary);
   line-height: 1.6;
+}
+
+.desc.muted,
+.location-text {
+  margin-bottom: 0;
+}
+
+.desc.muted {
+  color: #999;
+}
+
+.meta-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f5f5f5;
+  font-size: 13px;
+}
+
+.meta-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.meta-row:first-child {
+  padding-top: 0;
+}
+
+.meta-label {
+  color: #999;
+  flex-shrink: 0;
+}
+
+.meta-value {
+  color: #333;
+  text-align: right;
+  word-break: break-all;
 }
 
 .bullets {

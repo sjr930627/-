@@ -11,10 +11,7 @@ import {
   isTaskVisibleToWorker,
   resolvePricingForTask,
 } from '@/services/miniTask'
-import {
-  getEnterpriseHallLabel,
-  getTaskHallExtra,
-} from '@/mock/miniTaskHallSeed'
+import { getTaskHallExtra } from '@/mock/miniTaskHallSeed'
 
 const route = useRoute()
 const router = useRouter()
@@ -50,9 +47,7 @@ const taskRows = computed(() =>
     }),
 )
 
-const industryLabel = computed(
-  () => `${getEnterpriseHallLabel(enterpriseId.value)} · ${taskRows.value.length}个任务`,
-)
+const taskCountLabel = computed(() => `${taskRows.value.length}个任务`)
 
 function openTaskDetail(taskId: string) {
   router.push(`/miniapp/task-hall/task/${taskId}`)
@@ -82,11 +77,8 @@ async function openTaskClaim(taskId: string, e: Event) {
     <div class="ent-head">
       <div class="ent-logo">{{ enterpriseName.slice(0, 1) }}</div>
       <div>
-        <div class="ent-name-row">
-          <span class="ent-name">{{ enterpriseName }}</span>
-          <span class="ent-badge">认证</span>
-        </div>
-        <div class="ent-meta">{{ industryLabel }}</div>
+        <div class="ent-name">{{ enterpriseName }}</div>
+        <div class="ent-meta">{{ taskCountLabel }}</div>
       </div>
     </div>
 
@@ -147,24 +139,9 @@ async function openTaskClaim(taskId: string, e: Event) {
   color: #92400e;
 }
 
-.ent-name-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .ent-name {
   font-size: 18px;
   font-weight: 700;
-}
-
-.ent-badge {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #f0fdf4;
-  color: #22c55e;
-  font-size: 10px;
-  font-weight: 600;
 }
 
 .ent-meta {

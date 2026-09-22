@@ -41,10 +41,143 @@ function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number)
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
+export type MiniPunchMode = 'shift' | 'free'
+
+export interface EmployeePunchModes {
+  modes: MiniPunchMode[]
+  hasShift: boolean
+  hasFree: boolean
+  shiftGroup: AttendanceGroup | null
+  freeGroup: AttendanceGroup | null
+  /** 仅一种时为该模式；两种时默认班次（有班次组）否则自由 */
+  defaultMode: MiniPunchMode | null
+}
+
+/** 员工所属全部考勤组（按团队去重） */
+export function getEmployeeAttendanceGroups(store: Store, employeeId: string): AttendanceGroup[] {
+  const teams = store.teams.filter((t) => t.memberIds.includes(employeeId))
+  const seen = new Set<string>()
+  const groups: AttendanceGroup[] = []
+  for (const team of teams) {
+    if (!team.attendanceGroupId || seen.has(team.attendanceGroupId)) continue
+    const g = store.attendanceGroups.find((ag) => ag.id === team.attendanceGroupId)
+    if (!g) continue
+    seen.add(g.id)
+    groups.push(g)
+  }
+  return groups
+}
+
+export function getEmployeePunchModes(store: Store, employeeId: string): EmployeePunchModes {
+  const groups = getEmployeeAttendanceGroups(store, employeeId)
+  const shiftGroup = groups.find((g) => g.attendanceType === 'shift') ?? null
+  const freeGroup = groups.find((g) => g.attendanceType === 'free') ?? null
+  const modes: MiniPunchMode[] = []
+  if (shiftGroup) modes.push('shift')
+  if (freeGroup) modes.push('free')
+  const defaultMode: MiniPunchMode | null = shiftGroup ? 'shift' : freeGroup ? 'free' : null
+  return {
+    modes,
+    hasShift: Boolean(shiftGroup),
+    hasFree: Boolean(freeGroup),
+    shiftGroup,
+    freeGroup,
+    defaultMode,
+  }
+}
+
+export function resolveAttendanceGroupByMode(
+  store: Store,
+  employeeId: string,
+  mode: MiniPunchMode | null | undefined,
+): AttendanceGroup | null {
+  const punchModes = getEmployeePunchModes(store, employeeId)
+  if (mode === 'free' && punchModes.freeGroup) return punchModes.freeGroup
+  if (mode === 'shift' && punchModes.shiftGroup) return punchModes.shiftGroup
+  if (punchModes.defaultMode === 'free') return punchModes.freeGroup
+  if (punchModes.defaultMode === 'shift') return punchModes.shiftGroup
+  return getEmployeeAttendanceGroup(store, employeeId)
+}
+
 export function getEmployeeAttendanceGroup(store: Store, employeeId: string): AttendanceGroup | null {
-  const team = store.teams.find((t) => t.memberIds.includes(employeeId))
-  if (!team?.attendanceGroupId) return null
-  return store.attendanceGroups.find((g) => g.id === team.attendanceGroupId) ?? null
+  const emp = store.employees.find((e) => e.id === employeeId)
+  const teams = store.teams.filter((t) => t.memberIds.includes(employeeId))
+  if (!teams.length) return null
+  const preferred =
+    teams.find((t) => emp?.departmentId && t.departmentId === emp.departmentId) ??
+    teams.find((t) => {
+      const g = store.attendanceGroups.find((ag) => ag.id === t.attendanceGroupId)
+      return g?.attendanceType === 'free'
+    }) ??
+    teams[0]
+  if (!preferred?.attendanceGroupId) return null
+  return store.attendanceGroups.find((g) => g.id === preferred.attendanceGroupId) ?? null
+}
+
+export function isFreePunchGroup(group: AttendanceGroup | null | undefined) {
+  return group?.attendanceType === 'free'
+}
+
+export function isNoPunchGroup(group: AttendanceGroup | null | undefined) {
+  return group?.attendanceType === 'none'
+}
+
+export function isFreeClockInOnly(group: AttendanceGroup | null | undefined) {
+  return isFreePunchGroup(group) && group?.freePunchConfig?.punchCountMode === 'clock_in_only'
+}
+
+export function freePunchDefaultMinutes(group: AttendanceGroup | null | undefined) {
+  const hours = group?.freePunchConfig?.defaultWorkHours ?? 8
+  return Math.max(1, hours) * 60
+}
+
+export function freePunchWindowLabel(group: AttendanceGroup | null | undefined) {
+  const cfg = group?.freePunchConfig
+  if (!cfg) return '自由打卡 · 无班次'
+  return `自由打卡 · ${cfg.startTime.slice(0, 5)}-${cfg.endTime.slice(0, 5)}`
+}
+
+export interface FreePunchDepartmentOption {
+  id: string
+  name: string
+}
+
+/** 自由打卡组关联部门（多部门时需下拉选择） */
+export function getFreePunchDepartmentOptions(
+  store: Store,
+  employeeId: string,
+  freeGroup?: AttendanceGroup | null,
+): FreePunchDepartmentOption[] {
+  const group = freeGroup ?? getEmployeePunchModes(store, employeeId).freeGroup
+  if (!group) return []
+
+  const byId = new Map<string, string>()
+  for (const b of group.departmentBindings ?? []) {
+    if (b.departmentId) byId.set(b.departmentId, b.departmentName || b.departmentId)
+  }
+  // 补充：员工所在、且挂该自由打卡组的班组部门
+  store.teams
+    .filter((t) => t.memberIds.includes(employeeId) && t.attendanceGroupId === group.id)
+    .forEach((t) => {
+      if (!t.departmentId || byId.has(t.departmentId)) return
+      const name = store.departments.find((d) => d.id === t.departmentId)?.name ?? t.departmentId
+      byId.set(t.departmentId, name)
+    })
+
+  return Array.from(byId.entries()).map(([id, name]) => ({ id, name }))
+}
+
+export function pickDefaultFreePunchDepartmentId(
+  store: Store,
+  employeeId: string,
+  options: FreePunchDepartmentOption[],
+): string | null {
+  if (!options.length) return null
+  const emp = store.employees.find((e) => e.id === employeeId)
+  if (emp?.departmentId && options.some((o) => o.id === emp.departmentId)) {
+    return emp.departmentId
+  }
+  return options[0]?.id ?? null
 }
 
 export function buildPunchTargets(group: AttendanceGroup | null): PunchTarget[] {
@@ -75,7 +208,6 @@ export function resolveAvailableMethods(group: AttendanceGroup | null): MiniPunc
   const methods: MiniPunchMethod[] = []
   if (group?.gpsEnabled !== false) methods.push('gps')
   if (group?.wifiEnabled) methods.push('wifi')
-  methods.push('field')
   if (group?.qrcodeEnabled) methods.push('qrcode')
   return methods
 }
@@ -123,19 +255,25 @@ export function useMiniPunchLocation() {
   return { locating, lat, lng, address, locateError, refreshLocation }
 }
 
-export function useMiniPunchWifi(group: AttendanceGroup | null) {
-  const demoNetworks = [
-    { ssid: group?.wifiName ?? 'ShiftStore-5G', matched: true },
-    { ssid: 'ChinaNet-Office', matched: false },
-    { ssid: 'CMCC-Guest', matched: false },
-  ]
-  const connectedSsid = ref(group?.wifiName ?? 'ShiftStore-5G')
-  const wifiMatched = computed(
-    () => group?.wifiEnabled && connectedSsid.value === group.wifiName,
-  )
+export function useMiniPunchWifi(groupSource: AttendanceGroup | null | (() => AttendanceGroup | null)) {
+  const resolveGroup = () =>
+    typeof groupSource === 'function' ? groupSource() : groupSource
+  const demoNetworks = computed(() => {
+    const group = resolveGroup()
+    return [
+      { ssid: group?.wifiName ?? 'ShiftStore-5G', matched: true },
+      { ssid: 'ChinaNet-Office', matched: false },
+      { ssid: 'CMCC-Guest', matched: false },
+    ]
+  })
+  const connectedSsid = ref(resolveGroup()?.wifiName ?? 'ShiftStore-5G')
+  const wifiMatched = computed(() => {
+    const group = resolveGroup()
+    return Boolean(group?.wifiEnabled && connectedSsid.value === group.wifiName)
+  })
 
   function rescanWifi() {
-    connectedSsid.value = group?.wifiName ?? 'ShiftStore-5G'
+    connectedSsid.value = resolveGroup()?.wifiName ?? 'ShiftStore-5G'
   }
 
   return { demoNetworks, connectedSsid, wifiMatched, rescanWifi }

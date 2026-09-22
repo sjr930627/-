@@ -43,17 +43,17 @@ export const taskHallEnterpriseOptions = [
 ]
 
 export const taskHallExtras: Record<string, MiniTaskHallExtra> = {
-  task_5g_july: { tags: ['高佣金', '长期'], remain: 114, category: 'main' },
+  task_5g_july: { tags: ['高佣金', '长期', '近期发布'], remain: 114, category: 'main' },
   task_hall_recruit: { tags: ['高佣金', '急'], remain: 12, category: 'main', participants: 86 },
-  task_hall_kitchen: { tags: ['新'], remain: 8, category: 'main', participants: 42 },
+  task_hall_kitchen: { tags: ['新', '近期发布'], remain: 8, category: 'main', participants: 42 },
   task_hall_share: { tags: ['限时'], remain: 30, category: 'personal', participants: 55 },
   task_hall_weekend: { tags: ['长期'], category: 'family', participants: 18 },
   task_hall_member: { tags: ['高佣金'], remain: 45, category: 'personal', participants: 67 },
-  task_insurance_july: { tags: ['高佣金', '急'], remain: 28, category: 'main', participants: 22 },
+  task_insurance_july: { tags: ['高佣金', '急', '近期发布'], remain: 28, category: 'main', participants: 22 },
   task_hall_display: { tags: ['新', '限时'], remain: 20, category: 'gov', participants: 20 },
   // 中国移动示例
   task_cm_sim: {
-    tags: ['热门'],
+    tags: ['热门', '近期发布'],
     remain: 120,
     category: 'main',
     participants: 126,
@@ -83,7 +83,7 @@ export const taskHallExtras: Record<string, MiniTaskHallExtra> = {
     isMobile: true,
   },
   task_cm_5g: {
-    tags: ['高佣'],
+    tags: ['高佣', '近期发布'],
     remain: 60,
     category: 'personal',
     participants: 52,

@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { FullScreen, OfficeBuilding } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
+import { createMiniPunchNow, localDateStr } from '@/composables/useMiniPunch'
 import { listWorkerCurrentOrgs, listWorkerJoinApplications } from '@/services/miniJoin'
 
 const route = useRoute()
@@ -27,7 +28,6 @@ const currentOrgs = computed(() =>
     store.workerJoinApplications,
     store.departments,
     store.enterprises,
-    store.teams,
   ),
 )
 
@@ -39,6 +39,21 @@ const applications = computed(() =>
     store.enterprises,
   ),
 )
+
+/** 与后台人员列表一致：打卡上班且未下班视为出勤 */
+const onDuty = computed(() => {
+  const emp = employee.value
+  if (!emp) return false
+  if (emp.onDuty != null) return emp.onDuty
+  const today = localDateStr(createMiniPunchNow())
+  const punchedIn = store.punches.some(
+    (p) => p.employeeId === emp.id && p.date === today && p.type === 'clock_in',
+  )
+  const punchedOut = store.punches.some(
+    (p) => p.employeeId === emp.id && p.date === today && p.type === 'clock_out',
+  )
+  return emp.status === 'active' && punchedIn && !punchedOut
+})
 
 function formatTime(iso?: string) {
   if (!iso) return ''
@@ -77,10 +92,6 @@ async function openScanJoin() {
   } catch {
     /* cancel */
   }
-}
-
-function openDetail(id: string) {
-  router.push(`/miniapp/join-applications/${id}`)
 }
 </script>
 
@@ -127,18 +138,14 @@ function openDetail(id: string) {
               <div class="org-name">{{ org.enterpriseName }}</div>
               <div class="org-path">{{ org.orgPath }}</div>
             </div>
-            <span class="mini-tag" :class="org.primary ? 'green' : 'blue'">
-              {{ org.primary ? '当前在岗' : '已入驻' }}
+            <span class="mini-tag" :class="org.primary && onDuty ? 'green' : 'orange'">
+              {{ org.primary && onDuty ? '出勤' : '未出勤' }}
             </span>
           </div>
           <div class="org-rows">
             <div class="org-row">
               <span>岗位</span>
               <span>{{ org.position }}</span>
-            </div>
-            <div v-if="org.teamName" class="org-row">
-              <span>班组</span>
-              <span>{{ org.teamName }}</span>
             </div>
             <div v-if="org.hireDate" class="org-row">
               <span>入驻日期</span>
@@ -154,7 +161,6 @@ function openDetail(id: string) {
           v-for="app in applications"
           :key="app.id"
           class="mini-card app-card"
-          @click="openDetail(app.id)"
         >
           <div class="app-head">
             <div class="app-title">{{ app.enterpriseName }}</div>
@@ -166,15 +172,15 @@ function openDetail(id: string) {
             入驻部门：{{ app.assignedDepartmentName }}
             <template v-if="app.assignedPosition"> · {{ app.assignedPosition }}</template>
           </div>
+          <div v-if="app.status === 'approved'" class="app-dept">
+            入驻日期：{{ (app.reviewedAt || app.appliedAt).slice(0, 10) }}
+          </div>
           <div v-if="app.reviewNote" class="app-note">{{ app.reviewNote }}</div>
           <div class="app-foot">
             <span>
               申请时间 {{ formatTime(app.appliedAt) }}
               <template v-if="app.reviewedAt"> · 审批 {{ formatTime(app.reviewedAt) }}</template>
             </span>
-            <button type="button" class="detail-link" @click.stop="openDetail(app.id)">
-              查看详情
-            </button>
           </div>
         </div>
         <div v-if="applications.length === 0" class="mini-empty">
@@ -314,10 +320,6 @@ function openDetail(id: string) {
   text-align: right;
 }
 
-.app-card {
-  cursor: pointer;
-}
-
 .app-title {
   flex: 1;
   min-width: 0;
@@ -341,17 +343,6 @@ function openDetail(id: string) {
   gap: 8px;
   font-size: 11px;
   color: #bbb;
-}
-
-.detail-link {
-  border: none;
-  background: none;
-  color: var(--mini-primary, #4fd1c5);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
 }
 
 .scan-empty-btn {

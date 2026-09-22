@@ -208,7 +208,6 @@ export function buildHallTaskRow(
   },
 ): HallTaskRow {
   const pricingUnit = getTaskPricingUnit(pricing)
-  const unit = taskPricingUnitMap[pricingUnit]
   const priceValue = resolveTaskSettlementUnitPrice({
     settlementUnitPrice: task.settlementUnitPrice,
     pricingMode: pricing?.pricingMode,
@@ -219,7 +218,7 @@ export function buildHallTaskRow(
     extra?.remain ??
     (task.plannedTotal != null ? Math.max(0, task.plannedTotal - task.acceptedCount) : undefined)
   const remainLabel =
-    remain == null || remain > 9999 ? '不限名额' : `剩余 ${remain} 名额`
+    remain == null || remain > 9999 ? '剩余子任务数不限' : `剩余子任务数 ${remain}`
   const canClaim =
     task.status === 'active' &&
     task.dispatchMode === 'hall' &&
@@ -234,7 +233,7 @@ export function buildHallTaskRow(
     enterpriseName: task.enterpriseName,
     description: task.description,
     region: task.region,
-    unitPriceLabel: `¥${priceValue}/${unit}`,
+    unitPriceLabel: `¥${priceValue}/件`,
     priceValue,
     pricingUnit,
     remainLabel,
@@ -246,7 +245,7 @@ export function buildHallTaskRow(
     participants: extra?.participants ?? task.acceptedCount,
     cardTone: extra?.cardTone ?? 'blue',
     highlightTag: extra?.highlightTag,
-    priceDisplay: extra?.priceRange ?? `¥${priceValue}/${unit === '次' ? '次' : '人'}`,
+    priceDisplay: `¥${priceValue}/件`,
     isMobile: extra?.isMobile,
   }
 }

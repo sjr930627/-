@@ -1,7 +1,7 @@
 import { normalizeWorkbenchMessageCategory } from '@/constants/workbenchMessage'
 
 const STORAGE_PREFIX = 'shift-attendance:'
-const DEMO_BRANDING_VERSION = 'sinopec-v31'
+const DEMO_BRANDING_VERSION = 'sinopec-v38'
 
 const DEMO_BRANDING_KEYS = [
   'enterprises',
@@ -246,6 +246,23 @@ export function ensureSettlementManageOrders(
   return result
 }
 
+/** 补齐演示用抢班面试报名（按 id 合并；种子记录覆盖同 id，便于刷新 demo） */
+export function ensureGrabInterviewRegistrations(
+  records: import('@/types').GrabInterviewRegistration[],
+  seed: import('@/types').GrabInterviewRegistration[],
+): import('@/types').GrabInterviewRegistration[] {
+  const result = [...records]
+  for (const s of seed) {
+    const idx = result.findIndex((r) => r.id === s.id)
+    if (idx >= 0) {
+      result[idx] = { ...s }
+      continue
+    }
+    result.unshift({ ...s })
+  }
+  return result
+}
+
 export function ensureWorkerIncomeSeed(
   records: import('@/types').WorkerIncomeRecord[],
   seed: import('@/types').WorkerIncomeRecord[],
@@ -304,8 +321,15 @@ export function ensureWorkerIncomeSeed(
         if (s.enterpriseName) patch.enterpriseName = s.enterpriseName
         if (s.amount != null) patch.amount = s.amount
       }
-      if (current.status === 'claimed' && s.status === 'claimed' && !current.claimBatchId && s.claimBatchId) {
-        patch.claimBatchId = s.claimBatchId
+      if (current.status === 'claimed' && s.status === 'claimed') {
+        if (!current.claimBatchId && s.claimBatchId) {
+          patch.claimBatchId = s.claimBatchId
+        }
+        if (s.title && /考勤收入|考勤汇总/.test(current.title)) {
+          patch.title = s.title
+          if (s.enterpriseId) patch.enterpriseId = s.enterpriseId
+          if (s.enterpriseName) patch.enterpriseName = s.enterpriseName
+        }
       }
       if (Object.keys(patch).length > 0) result[idx] = { ...current, ...patch }
     } else {

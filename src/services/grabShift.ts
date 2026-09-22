@@ -613,7 +613,7 @@ export function isGrabSlotVisibleToWorker(
   return isEmployeeInDepartmentGrabPool(worker, deptId, departments)
 }
 
-/** 抢班直面：对企业抢班池人员可见（面试配置不再区分发布范围） */
+/** 抢班直面：对企业抢班池人员可见；其他在职灵工亦可浏览报名（获客/转岗演示） */
 export function isGrabInterviewVisibleToWorker(
   post: {
     enterpriseId: string
@@ -622,7 +622,10 @@ export function isGrabInterviewVisibleToWorker(
   departments: Array<Pick<Department, 'id'> & { parentId?: string | null; enterpriseId?: string }>,
 ): boolean {
   if (!worker) return false
-  return isEmployeeInEnterpriseGrabPool(worker, post.enterpriseId, departments)
+  if (worker.personnelCategory === 'grab') {
+    return isEmployeeInEnterpriseGrabPool(worker, post.enterpriseId, departments)
+  }
+  return true
 }
 
 export function getGrabShiftTemplateOptions(

@@ -41,8 +41,13 @@ function canApplyMakeup(date: string, statusType: string) {
   if (date >= today.value) return false
   if (hasPendingMakeup(date)) return false
   const detail = buildDayDetail(store, employeeId.value, date, now.value)
-  if (detail.state === 'rest') return false
-  return statusType === 'pending' || detail.state === 'absent'
+  if (detail.state === 'rest' || detail.state === 'leave') return false
+  return (
+    statusType === 'absent' ||
+    statusType === 'missing_punch' ||
+    statusType === 'late' ||
+    statusType === 'early_leave'
+  )
 }
 
 function goApply(date: string) {
@@ -188,10 +193,11 @@ const highlightDate = computed(() =>
   padding: 1px 6px;
 }
 
-.mini-tag.online { background: #E6FFFA; color: #4FD1C5; }
-.mini-tag.hours { background: #f0fdf4; color: #16a34a; }
-.mini-tag.rest { background: #f3f4f6; color: #9ca3af; }
-.mini-tag.pending { background: #fff7ed; color: #ea580c; }
+.mini-tag.normal { background: #f0fdf4; color: #16a34a; }
+.mini-tag.missing_punch { background: #fff7ed; color: #ea580c; }
+.mini-tag.absent { background: #fef2f2; color: #ef4444; }
+.mini-tag.late { background: #fff7ed; color: #ea580c; }
+.mini-tag.early_leave { background: #fff7ed; color: #ea580c; }
 .mini-tag.orange { background: #fff7ed; color: #ea580c; }
 .mini-tag.green { background: #f0fdf4; color: #16a34a; }
 .mini-tag.red { background: #fef2f2; color: #ef4444; }

@@ -26,22 +26,51 @@ const dayDetail = computed(() =>
   applyDate.value ? buildDayDetail(store, employeeId.value, applyDate.value, now.value) : null,
 )
 
-const punchType = ref<PunchType>('clock_in')
-const time = ref('08:00')
+const punchTypes = ref<PunchType[]>(['clock_in'])
+const clockInTime = ref('08:00')
+const clockOutTime = ref('16:00')
 const reason = ref('')
+
+/** 缺卡 / 缺勤可同时补签到和签退 */
+const allowMultiType = computed(() => {
+  const state = dayDetail.value?.state
+  return state === 'missing_punch' || state === 'absent'
+})
 
 watch(
   dayDetail,
   (detail) => {
     if (!detail) return
-    punchType.value = !detail.clockIn ? 'clock_in' : 'clock_out'
-    time.value =
-      punchType.value === 'clock_in'
-        ? (detail.shift?.startTime?.slice(0, 5) ?? '08:00')
-        : (detail.shift?.endTime?.slice(0, 5) ?? '16:00')
+    const start = detail.shift?.startTime?.slice(0, 5) ?? '08:00'
+    const end = detail.shift?.endTime?.slice(0, 5) ?? '16:00'
+    clockInTime.value = start
+    clockOutTime.value = end
+    const missing: PunchType[] = []
+    if (!detail.clockIn) missing.push('clock_in')
+    if (!detail.clockOut && !detail.freeClockInOnly) missing.push('clock_out')
+    if (allowMultiType.value && missing.length) {
+      punchTypes.value = missing
+      return
+    }
+    punchTypes.value = [missing[0] ?? (!detail.clockIn ? 'clock_in' : 'clock_out')]
   },
   { immediate: true },
 )
+
+function togglePunchType(type: PunchType) {
+  if (!allowMultiType.value) {
+    punchTypes.value = [type]
+    return
+  }
+  const next = new Set(punchTypes.value)
+  if (next.has(type)) {
+    if (next.size === 1) return
+    next.delete(type)
+  } else {
+    next.add(type)
+  }
+  punchTypes.value = (['clock_in', 'clock_out'] as PunchType[]).filter((t) => next.has(t))
+}
 
 function shiftIcon(shiftId?: string) {
   if (shiftId === 'shift_afternoon') return Cloudy
@@ -55,30 +84,30 @@ function submit() {
     ElMessage.warning('请填写补卡原因')
     return
   }
-  if (!time.value) {
-    ElMessage.warning('请选择补卡时间')
+  if (!punchTypes.value.length) {
+    ElMessage.warning('请选择补卡类型')
     return
   }
-  const pending = store.makeupRequests.some(
-    (r) =>
-      r.employeeId === employeeId.value &&
-      r.date === applyDate.value &&
-      r.status === 'pending',
-  )
-  if (pending) {
-    ElMessage.warning('该日期已有待审批的补卡申请')
+  if (punchTypes.value.includes('clock_in') && !clockInTime.value) {
+    ElMessage.warning('请选择签到时间')
     return
   }
+  if (punchTypes.value.includes('clock_out') && !clockOutTime.value) {
+    ElMessage.warning('请选择签退时间')
+    return
+  }
+  const reasonText = reason.value.trim()
+  const items = punchTypes.value.map((punchType) => ({
+    employeeId: employeeId.value,
+    date: applyDate.value,
+    punchType,
+    time: punchType === 'clock_in' ? clockInTime.value : clockOutTime.value,
+    reason: reasonText,
+  }))
   try {
-    const item = store.submitMakeupRequest({
-      employeeId: employeeId.value,
-      date: applyDate.value,
-      punchType: punchType.value,
-      time: time.value,
-      reason: reason.value.trim(),
-    })
-    ElMessage.success('补卡申请已提交')
-    router.replace(`/miniapp/schedule/makeup/${item.id}`)
+    const created = store.submitMakeupRequestBatch(items)
+    ElMessage.success(created.length > 1 ? '已提交 2 条补卡申请' : '补卡申请已提交')
+    router.replace(`/miniapp/schedule/makeup/${created[0].id}`)
   } catch (e) {
     ElMessage.warning(e instanceof Error ? e.message : '提交失败')
   }
@@ -125,25 +154,31 @@ function submit() {
             <button
               type="button"
               class="type-btn"
-              :class="{ active: punchType === 'clock_in' }"
-              @click="punchType = 'clock_in'"
+              :class="{ active: punchTypes.includes('clock_in') }"
+              @click="togglePunchType('clock_in')"
             >
               {{ punchTypeLabel('clock_in') }}
             </button>
             <button
+              v-if="!dayDetail.freeClockInOnly"
               type="button"
               class="type-btn"
-              :class="{ active: punchType === 'clock_out' }"
-              @click="punchType = 'clock_out'"
+              :class="{ active: punchTypes.includes('clock_out') }"
+              @click="togglePunchType('clock_out')"
             >
               {{ punchTypeLabel('clock_out') }}
             </button>
           </div>
+          <p v-if="allowMultiType" class="field-hint">缺卡可同时选择签到和签退，将生成两条补卡记录</p>
         </div>
 
-        <div class="field">
-          <label class="field-label">补卡时间</label>
-          <input v-model="time" type="time" class="field-input" />
+        <div v-if="punchTypes.includes('clock_in')" class="field">
+          <label class="field-label">签到时间</label>
+          <input v-model="clockInTime" type="time" class="field-input" />
+        </div>
+        <div v-if="punchTypes.includes('clock_out')" class="field">
+          <label class="field-label">签退时间</label>
+          <input v-model="clockOutTime" type="time" class="field-input" />
         </div>
 
         <div class="field">
@@ -231,6 +266,12 @@ function submit() {
   font-size: 13px;
   font-weight: 500;
   margin-bottom: 6px;
+}
+
+.field-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--mini-text-muted);
 }
 
 .req {

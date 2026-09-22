@@ -6,7 +6,6 @@ import { ElMessage } from 'element-plus'
 import {
   CircleCheckFilled,
   Document,
-  Lock,
   Monitor,
   VideoPlay,
 } from '@element-plus/icons-vue'
@@ -14,7 +13,7 @@ import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppBack } from '@/composables/useMiniAppBack'
 import { getMaterialCategoryLabel } from '@/constants/training'
-import { canAccessMaterial, getMaterialMinReadMinutes } from '@/services/training'
+import { getMaterialMinReadMinutes } from '@/services/training'
 import type { TrainingMaterial } from '@/types'
 
 const DEMO_VIDEO_SECONDS = 30
@@ -119,7 +118,6 @@ const catalog = computed(() => {
         indexLabel: String(index + 1).padStart(2, '0'),
         material: m,
         learned: completed.includes(m.id),
-        accessible: canAccessMaterial(course.value!, m.id, completed),
         current: m.id === materialId.value,
       }
     })
@@ -239,7 +237,7 @@ function completeLearning() {
     ElMessage.success('学习完成')
     const completed = [...(record.value?.completedMaterialIds ?? []), materialId.value]
     const nextId = course.value.materialIds.find(
-      (id) => id !== materialId.value && canAccessMaterial(course.value!, id, completed) && !completed.includes(id),
+      (id) => id !== materialId.value && !completed.includes(id),
     )
     if (nextId) {
       router.replace(`/miniapp/training/learn/${courseId.value}/${nextId}`)
@@ -267,10 +265,6 @@ function onWantLearn() {
 }
 
 function openLesson(item: (typeof catalog.value)[number]) {
-  if (!item.accessible) {
-    ElMessage.warning('请按顺序学习，先完成上一项资料')
-    return
-  }
   if (item.current) {
     onPreview()
     return
@@ -297,11 +291,6 @@ watch(
 
 watch(materialId, () => {
   resetLessonState()
-  const completed = record.value?.completedMaterialIds ?? []
-  if (course.value && material.value && !canAccessMaterial(course.value, materialId.value, completed)) {
-    ElMessage.warning('请按顺序学习，先完成上一项资料')
-    goBack()
-  }
 })
 
 watch(
@@ -404,7 +393,6 @@ onBeforeUnmount(() => {
           class="catalog-item"
           :class="{
             current: item.current,
-            locked: !item.accessible,
             learned: item.learned && !item.current,
           }"
           @click="openLesson(item)"
@@ -413,7 +401,6 @@ onBeforeUnmount(() => {
           <span v-else class="catalog-index">{{ item.indexLabel }}</span>
           <span class="catalog-name">{{ item.material.name }}</span>
           <el-icon v-if="item.learned" class="catalog-status ok" :size="16"><CircleCheckFilled /></el-icon>
-          <el-icon v-else-if="!item.accessible" class="catalog-status lock" :size="14"><Lock /></el-icon>
           <span
             v-else
             class="catalog-type"
@@ -669,10 +656,6 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
-.catalog-item.locked {
-  opacity: 0.55;
-}
-
 .catalog-tv {
   color: var(--mini-primary, #4FD1C5);
   flex-shrink: 0;
@@ -696,11 +679,6 @@ onBeforeUnmount(() => {
 
 .catalog-status.ok {
   color: #22c55e;
-  flex-shrink: 0;
-}
-
-.catalog-status.lock {
-  color: #bbb;
   flex-shrink: 0;
 }
 

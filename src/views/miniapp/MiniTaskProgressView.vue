@@ -14,8 +14,7 @@ const onlyPendingMine = ref(false)
 const tabs: { key: WorkerTaskStatus; label: string }[] = [
   { key: 'in_progress', label: '进行中' },
   { key: 'completed', label: '已完成' },
-  { key: 'settled', label: '已结算' },
-  { key: 'cancelled', label: '已取消' },
+  { key: 'ended', label: '已结束' },
 ]
 
 function formatDate(iso: string) {

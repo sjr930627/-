@@ -54,7 +54,7 @@ function backToList() {
   <div class="review-page">
     <div class="mini-nav-bar">
       <MiniNavBack fallback="/miniapp/training/exams" />
-      <div class="mini-nav-title">答题解析</div>
+      <div class="mini-nav-title">考试明细</div>
     </div>
 
     <div v-if="attempt && exam" class="review-body">
@@ -113,11 +113,6 @@ function backToList() {
               class="opt-tag wrong"
             >你的选择</span>
           </div>
-        </div>
-
-        <div v-if="item.question.explanation" class="q-explain">
-          <span class="explain-label">解析</span>
-          {{ item.question.explanation }}
         </div>
       </div>
 
@@ -343,22 +338,6 @@ function backToList() {
 .opt-tag.wrong {
   background: #e60012;
   color: #fff;
-}
-
-.q-explain {
-  margin-top: 10px;
-  padding: 10px 12px;
-  background: #fffbe6;
-  border-radius: 8px;
-  font-size: 12px;
-  color: #666;
-  line-height: 1.5;
-}
-
-.explain-label {
-  color: #fa8c16;
-  font-weight: 700;
-  margin-right: 6px;
 }
 
 .back-btn {

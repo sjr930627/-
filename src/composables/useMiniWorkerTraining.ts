@@ -1,7 +1,7 @@
 import { computed } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
-import { getLearningProgress, resolveCourseAssignees, canAccessMaterial } from '@/services/training'
+import { getLearningProgress, resolveCourseAssignees } from '@/services/training'
 import { learningStatusMap } from '@/constants/training'
 import type { TrainingMaterial } from '@/types'
 
@@ -39,7 +39,6 @@ export function useMiniWorkerTraining() {
           .map((m) => ({
             material: m,
             learned: rec.completedMaterialIds.includes(m.id),
-            accessible: canAccessMaterial(c, m.id, rec.completedMaterialIds),
           }))
         return {
           course: c,
@@ -85,7 +84,7 @@ export function useMiniWorkerTraining() {
 
   const examTasks = computed(() =>
     myCourses.value
-      .filter((item) => item.exam && item.exam.status === 'published')
+      .filter((item) => item.exam && item.exam.status === 'published' && item.progress >= 100)
       .map((item) => {
         const attempts = store.examAttempts
           .filter((a) => a.employeeId === employeeId.value && a.examId === item.exam!.id)
@@ -93,14 +92,10 @@ export function useMiniWorkerTraining() {
         const lastAttempt = attempts[0]
         const withinRetakes =
           item.exam!.maxRetakes < 0 || attempts.length < item.exam!.maxRetakes
-        const canTake =
-          item.progress >= 100 &&
-          (!lastAttempt || (!lastAttempt.passed && withinRetakes))
-        let status: 'locked' | 'ready' | 'passed' | 'failed' = 'locked'
-        if (item.progress < 100) status = 'locked'
-        else if (lastAttempt?.passed) status = 'passed'
+        const canTake = !lastAttempt || (!lastAttempt.passed && withinRetakes)
+        let status: 'ready' | 'passed' | 'failed' = 'ready'
+        if (lastAttempt?.passed) status = 'passed'
         else if (lastAttempt && !lastAttempt.passed) status = 'failed'
-        else status = 'ready'
         return {
           courseId: item.course.id,
           courseName: item.course.name,
@@ -127,6 +122,5 @@ export function useMiniWorkerTraining() {
     myExamAttempts,
     examTasks,
     materialTypeIcon,
-    canAccessMaterial,
   }
 }

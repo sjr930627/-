@@ -18,16 +18,12 @@ import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppAuth } from '@/composables/useMiniAppAuth'
 import { useMiniInsuranceStatus } from '@/composables/useMiniInsuranceStatus'
-import { useMiniFaceVerifyStatus } from '@/composables/useMiniFaceVerifyStatus'
 
 const router = useRouter()
 const store = useAppStore()
-const { employee, department, profileExt, paymentBinding } = useMiniAppWorker()
-const { onboardingComplete, logout } = useMiniAppAuth()
+const { employee, department, profileExt } = useMiniAppWorker()
+const { logout } = useMiniAppAuth()
 const { statusLabel, isInsuredToday } = useMiniInsuranceStatus()
-const { statusMeta: faceVerifyMeta } = useMiniFaceVerifyStatus()
-
-const showOnboardingBanner = computed(() => !onboardingComplete.value)
 
 const incomeSummary = computed(() => {
   const empId = employee.value?.id ?? ''
@@ -56,7 +52,7 @@ const iconItems: {
   { path: '/miniapp/tasks', icon: List, label: '任务进度', bg: '#E6FFFA', color: '#4FD1C5' },
   { path: '/miniapp/applications', icon: Tickets, label: '我的报名', bg: '#E6FFFA', color: '#4FD1C5' },
   { path: '/miniapp/join-manage', icon: OfficeBuilding, label: '入驻管理', bg: '#eff6ff', color: '#3b82f6' },
-  { path: '/miniapp/payment', icon: CreditCard, label: '收款绑定', bg: '#fff7ed', color: '#f97316' },
+  { path: '/miniapp/payment', icon: CreditCard, label: '银行卡', bg: '#fff7ed', color: '#f97316' },
   { path: '/miniapp/agreements', icon: Document, label: '协议管理', bg: '#faf5ff', color: '#a855f7' },
   { path: '/miniapp/worker-archive', icon: User, label: '我的资料', bg: '#E6FFFA', color: '#4FD1C5' },
 ]
@@ -70,18 +66,6 @@ async function handleLogout() {
 
 <template>
   <div class="mini-page profile-page">
-    <div
-      v-if="showOnboardingBanner"
-      class="onboarding-banner"
-      @click="router.push('/miniapp/onboarding')"
-    >
-      <div class="banner-text">
-        <div class="banner-title">档案尚未完善</div>
-        <div class="banner-desc">完成实名认证、人脸识别与偏好设置后可正常接单</div>
-      </div>
-      <span class="banner-action">去完善 ›</span>
-    </div>
-
     <div class="mini-card profile-card" @click="router.push('/miniapp/worker-archive')">
       <div class="profile-row">
         <div class="profile-avatar">{{ employee?.name?.slice(0, 1) ?? '灵' }}</div>
@@ -95,13 +79,6 @@ async function handleLogout() {
               @click.stop="router.push('/miniapp/insurance')"
             >
               {{ statusLabel }}
-            </span>
-            <span
-              class="mini-tag face-verify-status"
-              :style="{ background: faceVerifyMeta.bg, color: faceVerifyMeta.color }"
-              @click.stop="router.push('/miniapp/face-verify')"
-            >
-              {{ faceVerifyMeta.label }}
             </span>
           </div>
         </div>
@@ -139,12 +116,6 @@ async function handleLogout() {
           <span>{{ item.label }}</span>
         </div>
       </div>
-    </div>
-
-    <div v-if="paymentBinding" class="mini-card pay-tip">
-      支付宝 {{ paymentBinding.alipay ?? '未绑定' }}
-      · 银行卡
-      {{ paymentBinding.bankName ? `${paymentBinding.bankName} *${paymentBinding.bankCardLast4}` : '未绑定' }}
     </div>
 
     <button class="logout-btn" type="button" @click="handleLogout">
@@ -230,10 +201,6 @@ async function handleLogout() {
   color: #999;
 }
 
-.face-verify-status {
-  cursor: pointer;
-}
-
 .income-brief {
   display: flex;
   justify-content: space-around;
@@ -284,44 +251,6 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.pay-tip {
-  font-size: 12px;
-  color: #999;
-  cursor: default;
-}
-
-.onboarding-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #E6FFFA, #CCFBF1);
-  cursor: pointer;
-}
-
-.banner-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: #319795;
-}
-
-.banner-desc {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #4FD1C5;
-  line-height: 1.4;
-}
-
-.banner-action {
-  flex-shrink: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: #38B2AC;
 }
 
 .logout-btn {

@@ -70,6 +70,9 @@ export interface MiniGrabInterviewPost {
   positionId: string
   title: string
   positionName: string
+  enterpriseName: string
+  /** 企业名称 · 部门 */
+  orgLabel: string
   tags: string[]
   payMin: number
   payMax: number
@@ -300,16 +303,19 @@ export function listOpenGrabInterviewPosts(
         })
         if (!allSlots.length) continue
 
-        const title = `${brand.slice(0, 8)} | ${position.profile.positionName}【抢班直面】`
+        const enterpriseName = enterprise?.name?.trim() || brand
+        const positionName = position.profile.positionName
         const loc = buildLocationParts(storeName, position.id)
         posts.push({
           id: `${cfg.enterpriseId}__${dept.departmentId}__${position.id}`,
           enterpriseId: cfg.enterpriseId,
           departmentId: dept.departmentId,
           positionId: position.id,
-          title,
-          positionName: position.profile.positionName,
-          tags: ['抢班直面', '免审核', '星级补贴', '近期发布', '专属福利'],
+          title: `${positionName}|直面岗位`,
+          positionName,
+          enterpriseName,
+          orgLabel: `${enterpriseName} · ${storeName}`,
+          tags: ['抢班直面', '免审核', '近期发布', '日结'],
           payMin,
           payMax,
           payUnit: '/小时',
@@ -318,7 +324,7 @@ export function listOpenGrabInterviewPosts(
           locationMain: loc.locationMain,
           locationSide: loc.locationSide,
           locationHint: loc.locationHint,
-          brandLetter: (enterprise?.name || '企').slice(0, 1),
+          brandLetter: enterpriseName.slice(0, 1),
           requirementsLine: buildRequirementLine(position.profile),
           profile: position.profile,
           schedule,

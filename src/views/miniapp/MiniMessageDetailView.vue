@@ -69,7 +69,7 @@ async function rejectShift() {
   <div class="detail-page">
     <div class="mini-nav-bar">
       <MiniNavBack fallback="/miniapp/messages" />
-      <div class="mini-nav-title">消息详情</div>
+      <div class="mini-nav-title">{{ msg?.scheduleDetail ? '班次详情' : '消息详情' }}</div>
     </div>
 
     <div v-if="msg" class="msg-detail">
@@ -116,6 +116,10 @@ async function rejectShift() {
           <div class="info-row">
             <span class="info-label">时薪</span>
             <span class="info-value wage">¥{{ msg.scheduleDetail.hourlyRate }}/h</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">预计收入</span>
+            <span class="info-value wage">¥{{ msg.scheduleDetail.estimatedIncome ?? 0 }}</span>
           </div>
         </div>
 

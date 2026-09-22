@@ -7,8 +7,8 @@ import { useAppStore } from '@/stores/app'
 import { useMiniAppWorker } from '@/composables/useMiniAppWorker'
 import { useMiniAppNow } from '@/composables/useMiniAppNow'
 import {
-  buildClaimedBatches,
   buildClaimDateMap,
+  buildClaimedBatches,
   getCalendarCells,
   getClaimMonthStats,
 } from '@/composables/useMiniIncomeCalendar'
@@ -31,16 +31,24 @@ const { now } = useMiniAppNow()
 
 type IncomeAggKind = 'hourly' | 'task'
 
-interface IncomeAggCard {
-  id: string
-  title: string
-  enterpriseName: string
+interface ClaimableDetailItem extends WorkerIncomeDetailItem {
+  recordId: string
+}
+
+interface IncomeSection {
   kind: IncomeAggKind
   kindLabel: string
   amount: number
-  period?: string
-  items: WorkerIncomeDetailItem[]
+  items: ClaimableDetailItem[]
+}
+
+interface IncomeAggCard {
+  id: string
+  enterpriseName: string
+  amount: number
+  sections: IncomeSection[]
   recordIds: string[]
+  itemIds: string[]
 }
 
 function incomeKindOf(r: WorkerIncomeRecord): IncomeAggKind {
@@ -48,7 +56,7 @@ function incomeKindOf(r: WorkerIncomeRecord): IncomeAggKind {
 }
 
 function incomeKindLabel(kind: IncomeAggKind) {
-  return kind === 'hourly' ? '工时' : '任务'
+  return kind === 'hourly' ? '工时结算' : '任务结算'
 }
 
 function resolveIncomeEnterpriseName(r: WorkerIncomeRecord) {
@@ -71,7 +79,10 @@ function resolveIncomeEnterpriseName(r: WorkerIncomeRecord) {
 }
 
 function recordDetailItems(r: WorkerIncomeRecord): WorkerIncomeDetailItem[] {
-  if (r.items?.length) return r.items
+  if (r.items?.length) {
+    return r.items.filter((item) => !/考勤汇总/.test(item.title))
+  }
+  if (/考勤汇总|考勤收入/.test(r.title)) return []
   return [
     {
       id: `${r.id}_fallback`,
@@ -84,40 +95,83 @@ function recordDetailItems(r: WorkerIncomeRecord): WorkerIncomeDetailItem[] {
   ]
 }
 
+/** 按企业汇总；卡内分「工时结算 / 任务结算」明细，无月度维度 */
 function buildIncomeAggCards(list: WorkerIncomeRecord[]): IncomeAggCard[] {
-  const map = new Map<string, IncomeAggCard>()
+  const map = new Map<
+    string,
+    {
+      enterpriseName: string
+      amount: number
+      recordIds: string[]
+      hourlyItems: ClaimableDetailItem[]
+      taskItems: ClaimableDetailItem[]
+      hourlyAmount: number
+      taskAmount: number
+    }
+  >()
+
   for (const r of list) {
-    const kind = incomeKindOf(r)
     const enterpriseName = resolveIncomeEnterpriseName(r)
-    const key = `${r.enterpriseId || enterpriseName}__${kind}`
-    const existing = map.get(key)
-    const items = recordDetailItems(r)
-    if (existing) {
-      existing.amount += r.amount
-      existing.items.push(...items)
-      existing.recordIds.push(r.id)
-      if (r.period && (!existing.period || r.period > existing.period)) {
-        existing.period = r.period
-      }
-    } else {
-      map.set(key, {
-        id: key,
-        title: `${enterpriseName}|${incomeKindLabel(kind)}`,
+    const key = r.enterpriseId || enterpriseName
+    const kind = incomeKindOf(r)
+    const items = recordDetailItems(r).map((item) => ({
+      ...item,
+      recordId: r.id,
+    }))
+    let bucket = map.get(key)
+    if (!bucket) {
+      bucket = {
         enterpriseName,
-        kind,
-        kindLabel: incomeKindLabel(kind),
-        amount: r.amount,
-        period: r.period,
-        items: [...items],
-        recordIds: [r.id],
-      })
+        amount: 0,
+        recordIds: [],
+        hourlyItems: [],
+        taskItems: [],
+        hourlyAmount: 0,
+        taskAmount: 0,
+      }
+      map.set(key, bucket)
+    }
+    bucket.amount += r.amount
+    bucket.recordIds.push(r.id)
+    if (kind === 'hourly') {
+      bucket.hourlyItems.push(...items)
+      bucket.hourlyAmount += r.amount
+    } else {
+      bucket.taskItems.push(...items)
+      bucket.taskAmount += r.amount
     }
   }
-  return [...map.values()].sort((a, b) => {
-    const byName = a.enterpriseName.localeCompare(b.enterpriseName, 'zh-CN')
-    if (byName !== 0) return byName
-    return a.kind === b.kind ? 0 : a.kind === 'hourly' ? -1 : 1
-  })
+
+  return [...map.entries()]
+    .map(([id, b]) => {
+      const sections: IncomeSection[] = []
+      if (b.hourlyItems.length) {
+        sections.push({
+          kind: 'hourly',
+          kindLabel: incomeKindLabel('hourly'),
+          amount: b.hourlyAmount,
+          items: b.hourlyItems,
+        })
+      }
+      if (b.taskItems.length) {
+        sections.push({
+          kind: 'task',
+          kindLabel: incomeKindLabel('task'),
+          amount: b.taskAmount,
+          items: b.taskItems,
+        })
+      }
+      const itemIds = sections.flatMap((s) => s.items.map((i) => i.id))
+      return {
+        id,
+        enterpriseName: b.enterpriseName,
+        amount: b.amount,
+        sections,
+        recordIds: b.recordIds,
+        itemIds,
+      }
+    })
+    .sort((a, b) => a.enterpriseName.localeCompare(b.enterpriseName, 'zh-CN'))
 }
 
 function localDateStr(d: Date) {
@@ -141,10 +195,13 @@ const tabs: { key: IncomeTab; label: string }[] = [
 ]
 
 const activeTab = ref<IncomeTab>('claimable')
-const selected = ref<string[]>([])
+/** 待领取：按明细行多选 */
+const selectedItemIds = ref<string[]>([])
 const claimDialogVisible = ref(false)
-const pendingClaimIds = ref<string[]>([])
+const pendingClaimItemIds = ref<string[]>([])
 const payChannel = ref<PayChannel>('alipay')
+/** 已领取：展开的批次 */
+const expandedClaimKeys = ref<string[]>([])
 
 const employeeRecords = computed(() =>
   store.workerIncomeRecords.filter((r) => r.employeeId === employeeId.value),
@@ -200,18 +257,22 @@ const claimSelectedDayLabel = computed(() => {
   return `${prefix}${Number(month)}月${Number(day)}日`
 })
 
-const claimPreviewRecords = computed(() =>
-  employeeRecords.value.filter(
-    (r) =>
-      pendingClaimIds.value.includes(r.id) && r.status === 'claimable',
-  ),
+const allClaimableItems = computed(() =>
+  claimableCards.value.flatMap((c) => c.sections.flatMap((s) => s.items)),
 )
 
+const claimPreviewItems = computed(() => {
+  const idSet = new Set(pendingClaimItemIds.value)
+  return allClaimableItems.value.filter((i) => idSet.has(i.id))
+})
+
 const claimGross = computed(() =>
-  claimPreviewRecords.value.reduce((s, r) => s + r.amount, 0),
+  claimPreviewItems.value.reduce((s, i) => s + i.amount, 0),
 )
 
 const claimTaxPreview = computed(() => calcWorkerIncomeTax(claimGross.value))
+
+const claimPreviewCount = computed(() => claimPreviewItems.value.length)
 
 const alipayLabel = computed(() => paymentBinding.value?.alipay ?? '未绑定')
 const bankLabel = computed(() => {
@@ -225,17 +286,105 @@ const canUseBank = computed(() =>
   !!(paymentBinding.value?.bankName && paymentBinding.value?.bankCardLast4),
 )
 
-function toggleSelect(cardId: string) {
-  const idx = selected.value.indexOf(cardId)
-  if (idx >= 0) selected.value.splice(idx, 1)
-  else selected.value.push(cardId)
+const selectedItemAmount = computed(() => {
+  const idSet = new Set(selectedItemIds.value)
+  return allClaimableItems.value
+    .filter((i) => idSet.has(i.id))
+    .reduce((s, i) => s + i.amount, 0)
+})
+
+function isItemSelected(itemId: string) {
+  return selectedItemIds.value.includes(itemId)
 }
 
-function expandCardRecordIds(cardIds: string[]) {
-  const idSet = new Set(cardIds)
-  return claimableCards.value
-    .filter((c) => idSet.has(c.id))
-    .flatMap((c) => c.recordIds)
+function toggleItem(itemId: string) {
+  const idx = selectedItemIds.value.indexOf(itemId)
+  if (idx >= 0) selectedItemIds.value.splice(idx, 1)
+  else selectedItemIds.value.push(itemId)
+}
+
+function cardSelectedCount(card: IncomeAggCard) {
+  return card.itemIds.filter((id) => selectedItemIds.value.includes(id)).length
+}
+
+function isCardFullySelected(card: IncomeAggCard) {
+  return card.itemIds.length > 0 && cardSelectedCount(card) === card.itemIds.length
+}
+
+function isCardPartiallySelected(card: IncomeAggCard) {
+  const n = cardSelectedCount(card)
+  return n > 0 && n < card.itemIds.length
+}
+
+function toggleCard(card: IncomeAggCard) {
+  if (isCardFullySelected(card)) {
+    const remove = new Set(card.itemIds)
+    selectedItemIds.value = selectedItemIds.value.filter((id) => !remove.has(id))
+    return
+  }
+  const next = new Set(selectedItemIds.value)
+  card.itemIds.forEach((id) => next.add(id))
+  selectedItemIds.value = [...next]
+}
+
+function openClaimDialog(itemIds: string[]) {
+  if (itemIds.length === 0) {
+    ElMessage.info('请选择要领取的明细')
+    return
+  }
+  pendingClaimItemIds.value = [...itemIds]
+  payChannel.value = canUseAlipay.value ? 'alipay' : canUseBank.value ? 'bank' : 'alipay'
+  claimDialogVisible.value = true
+}
+
+function claimSingleCard(card: IncomeAggCard) {
+  openClaimDialog([...card.itemIds])
+}
+
+function claimBatch() {
+  openClaimDialog([...selectedItemIds.value])
+}
+
+function claimAll() {
+  openClaimDialog(allClaimableItems.value.map((i) => i.id))
+}
+
+function closeClaimDialog() {
+  claimDialogVisible.value = false
+  pendingClaimItemIds.value = []
+}
+
+function confirmClaim() {
+  if (payChannel.value === 'alipay' && !canUseAlipay.value) {
+    ElMessage.warning('请先绑定支付宝')
+    return
+  }
+  if (payChannel.value === 'bank' && !canUseBank.value) {
+    ElMessage.warning('请先绑定银行卡')
+    return
+  }
+  try {
+    const idSet = new Set(pendingClaimItemIds.value)
+    const groups = new Map<string, string[]>()
+    for (const item of allClaimableItems.value) {
+      if (!idSet.has(item.id)) continue
+      const list = groups.get(item.recordId) ?? []
+      list.push(item.id)
+      groups.set(item.recordId, list)
+    }
+    store.claimWorkerIncomeItems(
+      [...groups.entries()].map(([recordId, itemIds]) => ({ recordId, itemIds })),
+      employeeId.value,
+      payChannel.value,
+    )
+    ElMessage.success('领取成功')
+    selectedItemIds.value = selectedItemIds.value.filter((id) =>
+      allClaimableItems.value.some((i) => i.id === id),
+    )
+    closeClaimDialog()
+  } catch (e) {
+    ElMessage.warning(e instanceof Error ? e.message : '领取失败')
+  }
 }
 
 function prevClaimMonth() {
@@ -258,6 +407,7 @@ function nextClaimMonth() {
 
 function selectClaimDate(date: string) {
   claimSelectedDate.value = date
+  expandedClaimKeys.value = []
 }
 
 function claimCellClass(date: string) {
@@ -282,57 +432,33 @@ watch(activeTab, (tab) => {
   if (tab === 'claimed') syncClaimCalendar()
 })
 
-function openClaimDialog(ids: string[]) {
-  if (ids.length === 0) {
-    ElMessage.info('请选择要领取的收入')
-    return
-  }
-  pendingClaimIds.value = ids
-  payChannel.value = canUseAlipay.value ? 'alipay' : canUseBank.value ? 'bank' : 'alipay'
-  claimDialogVisible.value = true
+function isClaimExpanded(key: string) {
+  return expandedClaimKeys.value.includes(key)
 }
 
-function claimSingleCard(card: IncomeAggCard) {
-  openClaimDialog([...card.recordIds])
-}
-
-function claimBatch() {
-  openClaimDialog(expandCardRecordIds(selected.value))
-}
-
-function claimAll() {
-  openClaimDialog(claimableCards.value.flatMap((c) => c.recordIds))
-}
-
-function closeClaimDialog() {
-  claimDialogVisible.value = false
-  pendingClaimIds.value = []
-}
-
-function confirmClaim() {
-  if (payChannel.value === 'alipay' && !canUseAlipay.value) {
-    ElMessage.warning('请先绑定支付宝')
-    return
-  }
-  if (payChannel.value === 'bank' && !canUseBank.value) {
-    ElMessage.warning('请先绑定银行卡')
-    return
-  }
-  try {
-    store.claimWorkerIncome(pendingClaimIds.value, employeeId.value, payChannel.value)
-    ElMessage.success('领取成功')
-    selected.value = selected.value.filter((id) =>
-      claimableCards.value.some((c) => c.id === id),
-    )
-    closeClaimDialog()
-  } catch (e) {
-    ElMessage.warning(e instanceof Error ? e.message : '领取失败')
+function toggleClaimExpand(key: string) {
+  if (isClaimExpanded(key)) {
+    expandedClaimKeys.value = expandedClaimKeys.value.filter((k) => k !== key)
+  } else {
+    expandedClaimKeys.value = [...expandedClaimKeys.value, key]
   }
 }
 
 function goBindPayment() {
   closeClaimDialog()
   router.push('/miniapp/payment')
+}
+
+/** 已领取明细：按企业名称汇总 */
+function claimedEnterpriseGroups(records: WorkerIncomeRecord[]) {
+  return buildIncomeAggCards(records).map((card) => {
+    const matched = records.filter((r) => card.recordIds.includes(r.id))
+    return {
+      ...card,
+      netAmount: matched.reduce((s, r) => s + (r.netAmount ?? r.amount), 0),
+      itemCount: card.sections.reduce((s, sec) => s + sec.items.length, 0),
+    }
+  })
 }
 </script>
 
@@ -365,9 +491,12 @@ function goBindPayment() {
       <div v-if="activeTab === 'claimable' && claimableTotal > 0" class="summary-card">
         <div class="summary-label">可领取总额</div>
         <div class="summary-amount">¥{{ claimableTotal.toFixed(2) }}</div>
+        <div v-if="selectedItemIds.length" class="summary-selected">
+          已选 {{ selectedItemIds.length }} 笔 · ¥{{ selectedItemAmount.toFixed(2) }}
+        </div>
         <div class="summary-actions">
           <button class="mini-btn-primary" type="button" @click="claimAll">一键领取</button>
-          <button class="mini-btn-outline" type="button" @click="claimBatch">批量领取</button>
+          <button class="mini-btn-outline" type="button" @click="claimBatch">领取已选</button>
         </div>
       </div>
 
@@ -375,23 +504,31 @@ function goBindPayment() {
         <div v-for="card in pendingCards" :key="card.id" class="mini-card income-item">
           <div class="income-item-header">
             <div>
-              <div class="income-title">{{ card.title }}</div>
-              <div class="income-meta">
-                <template v-if="card.period">{{ card.period }} · </template>待结算
-              </div>
+              <div class="income-title">{{ card.enterpriseName }}</div>
+              <div class="income-meta">待结算</div>
             </div>
             <div class="income-amount">¥{{ card.amount.toFixed(2) }}</div>
           </div>
-          <div class="detail-list">
-            <div v-for="item in card.items" :key="item.id" class="detail-row">
-              <div class="detail-main">
-                <div class="detail-title">{{ item.title }}</div>
-                <div class="detail-meta">
-                  <span v-if="item.date">{{ formatIncomeDate(item.date) }}</span>
-                  <span class="detail-rule">{{ formatIncomeDetailRule(item) }}</span>
+          <div
+            v-for="section in card.sections"
+            :key="section.kind"
+            class="income-section"
+          >
+            <div class="section-head">
+              <span class="section-label">{{ section.kindLabel }}</span>
+              <span class="section-amount">¥{{ section.amount.toFixed(2) }}</span>
+            </div>
+            <div class="detail-list">
+              <div v-for="item in section.items" :key="item.id" class="detail-row">
+                <div class="detail-main">
+                  <div class="detail-title">{{ item.title }}</div>
+                  <div class="detail-meta">
+                    <span v-if="item.date">{{ formatIncomeDate(item.date) }}</span>
+                    <span class="detail-rule">{{ formatIncomeDetailRule(item) }}</span>
+                  </div>
                 </div>
+                <div class="detail-amount">¥{{ item.amount.toFixed(2) }}</div>
               </div>
-              <div class="detail-amount">¥{{ item.amount.toFixed(2) }}</div>
             </div>
           </div>
         </div>
@@ -403,14 +540,15 @@ function goBindPayment() {
           <div class="income-item-row">
             <input
               type="checkbox"
-              :checked="selected.includes(card.id)"
-              @change="toggleSelect(card.id)"
+              :checked="isCardFullySelected(card)"
+              :indeterminate.prop="isCardPartiallySelected(card)"
+              @change="toggleCard(card)"
             >
             <div class="income-item-main">
-              <div class="income-title">{{ card.title }}</div>
+              <div class="income-title">{{ card.enterpriseName }}</div>
               <div class="income-meta">
                 待领取
-                <span v-if="card.period"> · {{ card.period }}</span>
+                <span v-if="cardSelectedCount(card)"> · 已选 {{ cardSelectedCount(card) }} 笔</span>
               </div>
             </div>
             <div class="income-item-side">
@@ -420,20 +558,42 @@ function goBindPayment() {
                 type="button"
                 @click="claimSingleCard(card)"
               >
-                领取
+                全部领取
               </button>
             </div>
           </div>
-          <div class="detail-list">
-            <div v-for="item in card.items" :key="item.id" class="detail-row">
-              <div class="detail-main">
-                <div class="detail-title">{{ item.title }}</div>
-                <div class="detail-meta">
-                  <span v-if="item.date">{{ formatIncomeDate(item.date) }}</span>
-                  <span class="detail-rule">{{ formatIncomeDetailRule(item) }}</span>
+          <div
+            v-for="section in card.sections"
+            :key="section.kind"
+            class="income-section"
+          >
+            <div class="section-head">
+              <span class="section-label">{{ section.kindLabel }}</span>
+              <span class="section-amount">¥{{ section.amount.toFixed(2) }}</span>
+            </div>
+            <div class="detail-list">
+              <div
+                v-for="item in section.items"
+                :key="item.id"
+                class="detail-row selectable"
+                :class="{ selected: isItemSelected(item.id) }"
+                @click="toggleItem(item.id)"
+              >
+                <input
+                  type="checkbox"
+                  :checked="isItemSelected(item.id)"
+                  @click.stop
+                  @change="toggleItem(item.id)"
+                >
+                <div class="detail-main">
+                  <div class="detail-title">{{ item.title }}</div>
+                  <div class="detail-meta">
+                    <span v-if="item.date">{{ formatIncomeDate(item.date) }}</span>
+                    <span class="detail-rule">{{ formatIncomeDetailRule(item) }}</span>
+                  </div>
                 </div>
+                <div class="detail-amount">¥{{ item.amount.toFixed(2) }}</div>
               </div>
-              <div class="detail-amount">¥{{ item.amount.toFixed(2) }}</div>
             </div>
           </div>
         </div>
@@ -506,33 +666,65 @@ function goBindPayment() {
                 :key="batch.key"
                 class="claimed-batch-block"
               >
-                <div class="claimed-batch-head">
-                  <span class="claimed-time">{{ formatIncomeDateTime(batch.claimedAt) }}</span>
-                  <span class="claimed-net">¥{{ batch.netAmount.toFixed(2) }}</span>
-                </div>
-                <div class="claimed-batch-meta">
-                  税前 ¥{{ batch.gross.toFixed(2) }} · 个税 ¥{{ batch.tax.toFixed(2) }}
-                </div>
-                <div v-for="r in batch.records" :key="r.id" class="claimed-record-group">
-                  <div class="claimed-record-head">
-                    <span class="claimed-record-title">{{ r.title }}</span>
-                    <span class="claimed-record-amount">
-                      ¥{{ (r.netAmount ?? r.amount).toFixed(2) }}
+                <button
+                  type="button"
+                  class="claimed-batch-toggle"
+                  @click="toggleClaimExpand(batch.key)"
+                >
+                  <div class="claimed-batch-main">
+                    <div class="claimed-time">{{ formatIncomeDateTime(batch.claimedAt) }}</div>
+                    <div class="claimed-batch-meta">
+                      税前 ¥{{ batch.gross.toFixed(2) }} · 个税 ¥{{ batch.tax.toFixed(2) }}
+                      · {{ claimedEnterpriseGroups(batch.records).length }} 家企业
+                    </div>
+                  </div>
+                  <div class="claimed-batch-side">
+                    <div class="claimed-net">¥{{ batch.netAmount.toFixed(2) }}</div>
+                    <span class="claimed-expand-icon" :class="{ open: isClaimExpanded(batch.key) }">
+                      {{ isClaimExpanded(batch.key) ? '收起' : '明细' }}
                     </span>
                   </div>
+                </button>
+
+                <div v-if="isClaimExpanded(batch.key)" class="claimed-batch-detail">
                   <div
-                    v-for="item in recordDetailItems(r)"
-                    :key="item.id"
-                    class="detail-row sub"
+                    v-for="group in claimedEnterpriseGroups(batch.records)"
+                    :key="group.id"
+                    class="claimed-enterprise-group"
                   >
-                    <div class="detail-main">
-                      <div class="detail-title">{{ item.title }}</div>
-                      <div class="detail-meta">
-                        <span v-if="item.date">{{ formatIncomeDate(item.date) }}</span>
-                        <span class="detail-rule">{{ formatIncomeDetailRule(item) }}</span>
+                    <div class="claimed-enterprise-head">
+                      <div class="claimed-enterprise-main">
+                        <span class="claimed-enterprise-name">{{ group.enterpriseName }}</span>
+                        <span class="claimed-enterprise-meta">{{ group.itemCount }} 笔明细</span>
+                      </div>
+                      <span class="claimed-enterprise-amount">¥{{ group.netAmount.toFixed(2) }}</span>
+                    </div>
+                    <div
+                      v-for="section in group.sections"
+                      :key="section.kind"
+                      class="income-section"
+                    >
+                      <div class="section-head">
+                        <span class="section-label">{{ section.kindLabel }}</span>
+                        <span class="section-amount">¥{{ section.amount.toFixed(2) }}</span>
+                      </div>
+                      <div class="detail-list">
+                        <div
+                          v-for="item in section.items"
+                          :key="item.id"
+                          class="detail-row sub"
+                        >
+                          <div class="detail-main">
+                            <div class="detail-title">{{ item.title }}</div>
+                            <div class="detail-meta">
+                              <span v-if="item.date">{{ formatIncomeDate(item.date) }}</span>
+                              <span class="detail-rule">{{ formatIncomeDetailRule(item) }}</span>
+                            </div>
+                          </div>
+                          <div class="detail-amount">¥{{ item.amount.toFixed(2) }}</div>
+                        </div>
                       </div>
                     </div>
-                    <div class="detail-amount">¥{{ item.amount.toFixed(2) }}</div>
                   </div>
                 </div>
               </div>
@@ -550,7 +742,7 @@ function goBindPayment() {
         <div class="claim-summary">
           <div class="claim-row">
             <span>领取笔数</span>
-            <span>{{ claimPreviewRecords.length }} 笔</span>
+            <span>{{ claimPreviewCount }} 笔</span>
           </div>
           <div class="claim-row">
             <span>税前金额</span>
@@ -661,6 +853,7 @@ function goBindPayment() {
   color: #d97706;
 }
 
+
 .summary-actions {
   display: flex;
   gap: 8px;
@@ -684,6 +877,7 @@ function goBindPayment() {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-bottom: 2px;
 }
 
 .income-item-main {
@@ -719,9 +913,37 @@ function goBindPayment() {
   font-size: 11px;
 }
 
-.detail-list {
+.income-section {
+  margin-top: 10px;
+  padding-top: 10px;
   border-top: 1px solid var(--mini-border, #f0f0f0);
-  padding-top: 8px;
+}
+
+.income-section + .income-section {
+  margin-top: 8px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mini-text-secondary, #666);
+}
+
+.section-amount {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ef4444;
+}
+
+.detail-list {
+  padding-top: 4px;
 }
 
 .detail-row {
@@ -730,6 +952,30 @@ function goBindPayment() {
   align-items: flex-start;
   gap: 10px;
   padding: 8px 0;
+}
+
+.summary-selected {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #ea580c;
+  font-weight: 600;
+}
+
+.detail-row.selectable {
+  cursor: pointer;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.detail-row.selectable.selected {
+  background: #E6FFFA;
+}
+
+.detail-row.selectable input[type='checkbox'] {
+  flex-shrink: 0;
 }
 
 .detail-row + .detail-row {
@@ -972,20 +1218,32 @@ function goBindPayment() {
 
 .claimed-batch-block {
   margin-top: 12px;
-  padding: 12px;
+  padding: 0;
   background: #f9fafb;
   border-radius: 12px;
+  overflow: hidden;
 }
 
 .claimed-batch-block + .claimed-batch-block {
   margin-top: 10px;
 }
 
-.claimed-batch-head {
+.claimed-batch-toggle {
   display: flex;
+  width: 100%;
+  align-items: flex-start;
   justify-content: space-between;
-  align-items: center;
-  gap: 8px;
+  gap: 12px;
+  padding: 12px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.claimed-batch-main {
+  flex: 1;
+  min-width: 0;
 }
 
 .claimed-time {
@@ -994,42 +1252,78 @@ function goBindPayment() {
   color: var(--mini-text, #333);
 }
 
-.claimed-net {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--mini-primary);
-}
-
 .claimed-batch-meta {
   margin-top: 4px;
   font-size: 12px;
   color: #9ca3af;
 }
 
-.claimed-record-group {
-  margin-top: 10px;
-  padding-top: 8px;
+.claimed-batch-side {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.claimed-net {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--mini-primary);
+}
+
+.claimed-expand-icon {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.claimed-expand-icon.open {
+  color: var(--mini-primary);
+}
+
+.claimed-batch-detail {
+  padding: 0 12px 12px;
+  border-top: 1px solid #eef0f2;
+}
+
+.claimed-enterprise-group {
+  margin-top: 12px;
+}
+
+.claimed-enterprise-group + .claimed-enterprise-group {
+  padding-top: 10px;
   border-top: 1px dashed #e5e7eb;
 }
 
-.claimed-record-head {
+.claimed-enterprise-head {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: 10px;
 }
 
-.claimed-record-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--mini-text-secondary, #666);
+.claimed-enterprise-main {
+  min-width: 0;
 }
 
-.claimed-record-amount {
-  font-size: 13px;
+.claimed-enterprise-name {
+  display: block;
+  font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: var(--mini-text, #333);
+}
+
+.claimed-enterprise-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.claimed-enterprise-amount {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--mini-primary);
 }
 
 .claim-mask {

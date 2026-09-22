@@ -711,6 +711,8 @@ export function mergeWorkforceSeed(
           ...g,
           departmentBindings: [
             { departmentId: 'dept_cm_field', departmentName: '外勤推广部', headcount: 12, managerName: '刘洋' },
+            { departmentId: 'dept_prod_a', departmentName: '中国移动朝阳营业厅', headcount: 8, managerName: '李娜' },
+            { departmentId: 'dept_cm_hr', departmentName: '人事行政部', headcount: 4, managerName: '李娜' },
           ],
         }
       }

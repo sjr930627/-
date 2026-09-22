@@ -16,13 +16,9 @@ const loading = ref(false)
 async function handleLogin() {
   loading.value = true
   try {
-    const session = login(phone.value, password.value)
+    login(phone.value, password.value)
     ElMessage.success('登录成功')
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
-    if (!session.onboardingComplete) {
-      router.replace('/miniapp/onboarding')
-      return
-    }
     router.replace(redirect && redirect.startsWith('/miniapp') ? redirect : '/miniapp/workbench')
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '登录失败')

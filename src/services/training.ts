@@ -556,18 +556,12 @@ export function getMaterialMinReadMinutes(course: TrainingCourse, materialType: 
   return Math.max(1, course.minStudyMinutes ?? 3)
 }
 
-/** 必修课程：须按资料顺序学完前置项后才能访问；非必修可自由访问 */
+/** 资料均可自由访问（不再按顺序解锁） */
 export function canAccessMaterial(
-  course: TrainingCourse,
-  materialId: string,
-  completedMaterialIds: string[],
+  _course: TrainingCourse,
+  _materialId: string,
+  _completedMaterialIds: string[],
 ) {
-  if (course.studyMode === 'optional') return true
-  const idx = course.materialIds.indexOf(materialId)
-  if (idx <= 0) return true
-  for (let i = 0; i < idx; i++) {
-    if (!completedMaterialIds.includes(course.materialIds[i])) return false
-  }
   return true
 }
 
