@@ -19,7 +19,7 @@ import {
   resolveBillPayerSubjectType,
   toBillTaxInclusiveAmount,
 } from '@/constants/payrollBill'
-import type { SettlementBillSummary } from '@/types'
+import type { SettlementBillLine, SettlementBillSummary } from '@/types'
 import { formatBillingFormulaDisplay } from '@/constants/billingRule'
 import { resolveBillTaxFlagsFromContract } from '@/services/billSettlement'
 
@@ -44,9 +44,13 @@ const waiverForm = ref({
   note: '',
 })
 
-const bill = computed(() =>
-  store.settlementBills.find((b) => b.id === route.params.id as string),
-)
+const bill = computed(() => {
+  const found = store.settlementBills.find((b) => b.id === route.params.id as string)
+  if (!found) return undefined
+  if (isEnterprise.value && found.status === 'pending_submit') return undefined
+  if (isEnterprise.value && found.enterpriseId !== store.currentEnterprise?.id) return undefined
+  return found
+})
 
 const billStatus = computed(() =>
   bill.value ? resolveBillStatusMeta(bill.value.status) : { label: '', type: 'info' as const },
@@ -245,6 +249,11 @@ const timelineSteps = computed(() => {
 function formatTime(iso?: string) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('zh-CN')
+}
+
+function resolveLinePhone(row: SettlementBillLine) {
+  if (row.phone?.trim()) return row.phone.trim()
+  return store.employees.find((e) => e.id === row.employeeId)?.phone?.trim() || '—'
 }
 
 function goBack() {
@@ -727,10 +736,10 @@ function viewBillingRule() {
     <div class="page-card section">
       <h3 class="section-title">灵工明细</h3>
       <el-table v-if="bill.lines.length" :data="bill.lines" border stripe>
-        <el-table-column prop="employeeNo" label="工号" width="110">
-          <template #default="{ row }">{{ row.employeeNo ?? '—' }}</template>
-        </el-table-column>
         <el-table-column prop="employeeName" label="姓名" width="90" fixed />
+        <el-table-column label="手机号" width="130">
+          <template #default="{ row }">{{ resolveLinePhone(row) }}</template>
+        </el-table-column>
         <el-table-column prop="departmentName" label="部门" min-width="120" />
         <el-table-column prop="attendanceDays" label="考勤天数" width="90" align="center" />
         <el-table-column label="出勤工时" width="90" align="center">

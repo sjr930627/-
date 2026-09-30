@@ -22,11 +22,12 @@ const router = useRouter()
 const route = useRoute()
 const { pathPrefix, isEnterprise, isPlatform } = usePortal()
 
-const statusFilter = ref<'pending_review' | 'issuing' | 'issued' | 'rejected'>('pending_review')
+const statusFilter = ref<'all' | 'pending_review' | 'issuing' | 'issued' | 'rejected'>('all')
 const enterpriseKeyword = ref('')
 const providerKeyword = ref('')
 const applicationNoKeyword = ref('')
-const keyword = ref('')
+const titleKeyword = ref('')
+const applyDateRange = ref<[string, string] | null>(null)
 const uploadVisible = ref(false)
 const uploadTargetId = ref<string | null>(null)
 const uploadFileName = ref('')
@@ -38,8 +39,10 @@ onMounted(() => {
     const s = route.query.status
     if (s === 'pending' || s === 'reviewing' || s === 'draft') {
       statusFilter.value = 'pending_review'
+    } else if (s === 'all') {
+      statusFilter.value = 'all'
     } else if ((INVOICE_STATUS_FILTERS as readonly string[]).includes(s)) {
-      statusFilter.value = s as typeof statusFilter.value
+      statusFilter.value = s as Exclude<typeof statusFilter.value, 'all'>
     }
   }
 })
@@ -47,9 +50,6 @@ onMounted(() => {
 const profileDialogVisible = ref(false)
 const profileSaving = ref(false)
 const editingProfileId = ref<string | null>(null)
-const invoiceTypeOptions = (
-  Object.entries(invoiceTypeMap) as [InvoiceType, string][]
-).map(([value, label]) => ({ value, label }))
 const profileForm = ref({
   title: '',
   taxNo: '',
@@ -67,10 +67,17 @@ const enterpriseId = computed(() =>
 )
 
 function matchesStatusFilter(status: InvoiceStatus) {
+  if (statusFilter.value === 'all') return true
   if (statusFilter.value === 'pending_review') {
     return status === 'pending_review' || status === 'reviewing' || status === 'draft'
   }
   return status === statusFilter.value
+}
+
+function matchesApplyDate(createdAt: string) {
+  if (!applyDateRange.value || applyDateRange.value.length !== 2) return true
+  const day = createdAt.slice(0, 10)
+  return day >= applyDateRange.value[0] && day <= applyDateRange.value[1]
 }
 
 const scopedApplications = computed(() =>
@@ -102,20 +109,11 @@ const tableData = computed(() =>
         if (noKw && !(item.applicationNo ?? '').toLowerCase().includes(noKw)) return false
         return true
       }
-      if (keyword.value.trim()) {
-        const kw = keyword.value.trim().toLowerCase()
-        const haystack = [
-          item.applicationNo,
-          ...item.bills.map((bill) => bill.billNo),
-          item.enterpriseName,
-          item.serviceProviderName ?? '',
-          item.invoiceContent,
-          item.title,
-        ]
-          .join(' ')
-          .toLowerCase()
-        if (!haystack.includes(kw)) return false
-      }
+      if (!matchesApplyDate(item.createdAt)) return false
+      const titleKw = titleKeyword.value.trim().toLowerCase()
+      if (titleKw && !(item.title ?? '').toLowerCase().includes(titleKw)) return false
+      const noKw = applicationNoKeyword.value.trim().toLowerCase()
+      if (noKw && !(item.applicationNo ?? '').toLowerCase().includes(noKw)) return false
       return true
     })
     .map((item) => ({
@@ -144,6 +142,21 @@ function resubmit(row: InvoiceApplication) {
     path: `${pathPrefix.value}/payroll/invoices/apply`,
     query: { resubmitId: row.id },
   })
+}
+
+async function removeApplication(row: InvoiceApplication) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除已驳回的发票申请「${row.applicationNo}」？删除后不可恢复。`,
+      '删除发票申请',
+      { type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消' },
+    )
+    store.deleteInvoiceApplication(row.id)
+    ElMessage.success('已删除')
+  } catch (e) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
 }
 
 async function approve(row: InvoiceApplication) {
@@ -275,10 +288,7 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
   <div class="page-card invoice-page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">
-          发票管理
-          <el-tag v-if="isEnterprise" size="small" type="info" class="edition-tag">企业版</el-tag>
-        </h2>
+        <h2 class="page-title">发票管理</h2>
         <p class="text-muted">
           {{
             isEnterprise
@@ -387,6 +397,7 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
 
     <div class="page-toolbar">
       <el-radio-group v-model="statusFilter">
+        <el-radio-button v-if="isEnterprise" value="all">全部</el-radio-button>
         <el-radio-button value="pending_review">待审核</el-radio-button>
         <el-radio-button value="issuing">开具中</el-radio-button>
         <el-radio-button value="issued">已开票</el-radio-button>
@@ -413,14 +424,30 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
           style="width: 200px"
         />
       </template>
-      <el-input
-        v-else
-        v-model="keyword"
-        placeholder="搜索发票单号、结算单号"
-        clearable
-        prefix-icon="Search"
-        style="width: 260px"
-      />
+      <template v-else>
+        <el-date-picker
+          v-model="applyDateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          start-placeholder="申请开始日期"
+          end-placeholder="申请结束日期"
+          clearable
+          style="width: 280px"
+        />
+        <el-input
+          v-model="titleKeyword"
+          placeholder="发票抬头"
+          clearable
+          style="width: 180px"
+        />
+        <el-input
+          v-model="applicationNoKeyword"
+          placeholder="发票单号"
+          clearable
+          prefix-icon="Search"
+          style="width: 200px"
+        />
+      </template>
     </div>
 
     <el-table :data="tableData" border stripe empty-text="暂无发票申请">
@@ -443,7 +470,7 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
         </template>
       </el-table-column>
       <el-table-column prop="issuedLabel" label="开票时间" width="170" />
-      <el-table-column label="操作" width="220" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openDetail(row.id)">查看</el-button>
           <template v-if="isPlatform">
@@ -474,6 +501,14 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
             @click="resubmit(row)"
           >
             重新提交
+          </el-button>
+          <el-button
+            v-if="row.status === 'rejected'"
+            link
+            type="danger"
+            @click="removeApplication(row)"
+          >
+            删除
           </el-button>
           <el-button
             v-if="row.status === 'issued' && row.electronicUrl"
@@ -525,16 +560,6 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
       <el-form-item label="电话">
         <el-input v-model="profileForm.phone" placeholder="选填" maxlength="30" />
       </el-form-item>
-      <el-form-item label="默认发票类型">
-        <el-select v-model="profileForm.defaultInvoiceType" style="width: 100%">
-          <el-option
-            v-for="item in invoiceTypeOptions"
-            :key="item.value"
-            :label="item.label"
-            :value="item.value"
-          />
-        </el-select>
-      </el-form-item>
       <el-form-item label="备注">
         <el-input v-model="profileForm.remark" placeholder="如：总部主体 / 分公司" maxlength="80" />
       </el-form-item>
@@ -550,11 +575,6 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
 </template>
 
 <style scoped>
-.edition-tag {
-  margin-left: 8px;
-  vertical-align: middle;
-}
-
 .stats-row {
   margin-bottom: 16px;
 }
@@ -584,19 +604,20 @@ async function removeProfile(profile: EnterpriseInvoiceProfile) {
 
 .stat-label {
   font-size: 13px;
-  color: var(--el-text-color-secondary);
+  color: #000;
 }
 
 .stat-value {
   margin-top: 8px;
   font-size: 24px;
   font-weight: 700;
+  color: #000;
 }
 
 .stat-sub {
   margin-top: 6px;
   font-size: 12px;
-  color: var(--el-text-color-secondary);
+  color: #000;
 }
 
 .middle-row {

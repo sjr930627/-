@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
@@ -118,6 +118,17 @@ function initEnterpriseForm() {
 
 watch([enterpriseNodeFields, instance], initEnterpriseForm, { immediate: true, deep: true })
 
+onMounted(() => {
+  if (route.query.process === '1' && isEnterprise.value) {
+    nextTick(() => {
+      document.querySelector('.enterprise-action-card')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      })
+    })
+  }
+})
+
 async function handleEnterpriseAction(actionConfig: WorkflowActionConfig) {
   if (!instance.value) return
   actionLoading.value = true
@@ -168,7 +179,20 @@ async function executeCancel() {
         </el-breadcrumb-item>
         <el-breadcrumb-item>认领详情</el-breadcrumb-item>
       </el-breadcrumb>
-      <el-button @click="goBack">返回列表</el-button>
+      <div class="page-breadcrumb-actions">
+        <template v-if="isEnterprise && pendingEnterprise">
+          <el-button
+            v-for="item in enterpriseActions"
+            :key="item.config.action"
+            :type="item.meta.buttonType"
+            :loading="actionLoading"
+            @click="handleEnterpriseAction(item.config)"
+          >
+            {{ item.meta.label }}
+          </el-button>
+        </template>
+        <el-button @click="goBack">返回列表</el-button>
+      </div>
     </div>
 
     <div class="detail-layout">
@@ -315,58 +339,29 @@ async function executeCancel() {
           />
         </section>
 
-        <section v-if="isEnterprise && pendingEnterprise" class="page-card side-card enterprise-action-card">
-          <div class="enterprise-dialog-shell">
-            <div class="enterprise-dialog-backdrop" />
-            <div class="enterprise-dialog">
-              <div class="enterprise-dialog-header">
-                <div>
-                  <h3>企业操作 · {{ instance.currentNodeName }}</h3>
-                  <p>企业端操作弹窗 · 请填写采集字段后执行</p>
-                </div>
-              </div>
+        <section
+          v-if="isEnterprise && pendingEnterprise && (enterpriseNodeFields.length || submittedFieldSnapshots.length)"
+          class="page-card side-card enterprise-action-card"
+        >
+          <div class="side-card-head">
+            <h3>企业处理 · {{ instance.currentNodeName }}</h3>
+            <p>填写采集信息后，使用右上角按钮完成操作</p>
+          </div>
 
-              <div class="enterprise-dialog-body">
-                <p v-if="enterpriseNodeFields.length" class="enterprise-dialog-tip">
-                  请填写以下信息后，点击底部按钮完成当前节点操作
-                </p>
-
-                <div v-if="submittedFieldSnapshots.length" class="submitted-fields">
-                  <div class="submitted-title">灵工已提交</div>
-                  <div v-for="item in submittedFieldSnapshots" :key="item.field.id" class="submitted-row">
-                    <span class="submitted-label">{{ item.field.name }}</span>
-                    <span class="submitted-value">{{ formatWorkflowFieldValue(item.field, item.value) }}</span>
-                  </div>
-                </div>
-
-                <WorkflowFieldForm
-                  v-if="enterpriseNodeFields.length"
-                  v-model="enterpriseForm"
-                  :fields="enterpriseNodeFields"
-                  label-width="88px"
-                />
-                <el-empty
-                  v-else
-                  description="当前节点未配置采集字段"
-                  :image-size="56"
-                  class="field-empty"
-                />
-              </div>
-
-              <div class="enterprise-dialog-footer">
-                <el-button
-                  v-for="item in enterpriseActions"
-                  :key="item.config.action"
-                  :type="item.meta.buttonType"
-                  class="enterprise-action-btn"
-                  :loading="actionLoading"
-                  @click="handleEnterpriseAction(item.config)"
-                >
-                  {{ item.meta.label }}
-                </el-button>
-              </div>
+          <div v-if="submittedFieldSnapshots.length" class="submitted-fields">
+            <div class="submitted-title">灵工已提交</div>
+            <div v-for="item in submittedFieldSnapshots" :key="item.field.id" class="submitted-row">
+              <span class="submitted-label">{{ item.field.name }}</span>
+              <span class="submitted-value">{{ formatWorkflowFieldValue(item.field, item.value) }}</span>
             </div>
           </div>
+
+          <WorkflowFieldForm
+            v-if="enterpriseNodeFields.length"
+            v-model="enterpriseForm"
+            :fields="enterpriseNodeFields"
+            label-width="88px"
+          />
         </section>
 
         <section v-if="canIntervene" class="page-card side-card intervention-card">
@@ -417,6 +412,13 @@ async function executeCancel() {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+.page-breadcrumb-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .detail-layout {
@@ -638,80 +640,6 @@ async function executeCancel() {
   margin-bottom: 14px;
 }
 
-.enterprise-action-card {
-  padding: 0;
-  overflow: hidden;
-  border: none;
-  background: transparent;
-  box-shadow: none;
-}
-
-.enterprise-dialog-shell {
-  position: relative;
-  min-height: 320px;
-  border-radius: 12px;
-  overflow: hidden;
-  border: 1px solid #e4e7ed;
-}
-
-.enterprise-dialog-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.4);
-}
-
-.enterprise-dialog {
-  position: relative;
-  z-index: 1;
-  margin: 20px 16px;
-  background: #fff;
-  border-radius: 10px;
-  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.2);
-  overflow: hidden;
-}
-
-.enterprise-dialog-header {
-  padding: 16px 18px 12px;
-  border-bottom: 1px solid #ebeef5;
-  background: linear-gradient(180deg, #fafbfc, #fff);
-}
-
-.enterprise-dialog-header h3 {
-  margin: 0;
-  font-size: 16px;
-}
-
-.enterprise-dialog-header p {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: #909399;
-}
-
-.enterprise-dialog-body {
-  padding: 14px 18px;
-}
-
-.enterprise-dialog-tip {
-  margin: 0 0 12px;
-  font-size: 13px;
-  color: #606266;
-  line-height: 1.5;
-}
-
-.enterprise-dialog-footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  justify-content: flex-end;
-  padding: 12px 18px 16px;
-  border-top: 1px solid #ebeef5;
-  background: #fafafa;
-}
-
-.enterprise-action-btn {
-  margin: 0;
-}
-
 .submitted-fields {
   margin-bottom: 16px;
   padding: 12px;
@@ -749,10 +677,6 @@ async function executeCancel() {
   color: #303133;
   text-align: right;
   word-break: break-all;
-}
-
-.field-empty {
-  padding: 8px 0;
 }
 
 .intervention-title {

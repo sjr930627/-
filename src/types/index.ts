@@ -1047,6 +1047,8 @@ export interface SettlementBillLine {
   id: string
   employeeId: string
   employeeNo?: string
+  /** 灵工手机号 */
+  phone?: string
   employeeName: string
   departmentId: string
   departmentName: string

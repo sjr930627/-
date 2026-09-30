@@ -6,7 +6,6 @@ import { usePortal } from '@/composables/usePortal'
 import {
   contractStatusMap,
   formatContractExpiry,
-  providerStatusMap,
   resolveContractDisplayStatus,
 } from '@/constants/partnership'
 import { getContractBillingListItems } from '@/services/contractBilling'
@@ -16,46 +15,45 @@ const router = useRouter()
 const { pathPrefix } = usePortal()
 
 const keyword = ref('')
-const statusFilter = ref<'all' | 'cooperating' | 'suspended' | 'terminated'>('all')
-const selectedProviderId = ref('sp_zhongqin')
+const selectedProviderId = ref('')
 
 const providerList = computed(() =>
   store.serviceProviders
-    .filter((p) => {
-      if (statusFilter.value !== 'all' && p.status !== statusFilter.value) return false
-      if (!keyword.value.trim()) return true
-      const kw = keyword.value.trim().toLowerCase()
-      return (
-        p.name.toLowerCase().includes(kw) ||
-        p.code.toLowerCase().includes(kw) ||
-        (p.shortName ?? '').toLowerCase().includes(kw)
-      )
-    })
     .map((p) => {
       const contracts = store
         .getContractsByProvider(p.id)
         .filter((c) => !store.currentEnterpriseId || c.enterpriseId === store.currentEnterpriseId)
-      const activeContracts = contracts.filter(
-        (c) => resolveContractDisplayStatus(c) === 'active',
-      )
       return {
         ...p,
-        statusLabel: providerStatusMap[p.status].label,
-        statusType: providerStatusMap[p.status].type,
         contractCount: contracts.length,
-        activeContractCount: activeContracts.length,
       }
+    })
+    .filter((p) => p.contractCount > 0)
+    .filter((p) => {
+      if (!keyword.value.trim()) return true
+      const kw = keyword.value.trim().toLowerCase()
+      return (
+        p.name.toLowerCase().includes(kw) ||
+        p.id.toLowerCase().includes(kw) ||
+        p.code.toLowerCase().includes(kw) ||
+        (p.shortName ?? '').toLowerCase().includes(kw)
+      )
     }),
 )
 
-const selectedProvider = computed(() =>
-  providerList.value.find((p) => p.id === selectedProviderId.value),
-)
+const selectedProvider = computed(() => {
+  if (!providerList.value.length) return undefined
+  return (
+    providerList.value.find((p) => p.id === selectedProviderId.value) ?? providerList.value[0]
+  )
+})
+
+const effectiveSelectedProviderId = computed(() => selectedProvider.value?.id ?? '')
 
 const contractList = computed(() => {
-  if (!selectedProviderId.value) return []
+  if (!effectiveSelectedProviderId.value) return []
   return store
-    .getContractsByProvider(selectedProviderId.value)
+    .getContractsByProvider(effectiveSelectedProviderId.value)
     .filter((c) => !store.currentEnterpriseId || c.enterpriseId === store.currentEnterpriseId)
     .map((c) => {
       const displayStatus = resolveContractDisplayStatus(c)
@@ -74,8 +72,12 @@ const contractList = computed(() => {
 })
 
 const summary = computed(() => ({
-  total: store.serviceProviders.length,
-  cooperating: store.serviceProviders.filter((p) => p.status === 'cooperating').length,
+  total: store.serviceProviders.filter((p) => {
+    const contracts = store
+      .getContractsByProvider(p.id)
+      .filter((c) => !store.currentEnterpriseId || c.enterpriseId === store.currentEnterpriseId)
+    return contracts.length > 0
+  }).length,
 }))
 
 function selectProvider(id: string) {
@@ -96,7 +98,7 @@ function openContractDetail(row: { id: string }) {
       <div class="panel-header">
         <span class="panel-title">关联服务商</span>
       </div>
-      <p class="text-muted panel-tip">共 {{ summary.total }} 家 · 合作中 {{ summary.cooperating }} 家</p>
+      <p class="text-muted panel-tip">共 {{ summary.total }} 家</p>
 
       <el-input
         v-model="keyword"
@@ -105,27 +107,17 @@ function openContractDetail(row: { id: string }) {
         prefix-icon="Search"
         class="panel-search"
       />
-      <el-radio-group v-model="statusFilter" size="small" class="status-filter">
-        <el-radio-button value="all">全部</el-radio-button>
-        <el-radio-button value="cooperating">合作中</el-radio-button>
-        <el-radio-button value="suspended">已暂停</el-radio-button>
-      </el-radio-group>
 
       <div
         v-for="provider in providerList"
         :key="provider.id"
         class="provider-item"
-        :class="{ active: selectedProviderId === provider.id }"
+        :class="{ active: effectiveSelectedProviderId === provider.id }"
         @click="selectProvider(provider.id)"
       >
-        <div class="provider-item-head">
-          <span class="provider-name">{{ provider.shortName ?? provider.name }}</span>
-          <el-tag size="small" :type="provider.statusType">{{ provider.statusLabel }}</el-tag>
-        </div>
-        <div class="provider-meta">{{ provider.code }}</div>
-        <div class="provider-meta">
-          生效合同 {{ provider.activeContractCount }}/{{ provider.contractCount }}
-        </div>
+        <div class="provider-name">{{ provider.shortName ?? provider.name }}</div>
+        <div class="provider-meta">ID：{{ provider.id }}</div>
+        <div class="provider-meta">合同数 {{ provider.contractCount }}</div>
       </div>
       <el-empty v-if="!providerList.length" description="无匹配服务商" :image-size="60" />
     </aside>
@@ -137,21 +129,12 @@ function openContractDetail(row: { id: string }) {
             <h2 class="page-title">{{ selectedProvider.name }}</h2>
             <p class="text-muted">合作自 {{ selectedProvider.cooperationStartDate }}</p>
           </div>
-          <el-tag :type="selectedProvider.statusType">{{ selectedProvider.statusLabel }}</el-tag>
         </div>
 
-        <el-descriptions :column="3" border>
+        <el-descriptions :column="2" border>
           <el-descriptions-item label="服务商编码">{{ selectedProvider.code }}</el-descriptions-item>
           <el-descriptions-item label="合作起始日">
             {{ selectedProvider.cooperationStartDate || '—' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <el-tag size="small" :type="selectedProvider.statusType">
-              {{ selectedProvider.statusLabel }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item v-if="selectedProvider.remark" label="备注" :span="3">
-            {{ selectedProvider.remark }}
           </el-descriptions-item>
         </el-descriptions>
       </div>
@@ -254,13 +237,7 @@ function openContractDetail(row: { id: string }) {
 }
 
 .panel-search {
-  margin-bottom: 10px;
-}
-
-.status-filter {
   margin-bottom: 12px;
-  display: flex;
-  flex-wrap: wrap;
 }
 
 .provider-item {
@@ -281,17 +258,10 @@ function openContractDetail(row: { id: string }) {
   border-color: #c4b5fd;
 }
 
-.provider-item-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-
 .provider-name {
   font-weight: 600;
   font-size: 14px;
+  margin-bottom: 4px;
 }
 
 .provider-meta {

@@ -6184,6 +6184,15 @@ export const useAppStore = defineStore('app', {
       return item
     },
 
+    deleteInvoiceApplication(id: string) {
+      const idx = this.invoiceApplications.findIndex((entry) => entry.id === id)
+      if (idx < 0) throw new Error('发票申请不存在')
+      const item = this.invoiceApplications[idx]
+      if (item.status !== 'rejected') throw new Error('仅已驳回的发票申请可删除')
+      this.invoiceApplications.splice(idx, 1)
+      this.persist('invoiceApplications')
+    },
+
     completeInvoiceIssue(id: string, fileName: string) {
       const item = this.invoiceApplications.find((entry) => entry.id === id)
       if (!item) throw new Error('发票申请不存在')

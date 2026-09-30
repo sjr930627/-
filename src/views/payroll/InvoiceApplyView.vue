@@ -9,11 +9,9 @@ import { billRemainingInvoiceAmount, formatMoney, formatPeriod } from '@/constan
 import { getEnterpriseInvoiceCategories, formatEnterpriseInvoiceCategoryLabel } from '@/constants/enterprise'
 import {
   allocateAmountToBills,
-  billFeePreviewRows,
   defaultInvoiceProfile,
   invoiceTypeMap,
   maxInvoiceAmountForBills,
-  mergeBillFeePreviewRows,
   normalizeInvoiceType,
   profilesForEnterprise,
   resolveInvoiceStatusMeta,
@@ -25,7 +23,6 @@ const route = useRoute()
 const router = useRouter()
 const { pathPrefix, isEnterprise, isPlatform } = usePortal()
 
-const saving = ref(false)
 const submitting = ref(false)
 const amountTouched = ref(false)
 const uploadVisible = ref(false)
@@ -193,12 +190,6 @@ const maxAmount = computed(() =>
   maxInvoiceAmountForBills(form.value.billIds, store.settlementBills),
 )
 
-const feePreviewRows = computed(() =>
-  selectedBills.value.length > 1
-    ? mergeBillFeePreviewRows(selectedBills.value)
-    : billFeePreviewRows(selectedBills.value[0]),
-)
-
 const billOptions = computed(() =>
   invoiceableBills.value.map((bill) => ({
     value: bill.id,
@@ -338,7 +329,6 @@ function buildPayload() {
   const profile = invoiceProfile.value
   if (!bills.length || !profile) throw new Error('请完善申请信息')
   if (!form.value.invoiceProfileId) throw new Error('请选择付款主体开票抬头')
-  if (!form.value.invoiceContent.trim()) throw new Error('请填写开票内容')
   if (!form.value.invoiceCategory) throw new Error('请选择开票类目')
   if (!form.value.recipientName.trim()) throw new Error('请填写收票人')
   if (!form.value.email.trim()) throw new Error('请填写邮箱')
@@ -376,23 +366,6 @@ function buildPayload() {
 
 function goBack() {
   router.push(`${pathPrefix.value}/payroll/invoices`)
-}
-
-async function saveDraft() {
-  if (!form.value.billIds.length) {
-    ElMessage.warning('请先选择关联账单')
-    return
-  }
-  saving.value = true
-  try {
-    const item = store.saveInvoiceDraft(buildPayload())
-    form.value.id = item.id
-    ElMessage.success('草稿已保存')
-  } catch (e) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
-  } finally {
-    saving.value = false
-  }
 }
 
 async function submitApply() {
@@ -529,7 +502,6 @@ function downloadInvoice() {
           </template>
           <template v-else>
             <el-button @click="goBack">取消</el-button>
-            <el-button :loading="saving" @click="saveDraft">保存草稿</el-button>
             <el-button type="primary" :icon="Check" :loading="submitting" @click="submitApply">
               提交申请
             </el-button>
@@ -689,11 +661,11 @@ function downloadInvoice() {
                 </p>
               </template>
             </el-form-item>
-            <el-form-item label="开票内容" required>
+            <el-form-item label="开票内容">
               <el-input
                 v-model="form.invoiceContent"
                 :disabled="isReadonly"
-                placeholder="如：技术服务费、咨询服务费等"
+                placeholder="选填，如：技术服务费、咨询服务费等"
               />
             </el-form-item>
             <el-form-item label="备注说明">
@@ -752,24 +724,6 @@ function downloadInvoice() {
             </dl>
           </template>
           <el-empty v-else description="请选择付款主体抬头" :image-size="64" />
-        </section>
-
-        <section class="side-card">
-          <div class="side-card-header"><span>费用明细预览</span></div>
-          <div v-if="selectedBills.length" class="fee-preview">
-            <div
-              v-for="row in feePreviewRows"
-              :key="row.label"
-              class="fee-row"
-              :class="{ highlight: row.highlight, danger: row.danger || row.amount < 0 }"
-            >
-              <span>{{ row.label }}</span>
-              <strong>
-                {{ row.amount < 0 ? '-' : '' }}{{ formatMoney(Math.abs(row.amount)) }}
-              </strong>
-            </div>
-          </div>
-          <el-empty v-else description="请先选择关联账单" :image-size="64" />
         </section>
 
         <section v-if="isReadonly && application" class="side-card notice-card">
@@ -924,28 +878,6 @@ function downloadInvoice() {
 
 .profile-list dd {
   margin: 0;
-}
-
-.fee-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.fee-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  color: var(--el-text-color-regular);
-}
-
-.fee-row.highlight {
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.fee-row.danger strong {
-  color: var(--el-color-danger);
 }
 
 .notice-card ol {

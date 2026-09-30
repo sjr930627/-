@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAppStore } from '@/stores/app'
+import { usePortal } from '@/composables/usePortal'
 import {
   billingFormulaExamples,
   billingFormulaFieldMap,
@@ -23,9 +24,12 @@ import type { BillingFormulaExampleKey, PayrollFormulaGroupKey } from '@/constan
 
 const store = useAppStore()
 const route = useRoute()
+const { isEnterprise } = usePortal()
+const canManage = computed(() => !isEnterprise.value)
 
 const dialogVisible = ref(false)
 const editingId = ref<string | null>(null)
+const viewOnly = ref(false)
 const formulaGroup = ref<PayrollFormulaGroupKey>('hourly')
 
 const emptyForm = (): Omit<BillingRule, 'id' | 'createdAt' | 'updatedAt'> => ({
@@ -84,7 +88,9 @@ function detectFormulaTypeLabel(formula: string) {
 }
 
 function openCreate() {
+  if (!canManage.value) return
   editingId.value = null
+  viewOnly.value = false
   form.value = emptyForm()
   formulaGroup.value = 'hourly'
   dialogVisible.value = true
@@ -92,6 +98,7 @@ function openCreate() {
 
 function openEdit(row: BillingRule) {
   editingId.value = row.id
+  viewOnly.value = !canManage.value
   form.value = {
     name: row.name,
     code: row.code,
@@ -110,6 +117,7 @@ function openEdit(row: BillingRule) {
 }
 
 function applyFormulaExample(key: BillingFormulaExampleKey) {
+  if (viewOnly.value) return
   const example = billingFormulaExamples.find((e) => e.key === key)
   if (!example) return
   formulaGroup.value = resolvePayrollFormulaGroupKey(key)
@@ -120,6 +128,7 @@ function applyFormulaExample(key: BillingFormulaExampleKey) {
 }
 
 function insertField(fieldKey: string, target: 'settlement' | 'service_fee') {
+  if (viewOnly.value) return
   const label =
     formulaContext.value.fieldMap[fieldKey]?.label ??
     billingFormulaFieldMap[fieldKey as keyof typeof billingFormulaFieldMap]?.label ??
@@ -128,6 +137,7 @@ function insertField(fieldKey: string, target: 'settlement' | 'service_fee') {
 }
 
 function insertOperator(op: string, target: 'settlement' | 'service_fee') {
+  if (viewOnly.value) return
   appendToken(op, target)
 }
 
@@ -147,6 +157,7 @@ watch(
 )
 
 function submitForm() {
+  if (!canManage.value || viewOnly.value) return
   const enterpriseIds = form.value.enterpriseIds ?? []
   if (!form.value.name.trim()) {
     ElMessage.warning('请填写规则名称')
@@ -185,6 +196,7 @@ function submitForm() {
 }
 
 function toggleRule(row: BillingRule) {
+  if (!canManage.value) return
   const next = !row.enabled
   try {
     store.toggleBillingRule(row.id, next)
@@ -208,9 +220,15 @@ onMounted(() => {
     <div class="page-header">
       <div>
         <h2 class="page-title">计薪规则</h2>
-        <p class="text-muted">配置结算金额公式与服务费金额公式，支持按企业适配</p>
+        <p class="text-muted">
+          {{
+            canManage
+              ? '配置结算金额公式与服务费金额公式，支持按企业适配'
+              : '查看适用于本企业的结算金额公式与服务费金额公式'
+          }}
+        </p>
       </div>
-      <el-button type="primary" @click="openCreate">新建规则</el-button>
+      <el-button v-if="canManage" type="primary" @click="openCreate">新建规则</el-button>
     </div>
 
     <el-table :data="tableData" border stripe row-key="id">
@@ -245,10 +263,12 @@ onMounted(() => {
         </template>
       </el-table-column>
       <el-table-column prop="updatedLabel" label="更新时间" width="160" />
-      <el-table-column label="操作" width="120" fixed="right">
+      <el-table-column label="操作" :width="canManage ? 120 : 80" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link @click="toggleRule(row)">
+          <el-button link type="primary" @click="openEdit(row)">
+            {{ canManage ? '编辑' : '查看' }}
+          </el-button>
+          <el-button v-if="canManage" link @click="toggleRule(row)">
             {{ row.enabled ? '停用' : '启用' }}
           </el-button>
         </template>
@@ -258,7 +278,7 @@ onMounted(() => {
 
   <el-dialog
     v-model="dialogVisible"
-    :title="editingId ? '编辑计薪规则' : '新建计薪规则'"
+    :title="viewOnly ? '查看计薪规则' : editingId ? '编辑计薪规则' : '新建计薪规则'"
     width="760px"
     destroy-on-close
   >
@@ -266,19 +286,19 @@ onMounted(() => {
       <el-row :gutter="16">
         <el-col :span="12">
           <el-form-item label="规则名称" required>
-            <el-input v-model="form.name" placeholder="如：标准工时计薪" />
+            <el-input v-model="form.name" placeholder="如：标准工时计薪" :disabled="viewOnly" />
           </el-form-item>
         </el-col>
         <el-col :span="12">
           <el-form-item label="规则编码" required>
-            <el-input v-model="form.code" placeholder="如：PAYROLL_HOURLY" />
+            <el-input v-model="form.code" placeholder="如：PAYROLL_HOURLY" :disabled="viewOnly" />
           </el-form-item>
         </el-col>
       </el-row>
 
       <el-form-item label="适配企业" required>
         <div class="enterprise-scope">
-          <el-radio-group v-model="form.enterpriseScope">
+          <el-radio-group v-model="form.enterpriseScope" :disabled="viewOnly">
             <el-radio value="all">全部企业</el-radio>
             <el-radio value="specific">特定企业</el-radio>
           </el-radio-group>
@@ -288,6 +308,7 @@ onMounted(() => {
             multiple
             collapse-tags
             placeholder="选择企业"
+            :disabled="viewOnly"
             style="width: 100%; margin-top: 8px"
           >
             <el-option v-for="opt in enterpriseOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
@@ -296,13 +317,20 @@ onMounted(() => {
       </el-form-item>
 
       <el-form-item label="说明">
-        <el-input v-model="form.description" type="textarea" :rows="2" placeholder="规则适用场景说明" />
+        <el-input
+          v-model="form.description"
+          type="textarea"
+          :rows="2"
+          placeholder="规则适用场景说明"
+          :disabled="viewOnly"
+        />
       </el-form-item>
 
       <el-divider content-position="left">结算金额公式</el-divider>
       <el-form-item label="结算公式类型" required>
         <el-radio-group
           :model-value="formulaGroup"
+          :disabled="viewOnly"
           @update:model-value="(v: string | number | boolean | undefined) => applyFormulaExample(v as BillingFormulaExampleKey)"
         >
           <el-radio-button
@@ -316,7 +344,7 @@ onMounted(() => {
       </el-form-item>
       <el-form-item label="结算金额" required>
         <div class="formula-editor">
-          <div class="insert-bar">
+          <div v-if="!viewOnly" class="insert-bar">
             <span class="insert-label">插入字段：</span>
             <el-button
               v-for="f in settlementFormulaFields"
@@ -327,7 +355,7 @@ onMounted(() => {
               {{ f.label }}
             </el-button>
           </div>
-          <div class="insert-bar">
+          <div v-if="!viewOnly" class="insert-bar">
             <span class="insert-label">运算符号：</span>
             <el-button
               v-for="op in formulaOperators"
@@ -344,6 +372,7 @@ onMounted(() => {
             type="textarea"
             :rows="2"
             placeholder="如：出勤工时 * 客户时薪单价"
+            :disabled="viewOnly"
           />
         </div>
       </el-form-item>
@@ -351,7 +380,7 @@ onMounted(() => {
       <el-divider content-position="left">服务费金额公式</el-divider>
       <el-form-item label="服务费金额" required>
         <div class="formula-editor">
-          <div class="insert-bar">
+          <div v-if="!viewOnly" class="insert-bar">
             <span class="insert-label">插入字段：</span>
             <el-button
               v-for="f in serviceFeeFormulaFields"
@@ -362,7 +391,7 @@ onMounted(() => {
               {{ f.label }}
             </el-button>
           </div>
-          <div class="insert-bar">
+          <div v-if="!viewOnly" class="insert-bar">
             <span class="insert-label">运算符号：</span>
             <el-button
               v-for="op in formulaOperators"
@@ -379,18 +408,19 @@ onMounted(() => {
             type="textarea"
             :rows="2"
             placeholder="如：排班工时 * 管理服务单价 + 抢班工时 * 抢班管理单价"
+            :disabled="viewOnly"
           />
         </div>
       </el-form-item>
 
       <el-form-item label="选项">
-        <el-checkbox v-model="form.enabled">启用规则</el-checkbox>
-        <el-checkbox v-model="form.isDefault">设为默认规则</el-checkbox>
+        <el-checkbox v-model="form.enabled" :disabled="viewOnly">启用规则</el-checkbox>
+        <el-checkbox v-model="form.isDefault" :disabled="viewOnly">设为默认规则</el-checkbox>
       </el-form-item>
     </el-form>
     <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button type="primary" @click="submitForm">保存</el-button>
+      <el-button @click="dialogVisible = false">{{ viewOnly ? '关闭' : '取消' }}</el-button>
+      <el-button v-if="!viewOnly" type="primary" @click="submitForm">保存</el-button>
     </template>
   </el-dialog>
 </template>

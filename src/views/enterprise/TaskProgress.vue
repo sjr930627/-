@@ -2,22 +2,17 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
-import { useEnterpriseInstanceAction } from '@/composables/useEnterpriseInstanceAction'
 import {
   calcEnterpriseTaskProgress,
-  getEnterpriseActionUiMeta,
-  getInstanceEnterpriseActions,
-  getWorkflowFieldsForNode,
   instanceWorkflowStatusMap,
   isInstanceAtEnterpriseNode,
   resolveInstanceWorkflowStatus,
 } from '@/services/task'
-import type { TaskInstance, WorkflowActionConfig } from '@/types'
+import type { TaskInstance } from '@/types'
 
 const store = useAppStore()
 const route = useRoute()
 const router = useRouter()
-const { runEnterpriseAction } = useEnterpriseInstanceAction()
 const taskFilter = ref('')
 const workerIdFilter = ref('')
 const instanceStatusFilter = ref<'all' | 'running' | 'completed' | 'cancelled' | 'pending_enterprise'>(
@@ -36,23 +31,18 @@ function enrichInstance(i: TaskInstance) {
   const workflowStatus = resolveInstanceWorkflowStatus(i, workflow)
   const statusMeta = instanceWorkflowStatusMap[workflowStatus]
   const pendingEnterprise = isInstanceAtEnterpriseNode(i, workflow)
-  const enterpriseActions = getInstanceEnterpriseActions(i, workflow).map((a) => ({
-    config: a,
-    meta: getEnterpriseActionUiMeta(a),
-  }))
-  const hasEnterpriseFields = getWorkflowFieldsForNode(workflow, i.currentNodeId).length > 0
+  const worker = store.employees.find((e) => e.id === i.workerId)
   return {
     ...i,
     taskNo: task?.taskNo || '—',
     providerLabel: task?.serviceProviderName || '—',
     workflowName: workflow?.name ?? i.taskTypeName ?? '—',
+    workerPhone: worker?.phone || '—',
     workflow,
     workflowStatus,
     statusLabel: statusMeta.label,
     statusType: statusMeta.type,
     pendingEnterprise,
-    enterpriseActions,
-    hasEnterpriseFields,
     updatedLabel: new Date(i.updatedAt).toLocaleString('zh-CN'),
   }
 }
@@ -110,15 +100,11 @@ function openInstanceDetail(row: TaskInstance) {
   router.push(`/enterprise/task/instances/${row.id}`)
 }
 
-function handleEnterpriseAction(
-  row: TaskInstance & { hasEnterpriseFields?: boolean },
-  config: WorkflowActionConfig,
-) {
-  if (row.hasEnterpriseFields) {
-    openInstanceDetail(row)
-    return
-  }
-  runEnterpriseAction(row.id, config)
+function openInstanceProcess(row: TaskInstance) {
+  router.push({
+    path: `/enterprise/task/instances/${row.id}`,
+    query: { process: '1' },
+  })
 }
 </script>
 
@@ -194,6 +180,7 @@ function handleEnterpriseAction(
       <el-table-column prop="providerLabel" label="服务商" min-width="140" show-overflow-tooltip />
       <el-table-column prop="workflowName" label="任务流程" min-width="120" show-overflow-tooltip />
       <el-table-column prop="workerName" label="灵工" width="100" />
+      <el-table-column prop="workerPhone" label="手机号" width="120" />
       <el-table-column label="执行状态" width="100">
         <template #default="{ row }">
           <el-tag size="small" :type="row.statusType">{{ row.statusLabel }}</el-tag>
@@ -213,20 +200,17 @@ function handleEnterpriseAction(
         <template #default="{ row }">¥{{ row.amount }}</template>
       </el-table-column>
       <el-table-column prop="updatedLabel" label="更新时间" min-width="160" />
-      <el-table-column label="操作" min-width="240" fixed="right">
+      <el-table-column label="操作" width="160" fixed="right">
         <template #default="{ row }">
-          <template v-if="row.pendingEnterprise">
-            <el-button
-              v-for="item in row.enterpriseActions"
-              :key="item.config.action"
-              link
-              :type="item.meta.buttonType"
-              @click="handleEnterpriseAction(row, item.config)"
-            >
-              {{ item.meta.label }}
-            </el-button>
-          </template>
           <el-button link type="primary" @click="openInstanceDetail(row)">详情</el-button>
+          <el-button
+            v-if="row.pendingEnterprise"
+            link
+            type="warning"
+            @click="openInstanceProcess(row)"
+          >
+            去处理
+          </el-button>
         </template>
       </el-table-column>
     </el-table>

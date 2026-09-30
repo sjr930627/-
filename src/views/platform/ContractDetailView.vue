@@ -77,20 +77,25 @@ const approvalStatus = computed(() =>
 const approvalMeta = computed(() => contractApprovalStatusMap[approvalStatus.value])
 const statusMeta = computed(() => contractStatusMap[displayStatus.value])
 
-const versionList = computed(() =>
-  [...(contract.value?.versions ?? [])].sort((a, b) => b.version - a.version),
-)
+const versionList = computed(() => {
+  const list = [...(contract.value?.versions ?? [])].sort((a, b) => b.version - a.version)
+  if (isEnterprise.value) {
+    return list.filter((v) => v.status === 'effective' || v.status === 'history')
+  }
+  return list
+})
 
 const selectedVersionId = ref<string>('')
 
 watch(
-  contract,
-  (c) => {
-    if (!c) return
-    const preferred =
-      versionList.value.find((v) => v.status === 'pending' || v.status === 'draft' || v.status === 'rejected') ||
-      versionList.value.find((v) => v.status === 'effective') ||
-      versionList.value[0]
+  [contract, versionList, isEnterprise],
+  () => {
+    if (!contract.value) return
+    const preferred = isEnterprise.value
+      ? versionList.value.find((v) => v.status === 'effective') || versionList.value[0]
+      : versionList.value.find((v) => v.status === 'pending' || v.status === 'draft' || v.status === 'rejected') ||
+        versionList.value.find((v) => v.status === 'effective') ||
+        versionList.value[0]
     selectedVersionId.value = preferred?.id ?? ''
   },
   { immediate: true },
@@ -214,12 +219,22 @@ function confirmReject() {
     </div>
 
     <div class="page-card unique-tip">
-      企业「{{ enterprise?.name }}」与服务商「{{ provider?.name }}」仅保留一份合同主档（列表一行）；
-      当前生效版本
-      <el-tag size="small" type="success" class="ver-tag">
-        {{ contract.currentVersion ? `V${contract.currentVersion}` : '无' }}
-      </el-tag>
-      。改版/续约提交审批期间仍沿用该生效配置；点击下方版本行可查看对应版本详情。
+      <template v-if="isPlatform">
+        企业「{{ enterprise?.name }}」与服务商「{{ provider?.name }}」仅保留一份合同主档（列表一行）；
+        当前生效版本
+        <el-tag size="small" type="success" class="ver-tag">
+          {{ contract.currentVersion ? `V${contract.currentVersion}` : '无' }}
+        </el-tag>
+        。改版/续约提交审批期间仍沿用该生效配置；点击下方版本行可查看对应版本详情。
+      </template>
+      <template v-else>
+        企业「{{ enterprise?.name }}」与服务商「{{ provider?.name }}」合作合同；
+        当前生效版本
+        <el-tag size="small" type="success" class="ver-tag">
+          {{ contract.currentVersion ? `V${contract.currentVersion}` : '无' }}
+        </el-tag>
+        。点击下方版本行可查看对应版本详情。
+      </template>
     </div>
 
     <div class="detail-layout">
@@ -258,15 +273,17 @@ function confirmReject() {
                 {{ row.effectiveDate }} ~ {{ formatContractExpiry(row.expiryDate, row.contractTerm) }}
               </template>
             </el-table-column>
-            <el-table-column label="提交人" width="100">
-              <template #default="{ row }">{{ row.submittedBy || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="审批人" width="100">
-              <template #default="{ row }">{{ row.approvedBy || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="审批时间" width="160">
-              <template #default="{ row }">{{ formatDateTime(row.approvedAt) }}</template>
-            </el-table-column>
+            <template v-if="isPlatform">
+              <el-table-column label="提交人" width="100">
+                <template #default="{ row }">{{ row.submittedBy || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="审批人" width="100">
+                <template #default="{ row }">{{ row.approvedBy || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="审批时间" width="160">
+                <template #default="{ row }">{{ formatDateTime(row.approvedAt) }}</template>
+              </el-table-column>
+            </template>
           </el-table>
         </section>
 
@@ -290,19 +307,21 @@ function confirmReject() {
               <span class="status-dot" :style="{ background: statusMeta.dot }" />
               {{ statusMeta.label }}
             </el-descriptions-item>
-            <el-descriptions-item label="审批状态">
+            <el-descriptions-item v-if="isPlatform" label="审批状态">
               <el-tag :type="approvalMeta.type" size="small">{{ approvalMeta.label }}</el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="企业名称">{{ enterprise?.name }}</el-descriptions-item>
             <el-descriptions-item label="服务商">{{ provider?.name }}</el-descriptions-item>
             <el-descriptions-item label="合同名称" :span="2">{{ viewingConfig.name }}</el-descriptions-item>
-            <el-descriptions-item label="提交人">{{ viewingConfig.submittedBy || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="提交时间">{{ formatDateTime(viewingConfig.submittedAt) }}</el-descriptions-item>
-            <el-descriptions-item label="审批人">{{ viewingConfig.approvedBy || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="审批时间">{{ formatDateTime(viewingConfig.approvedAt) }}</el-descriptions-item>
-            <el-descriptions-item label="审批意见 / 驳回原因" :span="2">
-              {{ viewingConfig.approvalRemark || '—' }}
-            </el-descriptions-item>
+            <template v-if="isPlatform">
+              <el-descriptions-item label="提交人">{{ viewingConfig.submittedBy || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="提交时间">{{ formatDateTime(viewingConfig.submittedAt) }}</el-descriptions-item>
+              <el-descriptions-item label="审批人">{{ viewingConfig.approvedBy || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="审批时间">{{ formatDateTime(viewingConfig.approvedAt) }}</el-descriptions-item>
+              <el-descriptions-item label="审批意见 / 驳回原因" :span="2">
+                {{ viewingConfig.approvalRemark || '—' }}
+              </el-descriptions-item>
+            </template>
             <el-descriptions-item label="签约日期">{{ viewingConfig.signingDate }}</el-descriptions-item>
             <el-descriptions-item label="生效日期">{{ viewingConfig.effectiveDate }}</el-descriptions-item>
             <el-descriptions-item label="合同期限">{{ termLabel }}</el-descriptions-item>
@@ -371,7 +390,7 @@ function confirmReject() {
           <el-empty v-else description="暂无附件" :image-size="56" />
         </section>
 
-        <section class="page-card side-card">
+        <section v-if="isPlatform" class="page-card side-card">
           <h3 class="side-title">操作记录</h3>
           <el-timeline>
             <el-timeline-item

@@ -74,9 +74,6 @@ const examList = computed(() =>
   filterByTrainingType(store.trainingExams)
     .map((e) => {
       const questions = getExamQuestions(e.id, store.examQuestions)
-      const gates: string[] = []
-      if (e.requireExamPassForSchedule) gates.push('排班')
-      if (e.requireExamPassForTask) gates.push('接任务')
       return {
         ...e,
         ownerTypeLabel: ownerTypeLabel(e.enterpriseId),
@@ -86,7 +83,6 @@ const examList = computed(() =>
         totalScore: getExamTotalScore(questions),
         linkedCourses: countCoursesUsingExam(store.trainingCourses, e.id),
         courseName: getExamLinkedCourseLabel(store.trainingCourses, e),
-        gateLabel: gates.length ? gates.join(' / ') : '-',
         enterpriseName: isGlobalTrainingOwner(e.enterpriseId)
           ? '-'
           : store.enterprises.find((x) => x.id === e.enterpriseId)?.shortName ||
@@ -272,7 +268,6 @@ function viewResults(examId: string) {
         <template #default="{ row }">{{ row.durationMinutes }}分</template>
       </el-table-column>
       <el-table-column prop="courseName" label="关联课程" min-width="180" show-overflow-tooltip />
-      <el-table-column prop="gateLabel" label="考核门槛" width="110" />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag size="small" :type="row.statusTagType">{{ row.statusLabel }}</el-tag>

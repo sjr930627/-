@@ -176,6 +176,7 @@ const tableData = computed(() =>
   store.settlementBills
     .filter((b) => {
       if (isEnterprise.value && b.enterpriseId !== store.currentEnterprise?.id) return false
+      if (isEnterprise.value && b.status === 'pending_submit') return false
       if (statusFilter.value !== 'all' && b.status !== statusFilter.value) return false
       const billNoKw = billNoKeyword.value.trim().toLowerCase()
       if (billNoKw && !b.billNo.toLowerCase().includes(billNoKw)) return false
@@ -467,7 +468,7 @@ function submitPayment() {
     </div>
 
     <el-table :data="tableData" border stripe>
-      <el-table-column v-if="!isEnterprise" prop="billNo" label="账单编号" width="160">
+      <el-table-column prop="billNo" label="账单编号" width="160">
         <template #default="{ row }">
           <el-button link type="primary" @click="openDetail(row)">{{ row.billNo }}</el-button>
         </template>
