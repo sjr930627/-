@@ -1,0 +1,1 @@
+import e from"./EnterpriseFormView-BdHhGTSd.js";import{d as r,g as o,o as t}from"./index-Bal4-6O7.js";const c=r({__name:"EnterpriseDetailView",setup(n){return(a,p)=>(t(),o(e,{readonly:""}))}});export{c as default};

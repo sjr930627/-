@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260" fill="none">
+  <rect width="400" height="260" fill="#87CEEB"/>
+  <rect y="190" width="400" height="70" fill="#9CA3AF"/>
+  <path d="M20 190 L200 120 L380 190 Z" fill="#DC2626"/>
+  <text x="200" y="155" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="700">中国石化</text>
+  <rect x="300" y="168" width="28" height="48" rx="3" fill="#DC2626"/>
+  <rect x="304" y="172" width="8" height="16" rx="1" fill="#111827"/>
+  <rect x="316" y="172" width="8" height="16" rx="1" fill="#111827"/>
+  <text x="314" y="210" text-anchor="middle" fill="#FFFFFF" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="8">灭火器</text>
+  <ellipse cx="180" cy="168" rx="10" ry="12" fill="#FCD34D"/>
+  <rect x="172" y="180" width="16" height="28" rx="6" fill="#2563EB"/>
+  <rect x="195" y="175" width="14" height="22" rx="2" fill="#DC2626" transform="rotate(-35 202 186)"/>
+  <path d="M208 168 L250 140" stroke="#F97316" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="250" cy="140" r="16" fill="#F97316" opacity="0.35"/>
+  <line x1="195" y1="178" x2="245" y2="142" stroke="#111827" stroke-width="6" stroke-linecap="round" transform="rotate(-20 220 160)"/>
+  <circle cx="180" cy="168" r="34" fill="none" stroke="#DC2626" stroke-width="2.5"/>
+  <text x="200" y="238" text-anchor="middle" fill="#DC2626" font-family="PingFang SC, Microsoft YaHei, sans-serif" font-size="12" font-weight="700">喷嘴未对准火焰根部</text>
+</svg>
