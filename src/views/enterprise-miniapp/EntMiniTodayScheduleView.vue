@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import dayjs from 'dayjs'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
@@ -17,7 +18,11 @@ const route = useRoute()
 const store = useAppStore()
 const { enterpriseId } = useEnterpriseMiniAuth()
 
-const today = '2026-07-27'
+const selectedDate = ref('2026-07-27')
+
+function shiftDay(delta: number) {
+  selectedDate.value = dayjs(selectedDate.value).add(delta, 'day').format('YYYY-MM-DD')
+}
 
 const deptFilterId = computed(() =>
   typeof route.query.dept === 'string' ? route.query.dept : '',
@@ -46,7 +51,7 @@ const dailyRows = computed(() => {
   if (!empIds.length) return []
   return buildDailyAttendanceList(
     empIds,
-    [today],
+    [selectedDate.value],
     store.assignments,
     store.shifts,
     store.punches,
@@ -59,6 +64,7 @@ const dailyRows = computed(() => {
 type MemberRow = {
   employeeId: string
   name: string
+  phone: string
   position: string
   statusLabel: string
   tagType: string
@@ -82,6 +88,7 @@ function memberFromDaily(row: (typeof dailyRows.value)[number]): MemberRow {
   return {
     employeeId: row.employeeId,
     name: emp?.name || row.employeeId,
+    phone: emp?.phone || '—',
     position: emp?.position || '—',
     statusLabel: getStatusLabel(row.status),
     tagType: getStatusTagType(row.status),
@@ -95,7 +102,7 @@ const scheduleGroups = computed(() => {
 
   for (const row of dailyRows.value) {
     const assignment = store.assignments.find(
-      (a) => a.employeeId === row.employeeId && a.date === today && a.shiftId === row.shiftId,
+      (a) => a.employeeId === row.employeeId && a.date === selectedDate.value && a.shiftId === row.shiftId,
     )
     if (isGrabAssignment(assignment)) continue
 
@@ -132,7 +139,7 @@ const grabGroups = computed(() => {
 
   for (const row of dailyRows.value) {
     const assignment = store.assignments.find(
-      (a) => a.employeeId === row.employeeId && a.date === today && a.shiftId === row.shiftId,
+      (a) => a.employeeId === row.employeeId && a.date === selectedDate.value && a.shiftId === row.shiftId,
     )
     if (!isGrabAssignment(assignment) || !assignment?.fromGrabSlotId) continue
 
@@ -175,7 +182,7 @@ const presentCount = computed(() => {
   const empIds = new Set(employees.value.map((e) => e.id))
   return new Set(
     store.punches
-      .filter((p) => p.date === today && empIds.has(p.employeeId))
+      .filter((p) => p.date === selectedDate.value && empIds.has(p.employeeId))
       .map((p) => p.employeeId),
   ).size
 })
@@ -188,9 +195,15 @@ const hasAny =
   <div class="mini-page">
     <EntMiniNavBar title="当日出勤管理" back-to="/enterprise-miniapp/attendance" />
 
+    <div class="date-bar">
+      <button type="button" aria-label="前一天" @click="shiftDay(-1)">‹</button>
+      <input v-model="selectedDate" type="date" aria-label="出勤日期">
+      <button type="button" aria-label="后一天" @click="shiftDay(1)">›</button>
+    </div>
+
     <div class="summary">
       <div>
-        <strong>{{ today }}</strong>
+        <strong>{{ selectedDate }}</strong>
         <span>出勤日期</span>
       </div>
       <div>
@@ -223,6 +236,7 @@ const hasAny =
               <strong>{{ m.name }}</strong>
               <span class="tag" :class="m.tagType">{{ m.statusLabel }}</span>
             </div>
+            <p class="phone">手机号：{{ m.phone }}</p>
             <p>{{ m.position }} · 上班 {{ m.clockIn }} · 下班 {{ m.clockOut }}</p>
           </article>
         </section>
@@ -246,6 +260,7 @@ const hasAny =
               <strong>{{ m.name }}</strong>
               <span class="tag" :class="m.tagType">{{ m.statusLabel }}</span>
             </div>
+            <p class="phone">手机号：{{ m.phone }}</p>
             <p>{{ m.position }} · 上班 {{ m.clockIn }} · 下班 {{ m.clockOut }}</p>
           </article>
         </section>
@@ -264,6 +279,7 @@ const hasAny =
             <strong>{{ m.name }}</strong>
             <span class="tag" :class="m.tagType">{{ m.statusLabel }}</span>
           </div>
+          <p class="phone">手机号：{{ m.phone }}</p>
           <p>{{ m.position }} · 上班 {{ m.clockIn }} · 下班 {{ m.clockOut }}</p>
         </article>
       </section>
@@ -274,6 +290,29 @@ const hasAny =
 </template>
 
 <style scoped>
+.date-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 16px 0;
+}
+.date-bar button {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: #f3f4f6;
+  color: #374151;
+  font-size: 18px;
+}
+.date-bar input {
+  flex: 1;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 14px;
+  color: #111827;
+}
 .summary {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -379,6 +418,9 @@ const hasAny =
   margin: 4px 0 0;
   font-size: 12px;
   color: #6b7280;
+}
+.member .phone {
+  color: #9ca3af;
 }
 .tag {
   font-size: 11px;

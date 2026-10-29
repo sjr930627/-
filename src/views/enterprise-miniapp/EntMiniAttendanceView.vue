@@ -154,17 +154,23 @@ const pendingHours = computed(() => {
   ).filter((d) => isDailyAttendanceVisible(d) && canConfirmWorkHours(d)).length
 })
 
-const pendingMakeup = computed(
+const enterpriseEmployeeIds = computed(
   () =>
-    store.makeupRequests.filter(
-      (r) => r.status === 'pending' && employees.value.some((e) => e.id === r.employeeId),
-    ).length,
+    new Set(
+      store.employees
+        .filter((e) => e.enterpriseId === enterpriseId.value)
+        .map((e) => e.id),
+    ),
 )
 
-const pendingCancelShift = computed(
+/** 与考勤审批详情「待审批」一致：本企业补卡 + 取消班次 */
+const pendingApprovalCount = computed(
   () =>
+    store.makeupRequests.filter(
+      (r) => r.status === 'pending' && enterpriseEmployeeIds.value.has(r.employeeId),
+    ).length +
     store.cancelShiftRequests.filter(
-      (r) => r.status === 'pending' && employees.value.some((e) => e.id === r.employeeId),
+      (r) => r.status === 'pending' && enterpriseEmployeeIds.value.has(r.employeeId),
     ).length,
 )
 
@@ -204,7 +210,7 @@ const tools = computed(() => [
     title: '考勤审批',
     icon: Stamp,
     path: '/enterprise-miniapp/exceptions',
-    badge: pendingMakeup.value + pendingCancelShift.value,
+    badge: pendingApprovalCount.value,
   },
   {
     title: '工时确认记录',

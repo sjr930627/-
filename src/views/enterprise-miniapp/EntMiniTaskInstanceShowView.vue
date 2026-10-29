@@ -8,7 +8,7 @@ import WorkflowVerticalProgress from '@/components/task/WorkflowVerticalProgress
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import { useEnterpriseInstanceAction } from '@/composables/useEnterpriseInstanceAction'
-import { resolveTaskSettlementUnitPrice } from '@/constants/task'
+import { hasTaskCustomerPrice, resolveTaskCustomerAmount, resolveTaskCustomerUnitPrice } from '@/constants/task'
 import {
   buildTaskInstanceLifecycleRecords,
   calcInstanceTimeoutHours,
@@ -23,7 +23,7 @@ import {
   instanceWorkflowStatusMap,
   resolveInstanceWorkflowStatus,
 } from '@/services/task'
-import type { WorkflowActionConfig, WorkflowFieldConfig } from '@/types'
+import type { WorkflowActionConfig } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -33,8 +33,6 @@ const { runEnterpriseAction } = useEnterpriseInstanceAction()
 
 const includeOpLogs = true
 const actionLoading = ref(false)
-const actionSheetOpen = ref(false)
-const pendingAction = ref<WorkflowActionConfig | null>(null)
 const enterpriseForm = reactive<Record<string, string | number | boolean>>({})
 
 const instanceId = computed(() => String(route.params.instanceId ?? ''))
@@ -62,9 +60,14 @@ const timeoutHours = computed(() =>
 )
 
 const unitPriceLabel = computed(() => {
-  if (!task.value) return '—'
-  const price = resolveTaskSettlementUnitPrice(task.value)
-  return `¥${price}/单`
+  if (!task.value || !hasTaskCustomerPrice(task.value)) return '—'
+  return `¥${resolveTaskCustomerUnitPrice(task.value)}/单`
+})
+
+const customerAmount = computed(() => {
+  if (!instance.value) return 0
+  if (!task.value) return instance.value.amount
+  return resolveTaskCustomerAmount(task.value, instance.value.claimQuantity) ?? instance.value.amount
 })
 
 const lifecycleRecords = computed(() =>
@@ -104,16 +107,18 @@ const submittedFieldSnapshots = computed(() =>
     : [],
 )
 
-const pendingMeta = computed(() =>
-  pendingAction.value ? getEnterpriseActionUiMeta(pendingAction.value) : null,
+const showEnterpriseCard = computed(
+  () =>
+    pendingEnterprise.value &&
+    (enterpriseNodeFields.value.length > 0 || submittedFieldSnapshots.value.length > 0),
 )
 
-function initEnterpriseForm(fields: WorkflowFieldConfig[]) {
+function initEnterpriseForm() {
+  if (!instance.value) return
   for (const key of Object.keys(enterpriseForm)) {
     delete enterpriseForm[key]
   }
-  if (!instance.value) return
-  for (const field of fields) {
+  for (const field of enterpriseNodeFields.value) {
     const existing = instance.value.fieldValues?.[field.id]
     if (existing !== undefined) enterpriseForm[field.id] = existing
     else if (field.fieldType === 'switch') enterpriseForm[field.id] = false
@@ -121,13 +126,7 @@ function initEnterpriseForm(fields: WorkflowFieldConfig[]) {
   }
 }
 
-watch(
-  enterpriseNodeFields,
-  (fields) => {
-    if (!actionSheetOpen.value) initEnterpriseForm(fields)
-  },
-  { immediate: true, deep: true },
-)
+watch([enterpriseNodeFields, instance], initEnterpriseForm, { immediate: true, deep: true })
 
 function assertAccessible() {
   const i = instance.value
@@ -152,31 +151,15 @@ function formatTime(iso?: string) {
   return new Date(iso).toLocaleString('zh-CN')
 }
 
-function openActionSheet(config: WorkflowActionConfig) {
-  if (!enterpriseNodeFields.value.length) {
-    runEnterpriseAction(instanceId.value, config)
-    return
-  }
-  pendingAction.value = config
-  initEnterpriseForm(enterpriseNodeFields.value)
-  actionSheetOpen.value = true
-}
-
-function closeActionSheet() {
-  actionSheetOpen.value = false
-  pendingAction.value = null
-}
-
-async function confirmAction() {
-  if (!pendingAction.value || !instance.value) return
+async function handleEnterpriseAction(config: WorkflowActionConfig) {
+  if (!instance.value) return
   actionLoading.value = true
   try {
     const payload: Record<string, string | number | boolean> = {}
     for (const field of enterpriseNodeFields.value) {
       payload[field.id] = enterpriseForm[field.id]
     }
-    await runEnterpriseAction(instance.value.id, pendingAction.value, payload)
-    closeActionSheet()
+    await runEnterpriseAction(instance.value.id, config, payload)
   } finally {
     actionLoading.value = false
   }
@@ -189,7 +172,7 @@ function goParentTask() {
 </script>
 
 <template>
-  <div v-if="instance && task && workflow" class="show-page" :class="{ 'has-actions': pendingEnterprise }">
+  <div v-if="instance && task && workflow" class="show-page" :class="{ 'has-actions': pendingEnterprise && enterpriseActions.length && !showEnterpriseCard }">
     <EntMiniNavBar
       title="子任务详情"
       :back-to="`/enterprise-miniapp/tasks?tab=detail&taskId=${task.id}`"
@@ -197,19 +180,16 @@ function goParentTask() {
 
     <div class="show-body">
       <section class="info-card">
-        <div class="hero">
-          <div>
-            <h1>{{ task.name }}</h1>
-            <p class="sub">{{ instance.workerName }} · {{ instance.currentNodeName }}</p>
+        <div class="section-head">
+          <div class="section-icon section-icon--blue">基</div>
+          <div class="section-head-text">
+            <h3>任务基本信息</h3>
+            <p>灵工认领的子任务执行详情</p>
           </div>
-          <span class="status" :class="workflowStatus">
+          <span class="status" :class="timeoutHours ? 'danger' : workflowStatus">
             {{ timeoutHours ? '超时异常' : statusMeta.label }}
           </span>
         </div>
-      </section>
-
-      <section class="info-card">
-        <h3 class="card-title">任务基本信息</h3>
         <div class="info-row">
           <span class="label">任务 ID</span>
           <span class="value mono">{{ instance.id }}</span>
@@ -248,7 +228,7 @@ function goParentTask() {
         </div>
         <div class="info-row">
           <span class="label">预估金额</span>
-          <span class="value">¥{{ instance.amount }}</span>
+          <span class="value">¥{{ customerAmount }}</span>
         </div>
         <div class="info-row">
           <span class="label">所属任务</span>
@@ -267,34 +247,17 @@ function goParentTask() {
           <span class="value">{{ formatTime(instance.updatedAt) }}</span>
         </div>
         <div v-if="timeoutHours && instance.timeoutAt" class="timeout-alert">
-          已超时 {{ timeoutHours }} 小时，应完成时间 {{ formatTime(instance.timeoutAt) }}
-        </div>
-      </section>
-
-      <section class="info-card">
-        <h3 class="card-title">工作流进度</h3>
-        <WorkflowVerticalProgress
-          :workflow="workflow"
-          :current-node-id="instance.currentNodeId"
-          :current-node-name="instance.currentNodeName"
-        />
-      </section>
-
-      <section v-if="submittedFieldSnapshots.length" class="info-card">
-        <h3 class="card-title">灵工已提交</h3>
-        <div
-          v-for="item in submittedFieldSnapshots"
-          :key="item.field.id"
-          class="info-row"
-        >
-          <span class="label">{{ item.field.name }}</span>
-          <span class="value">{{ formatWorkflowFieldValue(item.field, item.value) }}</span>
+          超时信息：已超时 {{ timeoutHours }} 小时，应完成时间 {{ formatTime(instance.timeoutAt) }}
         </div>
       </section>
 
       <section class="info-card">
         <div class="section-head">
-          <h3 class="card-title">生命周期流转记录</h3>
+          <div class="section-icon section-icon--green">流</div>
+          <div class="section-head-text">
+            <h3>生命周期流转记录</h3>
+            <p>子任务从认领到当前节点的全流程轨迹（每条认领一条记录）</p>
+          </div>
         </div>
         <p class="hint">{{ lifecycleRecords.length }} 条记录</p>
         <div v-if="lifecycleRecords.length" class="timeline">
@@ -328,52 +291,70 @@ function goParentTask() {
         </div>
         <p v-else class="empty-text">暂无流转记录</p>
       </section>
+
+      <section class="info-card">
+        <div class="section-head">
+          <div class="section-head-text">
+            <h3>工作流进度</h3>
+            <p>当前子任务在工作流中的位置</p>
+          </div>
+        </div>
+        <WorkflowVerticalProgress
+          :workflow="workflow"
+          :current-node-id="instance.currentNodeId"
+          :current-node-name="instance.currentNodeName"
+        />
+      </section>
+
+      <section v-if="showEnterpriseCard" class="info-card">
+        <div class="section-head">
+          <div class="section-head-text">
+            <h3>企业处理 · {{ instance.currentNodeName }}</h3>
+            <p>填写采集信息后，使用下方按钮完成操作</p>
+          </div>
+        </div>
+        <div v-if="submittedFieldSnapshots.length" class="submitted-fields">
+          <div class="submitted-title">灵工已提交</div>
+          <div v-for="item in submittedFieldSnapshots" :key="item.field.id" class="submitted-row">
+            <span class="submitted-label">{{ item.field.name }}</span>
+            <span class="submitted-value">{{ formatWorkflowFieldValue(item.field, item.value) }}</span>
+          </div>
+        </div>
+        <WorkflowFieldForm
+          v-if="enterpriseNodeFields.length"
+          v-model="enterpriseForm"
+          :fields="enterpriseNodeFields"
+          label-width="88px"
+        />
+        <div v-if="enterpriseActions.length" class="card-actions">
+          <button
+            v-for="item in enterpriseActions"
+            :key="item.config.action"
+            type="button"
+            class="act"
+            :class="item.meta.buttonType"
+            :disabled="actionLoading"
+            @click="handleEnterpriseAction(item.config)"
+          >
+            {{ item.meta.label }}
+          </button>
+        </div>
+      </section>
     </div>
 
-    <footer v-if="pendingEnterprise && enterpriseActions.length" class="show-footer">
+    <footer v-if="pendingEnterprise && enterpriseActions.length && !showEnterpriseCard" class="show-footer">
       <button
         v-for="item in enterpriseActions"
         :key="item.config.action"
         type="button"
         class="act"
         :class="item.meta.buttonType"
-        @click="openActionSheet(item.config)"
+        :disabled="actionLoading"
+        @click="handleEnterpriseAction(item.config)"
       >
         {{ item.meta.label }}
       </button>
     </footer>
-
-    <div v-if="actionSheetOpen && pendingAction && pendingMeta" class="sheet-mask" @click.self="closeActionSheet">
-      <div class="sheet">
-        <div class="sheet-head">
-          <div>
-            <strong>{{ pendingMeta.label }}</strong>
-            <p>企业操作 · {{ instance.currentNodeName }}</p>
-          </div>
-          <button type="button" class="close" @click="closeActionSheet">×</button>
-        </div>
-        <div class="sheet-body">
-          <p class="sheet-tip">请填写以下节点配置字段后提交</p>
-          <WorkflowFieldForm
-            v-model="enterpriseForm"
-            :fields="enterpriseNodeFields"
-            label-width="88px"
-          />
-        </div>
-        <div class="sheet-foot">
-          <button type="button" class="ghost" @click="closeActionSheet">取消</button>
-          <button
-            type="button"
-            class="primary"
-            :class="pendingMeta.buttonType"
-            :disabled="actionLoading"
-            @click="confirmAction"
-          >
-            {{ actionLoading ? '处理中…' : pendingMeta.label }}
-          </button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -447,15 +428,139 @@ function goParentTask() {
   color: #374151;
 }
 
-.section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+.status.danger {
+  background: #fef2f2;
+  color: #dc2626;
 }
 
-.section-head .card-title {
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.section-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.section-icon--blue {
+  background: #228BFF;
+}
+
+.section-icon--green {
+  background: #10b981;
+}
+
+.section-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.section-head-text h3 {
   margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.section-head-text p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #9ca3af;
+  line-height: 1.4;
+}
+
+.submitted-fields {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+}
+
+.submitted-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #d97706;
+  margin-bottom: 8px;
+}
+
+.submitted-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+.submitted-label {
+  color: #9ca3af;
+  flex-shrink: 0;
+}
+
+.submitted-value {
+  color: #374151;
+  text-align: right;
+  word-break: break-word;
+}
+
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.card-actions .act {
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: #228BFF;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.card-actions .act.success {
+  background: #10b981;
+}
+
+.card-actions .act.danger {
+  background: #ef4444;
+}
+
+.card-actions .act.warning {
+  background: #f59e0b;
+}
+
+.info-card :deep(.workflow-field-form .el-form-item) {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.info-card :deep(.workflow-field-form .el-form-item__label) {
+  width: auto !important;
+  height: auto;
+  justify-content: flex-start;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.info-card :deep(.workflow-field-form .el-form-item__content) {
+  margin-left: 0 !important;
 }
 
 .switch-label {
@@ -627,101 +732,6 @@ function goParentTask() {
 }
 
 .show-footer .act.warning {
-  background: #f59e0b;
-}
-
-.sheet-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  background: rgba(15, 23, 42, 0.45);
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-}
-
-.sheet {
-  width: 100%;
-  max-width: 430px;
-  max-height: 80vh;
-  overflow: auto;
-  background: #fff;
-  border-radius: 16px 16px 0 0;
-  padding: 16px 16px calc(16px + env(safe-area-inset-bottom, 0px));
-}
-
-.sheet-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.sheet-head strong {
-  font-size: 16px;
-  color: #111827;
-}
-
-.sheet-head p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #9ca3af;
-}
-
-.sheet-head .close {
-  border: none;
-  background: none;
-  font-size: 22px;
-  line-height: 1;
-  color: #9ca3af;
-  cursor: pointer;
-}
-
-.sheet-tip {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: #6b7280;
-}
-
-.sheet-foot {
-  display: flex;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.sheet-foot .ghost,
-.sheet-foot .primary {
-  height: 42px;
-  border-radius: 10px;
-  font-size: 14px;
-  cursor: pointer;
-}
-
-.sheet-foot .ghost {
-  flex: 0 0 88px;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #6b7280;
-}
-
-.sheet-foot .primary {
-  flex: 1;
-  border: none;
-  color: #fff;
-  font-weight: 600;
-  background: #228BFF;
-}
-
-.sheet-foot .primary.success {
-  background: #10b981;
-}
-
-.sheet-foot .primary.danger {
-  background: #ef4444;
-}
-
-.sheet-foot .primary.warning {
   background: #f59e0b;
 }
 </style>

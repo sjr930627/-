@@ -1,138 +1,210 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseScope } from '@/composables/useEnterpriseScope'
 import EnterpriseScopeSelect from '@/components/platform/EnterpriseScopeSelect.vue'
+import { SCHEDULE_DEMO_NOW, SCHEDULE_DEMO_TODAY } from '@/constants/schedule'
+import { getDepartmentName } from '@/utils'
 import { resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
-import type { InsurancePolicy, InsurancePolicyStatus } from '@/types'
+import type { InsurancePolicy, InsuranceProduct } from '@/types'
 import {
-  getInsurancePolicyStatusLabel,
-  getInsurancePolicyStatusTagType,
-  getInsuranceProductTypeLabel,
-  summarizeEmployeeInsurance,
+  canAdminCancelInsurancePolicy,
+  formatCoverageAmount,
+  formatInsuranceDateTime,
+  formatInsurancePeriod,
+  getInsuranceEnrollmentDisplayLabel,
+  getInsuranceEnrollmentDisplayStatus,
+  getInsuranceEnrollmentDisplayTagType,
+  insuranceEnrolledAt,
+  insurancePlanId,
 } from '@/services/insurance'
 
 const store = useAppStore()
 const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
   useEnterpriseScope('filter')
-const activeTab = ref<'policies' | 'employees' | 'products'>('policies')
+
+const activeTab = ref<'products' | 'policies'>('policies')
+const workDate = ref(SCHEDULE_DEMO_TODAY)
 const keyword = ref('')
-const statusFilter = ref<InsurancePolicyStatus | ''>('')
-const dateRange = ref<[string, string] | null>(null)
 const detailVisible = ref(false)
 const selectedPolicy = ref<InsurancePolicy | null>(null)
-const employeeDetailVisible = ref(false)
-const selectedEmployeeId = ref('')
+const claimVisible = ref(false)
+const productDialogVisible = ref(false)
+const productSaving = ref(false)
+const editingProductId = ref('')
+
+const productForm = reactive({
+  name: '',
+  planId: '',
+  coverageAmount: 50,
+  description: '',
+})
 
 const productMap = computed(() =>
-  Object.fromEntries(store.insuranceProducts.map((p) => [p.id, p])),
+  Object.fromEntries(store.insuranceProducts.map((product) => [product.id, product])),
 )
 
 const employeeMap = computed(() =>
-  Object.fromEntries(store.employees.map((e) => [e.id, e])),
+  Object.fromEntries(store.employees.map((employee) => [employee.id, employee])),
 )
 
-const stats = computed(() => {
-  const all = store.insurancePolicies
-  const active = all.filter((p) => p.status === 'active').length
-  const today = new Date().toISOString().slice(0, 10)
-  const todayCount = all.filter((p) => p.workDate === today).length
-  const premium = Math.round(all.reduce((s, p) => s + p.premium, 0) * 100) / 100
-  return { total: all.length, active, todayCount, premium }
-})
+const demoNowLabel = formatInsuranceDateTime(SCHEDULE_DEMO_NOW)
 
 const policyRows = computed(() =>
-  [...store.insurancePolicies]
-    .filter((p) => {
-      const emp = employeeMap.value[p.employeeId]
-      if (!matchesEnterprise(resolveEnterpriseIdByEmployee(emp))) return false
-      if (statusFilter.value && p.status !== statusFilter.value) return false
-      if (dateRange.value) {
-        const [start, end] = dateRange.value
-        if (p.workDate < start || p.workDate > end) return false
-      }
-      if (keyword.value.trim()) {
-        const kw = keyword.value.trim().toLowerCase()
-        const emp = employeeMap.value[p.employeeId]
-        const prod = productMap.value[p.productId]
-        if (
-          !p.policyNo.toLowerCase().includes(kw) &&
-          !emp?.name.includes(kw) &&
-          !emp?.employeeNo.toLowerCase().includes(kw) &&
-          !prod?.name.includes(kw)
-        ) {
-          return false
-        }
-      }
-      return true
-    })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map((p) => ({
-      ...p,
-      enterpriseName: enterpriseName(resolveEnterpriseIdByEmployee(employeeMap.value[p.employeeId])),
-      employeeName: employeeMap.value[p.employeeId]?.name ?? '-',
-      employeeNo: employeeMap.value[p.employeeId]?.employeeNo ?? '-',
-      productName: productMap.value[p.productId]?.name ?? '-',
-      provider: productMap.value[p.productId]?.provider ?? '-',
-      coverage: productMap.value[p.productId]?.coverageAmount ?? 0,
-    })),
-)
-
-const employeeRows = computed(() =>
-  store.activeEmployees
-    .filter((emp) => matchesEnterprise(resolveEnterpriseIdByEmployee(emp)))
-    .map((emp) => {
-      const summary = summarizeEmployeeInsurance(store.insurancePolicies, emp.id)
-      const latestPolicy = summary.latest
-      return {
-        employeeId: emp.id,
-        enterpriseName: enterpriseName(resolveEnterpriseIdByEmployee(emp)),
-        name: emp.name,
-        employeeNo: emp.employeeNo,
-        position: emp.position,
-        totalPolicies: summary.total,
-        activePolicies: summary.active,
-        totalPremium: summary.totalPremium,
-        latestPolicyNo: latestPolicy?.policyNo ?? '-',
-        latestStatus: latestPolicy?.status,
-        latestDate: latestPolicy?.workDate ?? '-',
-      }
-    })
-    .filter((row) => {
+  store.insurancePolicies
+    .filter((policy) => {
+      if (policy.workDate !== workDate.value) return false
+      const employee = employeeMap.value[policy.employeeId]
+      if (!matchesEnterprise(resolveEnterpriseIdByEmployee(employee))) return false
       if (!keyword.value.trim()) return true
-      const kw = keyword.value.trim()
-      return row.name.includes(kw) || row.employeeNo.toLowerCase().includes(kw.toLowerCase())
+      const text = keyword.value.trim().toLowerCase()
+      const product = productMap.value[policy.productId]
+      const department = employee
+        ? getDepartmentName(store.departments, employee.departmentId)
+        : ''
+      return [
+        policy.policyNo,
+        employee?.name,
+        employee?.phone,
+        product?.name,
+        enterpriseName(resolveEnterpriseIdByEmployee(employee)),
+        department,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(text))
+    })
+    .sort((a, b) => insuranceEnrolledAt(b).localeCompare(insuranceEnrolledAt(a)))
+    .map((policy) => {
+      const employee = employeeMap.value[policy.employeeId]
+      const product = productMap.value[policy.productId]
+      const enterpriseId = resolveEnterpriseIdByEmployee(employee)
+      return {
+        ...policy,
+        enterpriseName: enterpriseName(enterpriseId),
+        departmentName: employee
+          ? getDepartmentName(store.departments, employee.departmentId)
+          : '—',
+        employeeName: employee?.name ?? '—',
+        phone: employee?.phone || '—',
+        productName: product?.name ?? '—',
+        planId: insurancePlanId(product),
+        productDescription: product?.description ?? '—',
+        coverageText: formatCoverageAmount(policy.coverageAmount ?? product?.coverageAmount),
+        enrolledAtText: formatInsuranceDateTime(insuranceEnrolledAt(policy)),
+        periodText: formatInsurancePeriod(policy.effectiveTime, policy.expireTime),
+        enrollmentStatus: getInsuranceEnrollmentDisplayStatus(policy),
+        canCancel: canAdminCancelInsurancePolicy(policy),
+      }
     }),
 )
 
-const employeePolicies = computed(() =>
-  selectedEmployeeId.value ? store.getEmployeePolicies(selectedEmployeeId.value) : [],
+const selectedRow = computed(() =>
+  selectedPolicy.value
+    ? policyRows.value.find((row) => row.id === selectedPolicy.value?.id) ?? null
+    : null,
 )
 
-function openPolicyDetail(row: InsurancePolicy) {
-  selectedPolicy.value = row
-  detailVisible.value = true
+function resetProductForm(product?: InsuranceProduct) {
+  editingProductId.value = product?.id ?? ''
+  productForm.name = product?.name ?? ''
+  productForm.planId = product ? insurancePlanId(product) : ''
+  productForm.coverageAmount = product?.coverageAmount ?? 50
+  productForm.description = product?.description ?? ''
 }
 
-function openEmployeeDetail(employeeId: string) {
-  selectedEmployeeId.value = employeeId
-  employeeDetailVisible.value = true
+function openCreateProduct() {
+  resetProductForm()
+  productDialogVisible.value = true
 }
 
-function handleCancelPolicy(id: string) {
-  if (store.cancelInsurancePolicy(id)) {
-    ElMessage.success('保单已退保')
-    if (selectedPolicy.value?.id === id) {
-      selectedPolicy.value = { ...selectedPolicy.value, status: 'cancelled' }
+function openEditProduct(product: InsuranceProduct) {
+  resetProductForm(product)
+  productDialogVisible.value = true
+}
+
+function saveProduct() {
+  const payload = {
+    name: productForm.name,
+    planId: productForm.planId,
+    coverageAmount: Number(productForm.coverageAmount),
+    description: productForm.description,
+  }
+  productSaving.value = true
+  try {
+    if (editingProductId.value) {
+      store.updateInsuranceProduct(editingProductId.value, payload)
+      ElMessage.success('产品已更新')
+    } else {
+      store.addInsuranceProduct(payload)
+      ElMessage.success('产品已新增')
     }
-  } else {
-    ElMessage.warning('仅保障中的保单可退保')
+    productDialogVisible.value = false
+  } catch (error) {
+    ElMessage.warning(error instanceof Error ? error.message : '保存失败')
+  } finally {
+    productSaving.value = false
   }
 }
 
-function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('zh-CN')
+async function removeProduct(product: InsuranceProduct) {
+  try {
+    await ElMessageBox.confirm(`确认删除保险产品「${product.name}」？`, '删除产品', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  try {
+    store.removeInsuranceProduct(product.id)
+    ElMessage.success('产品已删除')
+  } catch (error) {
+    ElMessage.warning(error instanceof Error ? error.message : '删除失败')
+  }
+}
+
+function openPolicyDetail(row: InsurancePolicy) {
+  selectedPolicy.value = store.insurancePolicies.find((policy) => policy.id === row.id) ?? row
+  detailVisible.value = true
+}
+
+function openClaimRecords(row?: { enrollmentStatus?: string }) {
+  if (row?.enrollmentStatus === 'cancelled') {
+    ElMessage.warning('已退保保单不可申请理赔')
+    return
+  }
+  claimVisible.value = true
+}
+
+async function confirmCancel(row: { id: string; policyNo: string; employeeName: string; canCancel: boolean }) {
+  if (!row.canCancel) {
+    ElMessage.warning('仅支持当天投保后 2 小时内退保')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确认为 ${row.employeeName} 退保 ${row.policyNo}？退保后保障立即终止。`,
+      '退保确认',
+      {
+        type: 'warning',
+        confirmButtonText: '确认退保',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+  const result = store.cancelInsurancePolicy(row.id)
+  if (!result.ok) {
+    ElMessage.warning(result.message)
+    return
+  }
+  ElMessage.success(result.message)
+  if (selectedPolicy.value?.id === row.id) {
+    selectedPolicy.value = store.insurancePolicies.find((policy) => policy.id === row.id) ?? null
+  }
 }
 </script>
 
@@ -141,280 +213,199 @@ function formatDateTime(iso: string) {
     <div class="page-header">
       <div>
         <h2 class="page-title">保险管理</h2>
-        <p class="text-muted">C 端上班打卡后自动按日投保，可查看人员投保记录与保单详情</p>
+        <p class="text-muted">维护保险产品，并按日查看投保明细。退保仅限投保当天、投保后 2 小时内。</p>
       </div>
-    </div>
-
-    <div class="stat-row">
-      <div class="stat-item">
-        <span class="stat-label">累计保单</span>
-        <span class="stat-value">{{ stats.total }}</span>
-      </div>
-      <div class="stat-item active">
-        <span class="stat-label">保障中</span>
-        <span class="stat-value">{{ stats.active }}</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">今日投保</span>
-        <span class="stat-value">{{ stats.todayCount }}</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-label">累计保费（元）</span>
-        <span class="stat-value">{{ stats.premium.toFixed(2) }}</span>
-      </div>
-    </div>
-
-    <div class="page-toolbar">
-      <EnterpriseScopeSelect
-        v-if="showEnterpriseControl"
-        v-model="enterpriseFilter"
-        mode="filter"
-        width="180px"
-      />
-      <el-input
-        v-model="keyword"
-        placeholder="搜索保单号、姓名、工号..."
-        clearable
-        style="width: 240px"
-        prefix-icon="Search"
-      />
-      <el-select
-        v-if="activeTab === 'policies'"
-        v-model="statusFilter"
-        placeholder="保单状态"
-        clearable
-        style="width: 140px"
-      >
-        <el-option label="保障中" value="active" />
-        <el-option label="已过期" value="expired" />
-        <el-option label="已退保" value="cancelled" />
-        <el-option label="待生效" value="pending" />
-      </el-select>
-      <el-date-picker
-        v-if="activeTab === 'policies'"
-        v-model="dateRange"
-        type="daterange"
-        range-separator="至"
-        start-placeholder="开始日期"
-        end-placeholder="结束日期"
-        value-format="YYYY-MM-DD"
-        style="width: 260px"
-      />
     </div>
 
     <el-tabs v-model="activeTab">
-      <el-tab-pane label="保单记录" name="policies">
+      <el-tab-pane label="保险产品维护" name="products">
+        <div class="page-toolbar">
+          <el-button type="primary" @click="openCreateProduct">新增产品</el-button>
+        </div>
+        <el-table :data="store.insuranceProducts" stripe border>
+          <el-table-column prop="name" label="产品名称" min-width="180" />
+          <el-table-column label="产品方案 ID" min-width="140">
+            <template #default="{ row }">{{ insurancePlanId(row) }}</template>
+          </el-table-column>
+          <el-table-column label="产品额度" width="120" align="right">
+            <template #default="{ row }">{{ formatCoverageAmount(row.coverageAmount) }}</template>
+          </el-table-column>
+          <el-table-column prop="description" label="产品介绍" min-width="280" show-overflow-tooltip />
+          <el-table-column label="操作" width="140" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openEditProduct(row)">编辑</el-button>
+              <el-button link type="danger" @click="removeProduct(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-tab-pane>
+
+      <el-tab-pane label="保险管理" name="policies">
+        <div class="page-toolbar">
+          <el-date-picker
+            v-model="workDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            placeholder="投保日期"
+            :clearable="false"
+            style="width: 160px"
+          />
+          <EnterpriseScopeSelect
+            v-if="showEnterpriseControl"
+            v-model="enterpriseFilter"
+            mode="filter"
+            width="180px"
+          />
+          <el-input
+            v-model="keyword"
+            placeholder="搜索企业、部门、姓名、手机号、保单号"
+            clearable
+            style="width: 280px"
+            prefix-icon="Search"
+          />
+          <span class="hint inline">演示当前时间 {{ demoNowLabel }} · 当日 {{ policyRows.length }} 条</span>
+        </div>
         <el-table :data="policyRows" stripe border>
           <el-table-column prop="enterpriseName" label="企业" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="policyNo" label="保单号" min-width="150" />
-          <el-table-column prop="employeeName" label="姓名" width="100" />
-          <el-table-column prop="employeeNo" label="工号" width="100" />
-          <el-table-column prop="productName" label="保险产品" min-width="160" />
-          <el-table-column prop="workDate" label="工作日期" width="110" />
-          <el-table-column label="保费" width="80" align="right">
-            <template #default="{ row }">¥{{ row.premium.toFixed(2) }}</template>
-          </el-table-column>
-          <el-table-column label="保额" width="90" align="right">
-            <template #default="{ row }">{{ row.coverage }}万</template>
-          </el-table-column>
-          <el-table-column label="状态" width="90">
+          <el-table-column prop="departmentName" label="部门" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="employeeName" label="姓名" width="90" />
+          <el-table-column prop="phone" label="手机号" width="130" />
+          <el-table-column prop="policyNo" label="保单号" min-width="160" />
+          <el-table-column prop="productName" label="产品名称" min-width="160" show-overflow-tooltip />
+          <el-table-column prop="coverageText" label="产品额度" width="100" align="right" />
+          <el-table-column prop="enrolledAtText" label="投保时间" width="150" />
+          <el-table-column prop="periodText" label="投保期限" min-width="280" show-overflow-tooltip />
+          <el-table-column label="投保状态" width="100" fixed="right">
             <template #default="{ row }">
-              <el-tag :type="getInsurancePolicyStatusTagType(row.status)" size="small">
-                {{ getInsurancePolicyStatusLabel(row.status) }}
+              <el-tag :type="getInsuranceEnrollmentDisplayTagType(row.enrollmentStatus)" size="small">
+                {{ getInsuranceEnrollmentDisplayLabel(row.enrollmentStatus) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="120" fixed="right">
+          <el-table-column label="操作" width="250" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openPolicyDetail(row)">详情</el-button>
-              <el-button
-                v-if="row.status === 'active'"
-                link
-                type="danger"
-                @click="handleCancelPolicy(row.id)"
+              <el-button link type="primary" @click="openPolicyDetail(row)">查看保单</el-button>
+              <el-tooltip
+                :disabled="row.canCancel"
+                content="仅支持当天投保后 2 小时内退保"
+                placement="top"
               >
-                退保
-              </el-button>
+                <span class="action-wrap">
+                  <el-button
+                    link
+                    type="danger"
+                    :disabled="!row.canCancel"
+                    @click="confirmCancel(row)"
+                  >
+                    退保
+                  </el-button>
+                </span>
+              </el-tooltip>
+              <el-tooltip
+                :disabled="row.enrollmentStatus !== 'cancelled'"
+                content="已退保保单不可申请理赔"
+                placement="top"
+              >
+                <span class="action-wrap">
+                  <el-button
+                    link
+                    type="primary"
+                    :disabled="row.enrollmentStatus === 'cancelled'"
+                    @click="openClaimRecords(row)"
+                  >
+                    申请理赔记录
+                  </el-button>
+                </span>
+              </el-tooltip>
             </template>
           </el-table-column>
         </el-table>
-      </el-tab-pane>
-
-      <el-tab-pane label="人员投保概况" name="employees">
-        <el-table :data="employeeRows" stripe border>
-          <el-table-column prop="enterpriseName" label="企业" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="name" label="姓名" width="100" />
-          <el-table-column prop="employeeNo" label="工号" width="100" />
-          <el-table-column prop="position" label="岗位" min-width="120" />
-          <el-table-column prop="totalPolicies" label="累计保单" width="90" align="center" />
-          <el-table-column prop="activePolicies" label="保障中" width="90" align="center">
-            <template #default="{ row }">
-              <span :class="{ 'text-active': row.activePolicies > 0 }">{{ row.activePolicies }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="累计保费" width="100" align="right">
-            <template #default="{ row }">¥{{ row.totalPremium.toFixed(2) }}</template>
-          </el-table-column>
-          <el-table-column prop="latestPolicyNo" label="最近保单" min-width="150" />
-          <el-table-column prop="latestDate" label="最近投保日" width="110" />
-          <el-table-column label="操作" width="100" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="openEmployeeDetail(row.employeeId)">
-                查看保单
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-tab-pane>
-
-      <el-tab-pane label="保险产品" name="products">
-        <el-table :data="store.insuranceProducts" stripe border>
-          <el-table-column prop="name" label="产品名称" min-width="160" />
-          <el-table-column prop="code" label="产品编码" width="120" />
-          <el-table-column label="类型" width="110">
-            <template #default="{ row }">{{ getInsuranceProductTypeLabel(row.type) }}</template>
-          </el-table-column>
-          <el-table-column prop="provider" label="承保公司" width="120" />
-          <el-table-column label="日保费" width="90" align="right">
-            <template #default="{ row }">¥{{ row.dailyPremium.toFixed(2) }}</template>
-          </el-table-column>
-          <el-table-column label="保额" width="90" align="right">
-            <template #default="{ row }">{{ row.coverageAmount }}万</template>
-          </el-table-column>
-          <el-table-column label="打卡自动投保" width="120" align="center">
-            <template #default="{ row }">
-              <el-tag :type="row.autoOnPunch ? 'success' : 'info'" size="small">
-                {{ row.autoOnPunch ? '是' : '否' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="80" align="center">
-            <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
-                {{ row.enabled ? '启用' : '停用' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="description" label="说明" min-width="220" show-overflow-tooltip />
-        </el-table>
-        <p class="hint">默认方案「灵工日保·意外伤害」在 C 端上班打卡成功后自动投保，当日 23:59 失效。</p>
       </el-tab-pane>
     </el-tabs>
 
-    <el-drawer v-model="detailVisible" title="保单详情" size="420px">
-      <template v-if="selectedPolicy">
-        <el-descriptions :column="1" border>
-          <el-descriptions-item label="保单号">{{ selectedPolicy.policyNo }}</el-descriptions-item>
-          <el-descriptions-item label="被保人">
-            {{ employeeMap[selectedPolicy.employeeId]?.name }}
-            （{{ employeeMap[selectedPolicy.employeeId]?.employeeNo }}）
-          </el-descriptions-item>
-          <el-descriptions-item label="保险产品">
-            {{ productMap[selectedPolicy.productId]?.name }}
-          </el-descriptions-item>
-          <el-descriptions-item label="承保公司">
-            {{ productMap[selectedPolicy.productId]?.provider }}
-          </el-descriptions-item>
-          <el-descriptions-item label="工作日期">{{ selectedPolicy.workDate }}</el-descriptions-item>
-          <el-descriptions-item label="生效时间">
-            {{ formatDateTime(selectedPolicy.effectiveTime) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="失效时间">
-            {{ formatDateTime(selectedPolicy.expireTime) }}
-          </el-descriptions-item>
-          <el-descriptions-item label="保费">¥{{ selectedPolicy.premium.toFixed(2) }}</el-descriptions-item>
-          <el-descriptions-item label="保额">
-            {{ productMap[selectedPolicy.productId]?.coverageAmount }} 万元
-          </el-descriptions-item>
-          <el-descriptions-item label="打卡地点">{{ selectedPolicy.location ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="关联打卡">{{ selectedPolicy.punchId ?? '-' }}</el-descriptions-item>
-          <el-descriptions-item label="状态">
-            <el-tag :type="getInsurancePolicyStatusTagType(selectedPolicy.status)" size="small">
-              {{ getInsurancePolicyStatusLabel(selectedPolicy.status) }}
-            </el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="创建时间">
-            {{ formatDateTime(selectedPolicy.createdAt) }}
-          </el-descriptions-item>
-        </el-descriptions>
-        <div v-if="selectedPolicy.status === 'active'" class="drawer-actions">
-          <el-button type="danger" plain @click="handleCancelPolicy(selectedPolicy.id)">退保</el-button>
-        </div>
+    <el-dialog
+      v-model="productDialogVisible"
+      :title="editingProductId ? '编辑保险产品' : '新增保险产品'"
+      width="520px"
+    >
+      <el-form label-width="110px">
+        <el-form-item label="产品名称" required>
+          <el-input v-model="productForm.name" maxlength="40" placeholder="请输入产品名称" />
+        </el-form-item>
+        <el-form-item label="产品方案 ID" required>
+          <el-input v-model="productForm.planId" maxlength="40" placeholder="请输入产品方案 ID" />
+        </el-form-item>
+        <el-form-item label="产品额度" required>
+          <el-input-number
+            v-model="productForm.coverageAmount"
+            :min="0.01"
+            :precision="2"
+            :step="10"
+            controls-position="right"
+          />
+          <span class="unit">万元</span>
+        </el-form-item>
+        <el-form-item label="产品介绍" required>
+          <el-input
+            v-model="productForm.description"
+            type="textarea"
+            :rows="4"
+            maxlength="200"
+            show-word-limit
+            placeholder="请输入产品介绍"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="productDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="productSaving" @click="saveProduct">保存</el-button>
       </template>
+    </el-dialog>
+
+    <el-drawer v-model="detailVisible" title="查看保单" size="440px">
+      <el-descriptions v-if="selectedRow" :column="1" border>
+        <el-descriptions-item label="保单号">{{ selectedRow.policyNo }}</el-descriptions-item>
+        <el-descriptions-item label="企业">{{ selectedRow.enterpriseName }}</el-descriptions-item>
+        <el-descriptions-item label="部门">{{ selectedRow.departmentName }}</el-descriptions-item>
+        <el-descriptions-item label="姓名">{{ selectedRow.employeeName }}</el-descriptions-item>
+        <el-descriptions-item label="手机号">{{ selectedRow.phone }}</el-descriptions-item>
+        <el-descriptions-item label="产品名称">{{ selectedRow.productName }}</el-descriptions-item>
+        <el-descriptions-item label="产品方案 ID">{{ selectedRow.planId }}</el-descriptions-item>
+        <el-descriptions-item label="产品额度">{{ selectedRow.coverageText }}</el-descriptions-item>
+        <el-descriptions-item label="产品介绍">{{ selectedRow.productDescription }}</el-descriptions-item>
+        <el-descriptions-item label="投保时间">{{ selectedRow.enrolledAtText }}</el-descriptions-item>
+        <el-descriptions-item label="投保期限">{{ selectedRow.periodText }}</el-descriptions-item>
+        <el-descriptions-item label="投保状态">
+          <el-tag :type="getInsuranceEnrollmentDisplayTagType(selectedRow.enrollmentStatus)" size="small">
+            {{ getInsuranceEnrollmentDisplayLabel(selectedRow.enrollmentStatus) }}
+          </el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+      <div v-if="selectedRow?.canCancel" class="drawer-actions">
+        <el-button type="danger" plain @click="confirmCancel(selectedRow)">退保</el-button>
+      </div>
     </el-drawer>
 
-    <el-drawer
-      v-model="employeeDetailVisible"
-      :title="`${employeeMap[selectedEmployeeId]?.name ?? ''} · 投保记录`"
-      size="520px"
-    >
-      <el-table :data="employeePolicies" stripe border size="small">
-        <el-table-column prop="policyNo" label="保单号" min-width="140" />
-        <el-table-column prop="workDate" label="日期" width="100" />
-        <el-table-column label="产品" min-width="130">
-          <template #default="{ row }">{{ productMap[row.productId]?.name }}</template>
-        </el-table-column>
-        <el-table-column label="保费" width="70" align="right">
-          <template #default="{ row }">{{ row.premium.toFixed(2) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="80">
-          <template #default="{ row }">
-            <el-tag :type="getInsurancePolicyStatusTagType(row.status)" size="small">
-              {{ getInsurancePolicyStatusLabel(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-drawer>
+    <el-dialog v-model="claimVisible" title="申请理赔记录" width="420px">
+      <el-empty description="理赔流程暂不处理" />
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.stat-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
+.hint.inline {
+  margin: 0;
+  line-height: 32px;
 }
 
-.stat-item {
-  padding: 16px;
-  border-radius: 8px;
-  background: #fafafa;
-  border: 1px solid var(--app-border);
-}
-
-.stat-item.active {
-  background: var(--app-primary-light);
-  border-color: #ffccc7;
-}
-
-.stat-label {
-  display: block;
-  font-size: 12px;
+.unit {
+  margin-left: 8px;
   color: #909399;
-  margin-bottom: 6px;
 }
 
-.stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1a1a2e;
-}
-
-.stat-item.active .stat-value {
-  color: var(--app-primary);
-}
-
-.text-active {
-  color: var(--app-primary);
-  font-weight: 600;
-}
-
-.hint {
-  margin-top: 12px;
-  font-size: 12px;
-  color: #909399;
+.action-wrap {
+  display: inline-flex;
+  margin: 0 8px;
 }
 
 .drawer-actions {

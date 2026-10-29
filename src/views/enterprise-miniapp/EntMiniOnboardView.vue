@@ -28,7 +28,6 @@ const approveTarget = ref<Employee | null>(null)
 const approveForm = ref({
   departmentId: '',
   positionId: '',
-  employeeNo: '',
 })
 
 const enterprisePositions = computed(() => store.getEnterprisePositions(enterpriseId.value))
@@ -148,7 +147,6 @@ function openApprove(emp: Employee) {
   approveForm.value = {
     departmentId: preferred,
     positionId: appliedPositionId,
-    employeeNo: emp.employeeNo || '',
   }
   approveOpen.value = true
 }
@@ -168,16 +166,11 @@ function submitApprove() {
     ElMessage.warning('请选择岗位')
     return
   }
-  if (!approveForm.value.employeeNo.trim()) {
-    ElMessage.warning('请填写人员 ID')
-    return
-  }
   try {
     const isApplied = approveTarget.value.onboardingStage === 'applied'
     const payload = {
       departmentId: approveForm.value.departmentId,
       position: selectedApprovePositionName.value,
-      employeeNo: approveForm.value.employeeNo.trim(),
       positionId: approveForm.value.positionId,
     }
     if (isApplied) {
@@ -185,7 +178,7 @@ function submitApprove() {
     } else {
       store.assignPendingOnboardEmployee(approveTarget.value.id, payload)
     }
-    ElMessage.success(isApplied ? '已审批入驻并分配岗位' : '已分配岗位及人员 ID')
+    ElMessage.success(isApplied ? '已审批入驻并分配岗位' : '已分配岗位')
     closeApprove()
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '操作失败')
@@ -242,7 +235,7 @@ async function copyPayload() {
         </button>
       </div>
       <p class="hint">
-        待入驻池：{{ unassignedId ? '系统待入驻部门' : '' }}已申请需审批并分配部门 / 岗位 / 人员 ID
+        待入驻池：{{ unassignedId ? '系统待入驻部门' : '' }}已申请需审批并分配部门 / 岗位
       </p>
 
       <article v-for="e in pendingEmployees" :key="e.id" class="card">
@@ -253,7 +246,7 @@ async function copyPayload() {
               <strong>{{ e.name }}</strong>
               <span class="stage" :class="e.stage">{{ e.stageLabel }}</span>
             </div>
-            <p>{{ e.phone || '未留手机' }} · {{ e.employeeNo }}</p>
+            <p>{{ e.phone || '未留手机' }}</p>
             <p class="sub">
               申请部门：{{ e.applyDeptName }}
               <template v-if="e.applyPositionName"> · 岗位 {{ e.applyPositionName }}</template>
@@ -312,8 +305,6 @@ async function copyPayload() {
             {{ p.profile.positionName || p.name }}
           </option>
         </select>
-        <label>人员 ID（必填）</label>
-        <input v-model="approveForm.employeeNo" placeholder="如 E1008">
         <button type="button" class="submit" @click="submitApprove">确认通过</button>
       </div>
     </div>
@@ -460,8 +451,7 @@ label {
   font-size: 12px;
   color: #6b7280;
 }
-select,
-input {
+select {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #e5e7eb;

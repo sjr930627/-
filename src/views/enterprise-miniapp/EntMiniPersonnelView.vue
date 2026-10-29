@@ -5,7 +5,7 @@ import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import { isUnassignedDepartment } from '@/constants/department'
-import { formatDepartmentGap, summarizeDepartmentGaps } from '@/services/departmentGap'
+import { summarizeDepartmentGaps } from '@/services/departmentGap'
 import {
   buildDepartmentTree,
   getDepartmentDescendantIds,
@@ -138,12 +138,32 @@ const listEmployees = computed(() => {
 })
 
 const emptyText = computed(() =>
-  personnelTab.value === 'grab' ? '该部门暂无人员池人员' : '该部门暂无排班人员',
+  personnelTab.value === 'grab' ? '该部门暂无抢班人员' : '该部门暂无排班人员',
 )
 
 const searchPlaceholder = computed(() =>
   personnelTab.value === 'grab' ? '搜索姓名/手机/身份证/岗位' : '搜索姓名/手机/岗位',
 )
+
+const isGrabTab = computed(() => personnelTab.value === 'grab')
+
+const gapValueText = computed(() =>
+  isGrabTab.value ? `抢班次 ${deptGap.value.shiftGap}` : `岗位缺口 ${deptGap.value.positionGap}`,
+)
+
+const gapHint = computed(() =>
+  isGrabTab.value
+    ? '含本部门及下属部门抢班次缺口'
+    : '含本部门及下属部门岗位缺口',
+)
+
+const gapWarn = computed(() =>
+  isGrabTab.value ? deptGap.value.shiftGap > 0 : deptGap.value.positionGap > 0,
+)
+
+function openGapTarget() {
+  router.push(isGrabTab.value ? '/enterprise-miniapp/grab-manage' : '/enterprise-miniapp/recruitment')
+}
 </script>
 
 <template>
@@ -172,7 +192,7 @@ const searchPlaceholder = computed(() =>
         :class="{ active: personnelTab === 'grab' }"
         @click="personnelTab = 'grab'"
       >
-        人员池
+        抢班人员
         <span class="tab-count">{{ poolTabCount }}</span>
       </button>
     </div>
@@ -200,13 +220,18 @@ const searchPlaceholder = computed(() =>
           <strong>{{ selectedDeptName }}</strong>
           <span>{{ listEmployees.length }} 人</span>
         </div>
-        <div v-if="selectedDeptId && !isUnassignedDept" class="dept-gap-card">
+        <button
+          v-if="selectedDeptId && !isUnassignedDept"
+          type="button"
+          class="dept-gap-card"
+          @click="openGapTarget"
+        >
           <div class="dept-gap-row">
             <span>部门缺口</span>
-            <strong :class="{ warn: deptGap.total > 0 }">{{ formatDepartmentGap(deptGap) }}</strong>
+            <strong :class="{ warn: gapWarn }">{{ gapValueText }}</strong>
           </div>
-          <p>含本部门及下属部门岗位缺口与抢班次缺口</p>
-        </div>
+          <p>{{ gapHint }}</p>
+        </button>
         <input v-model="keyword" class="search" type="search" :placeholder="searchPlaceholder" />
         <div v-if="!listEmployees.length" class="empty">{{ emptyText }}</div>
         <article v-for="e in listEmployees" :key="e.id" class="card">
@@ -218,6 +243,7 @@ const searchPlaceholder = computed(() =>
             </div>
             <p>{{ e.position || '未设岗位' }}{{ e.phone ? ` · ${e.phone}` : '' }}</p>
             <p class="sub">{{ e.deptName }}</p>
+            <p class="sub">入驻日期：{{ e.hireDate || '—' }}</p>
           </div>
         </article>
       </section>
@@ -359,6 +385,13 @@ const searchPlaceholder = computed(() =>
   color: #9ca3af;
 }
 .dept-gap-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
   background: #fff;
   border-radius: 12px;
   padding: 10px 12px;

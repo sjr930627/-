@@ -622,12 +622,14 @@ export type InsuranceProductType = 'accident' | 'employer_liability' | 'comprehe
 export interface InsuranceProduct {
   id: string
   name: string
+  /** 产品方案 ID（后台维护） */
+  planId?: string
   code: string
   type: InsuranceProductType
   provider: string
   /** 日保费（元） */
   dailyPremium: number
-  /** 保额（万元） */
+  /** 产品额度（万元） */
   coverageAmount: number
   description: string
   /** C 端上班打卡后自动投保 */
@@ -647,6 +649,8 @@ export interface InsurancePolicy {
   effectiveTime: string
   expireTime: string
   premium: number
+  /** 投保时的产品额度（万元），缺省时回退到产品当前额度 */
+  coverageAmount?: number
   status: InsurancePolicyStatus
   location?: string
   createdAt: string
@@ -740,6 +744,8 @@ export interface AttendanceRule {
 
 export type AttendanceGroupType = 'shift' | 'free' | 'none'
 export type AttendanceGroupStatus = 'enabled' | 'disabled'
+/** 投保规则：打卡投保 / 每日投保 */
+export type AttendanceGroupInsuranceRule = 'punch' | 'daily'
 export type FreePunchCountMode = 'clock_in_only' | 'clock_in_out'
 export type PricingValueMode = 'fixed' | 'multiplier'
 
@@ -866,6 +872,8 @@ export interface AttendanceGroup {
   description: string
   status: AttendanceGroupStatus
   attendanceType: AttendanceGroupType
+  /** 投保规则。未配置时按打卡投保 */
+  insuranceRule?: AttendanceGroupInsuranceRule
   shiftTemplates: AttendanceGroupShiftTemplate[]
   freePunchConfig?: FreePunchConfig
   gpsEnabled: boolean

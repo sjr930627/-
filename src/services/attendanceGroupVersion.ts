@@ -1,4 +1,8 @@
-import { attendanceGroupTypeMap } from '@/constants/attendanceGroup'
+import {
+  attendanceGroupInsuranceRuleMap,
+  attendanceGroupTypeMap,
+  normalizeAttendanceGroupInsuranceRule,
+} from '@/constants/attendanceGroup'
 import { formatDayShiftPeriod, formatNightShiftPeriod } from '@/constants/attendanceGroupPricing'
 import type {
   AttendanceGroup,
@@ -57,6 +61,7 @@ export function formatVersionTime(iso: string): string {
 export function summarizeVersionSnapshot(snapshot: AttendanceGroupVersionSnapshot): string[] {
   const lines: string[] = [
     `考勤类型：${attendanceGroupTypeMap[snapshot.attendanceType]}`,
+    `投保规则：${attendanceGroupInsuranceRuleMap[normalizeAttendanceGroupInsuranceRule(snapshot.insuranceRule)]}`,
     `状态：${snapshot.status === 'enabled' ? '启用' : '停用'}`,
   ]
 

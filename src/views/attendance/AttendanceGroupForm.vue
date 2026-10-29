@@ -27,7 +27,7 @@ import {
   resolveGrabShiftWorkHoursFromTimes,
 } from '@/services/grabShift'
 import { countDepartmentScheduleAndGrab, generateId, getDepartmentManagerNames, getDepartmentPath } from '@/utils'
-import { formatVersionLabel } from '@/constants/attendanceGroup'
+import { formatVersionLabel, normalizeAttendanceGroupInsuranceRule } from '@/constants/attendanceGroup'
 import {
   REGION_CASCADER_OPTIONS,
   applyRegionPath,
@@ -97,6 +97,7 @@ const form = ref<Omit<AttendanceGroup, 'id' | 'code' | 'createdAt' | 'updatedAt'
   description: '',
   status: 'enabled',
   attendanceType: 'shift',
+  insuranceRule: 'punch',
   shiftTemplates: [emptyShift()],
   freePunchConfig: createDefaultFreePunchConfig(),
   gpsEnabled: true,
@@ -173,6 +174,7 @@ function ensureFreePunchConfig() {
 
 function hydrateForm(source: AttendanceGroup) {
   form.value = JSON.parse(JSON.stringify(source))
+  form.value.insuranceRule = normalizeAttendanceGroupInsuranceRule(form.value.insuranceRule)
   form.value.compliance = normalizeAttendanceGroupCompliance(form.value.compliance)
   form.value.shiftTemplates = (form.value.shiftTemplates ?? []).map((tpl) => {
     const normalized = normalizeAttendanceShiftTemplateBreak(tpl)
@@ -437,6 +439,7 @@ function validate() {
 
 function preparePayload() {
   const payload = { ...form.value }
+  payload.insuranceRule = normalizeAttendanceGroupInsuranceRule(payload.insuranceRule)
   payload.shiftTemplates = (payload.shiftTemplates ?? []).map((tpl) => {
     const normalized = normalizeAttendanceShiftTemplateBreak(tpl)
     return {
@@ -579,6 +582,12 @@ function confirmSaveTemplate() {
             <el-radio value="shift">排班制</el-radio>
             <el-radio value="free">自由打卡</el-radio>
             <el-radio value="none">无需打卡</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="投保规则">
+          <el-radio-group v-model="form.insuranceRule">
+            <el-radio value="punch">打卡投保</el-radio>
+            <el-radio value="daily">每日投保</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>

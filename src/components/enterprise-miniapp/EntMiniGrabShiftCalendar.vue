@@ -210,6 +210,18 @@ function toggleExpanded() {
   calendarExpanded.value = !calendarExpanded.value
 }
 
+function slotStatusText(slot: GrabShiftCalendarSlot) {
+  if (slot.publishStatus === 'pending') return '待审核'
+  if (slot.publishStatus === 'rejected') return '已驳回'
+  return slot.statusLabel
+}
+
+function slotStatusClass(slot: GrabShiftCalendarSlot) {
+  if (slot.publishStatus === 'pending') return 'pending'
+  if (slot.publishStatus === 'rejected') return 'rejected'
+  return slot.statusClass || (slot.status === 'partial' ? 'open' : slot.status)
+}
+
 const selectedDateLabel = computed(() => {
   if (!props.selectedDate) return ''
   const d = dayjs(props.selectedDate)
@@ -291,7 +303,7 @@ const selectedDateLabel = computed(() => {
       <span class="expand-icon" :class="{ up: calendarExpanded }">›</span>
     </button>
 
-    <button type="button" class="add-btn" @click="emit('addDemand')">+ 新增需求</button>
+    <button type="button" class="add-btn" @click="emit('addDemand')">+ 发布抢班</button>
 
     <section v-if="selectedDate" class="day-slots">
       <h3 class="day-slots-title">{{ selectedDateLabel }} 抢班班次</h3>
@@ -305,7 +317,7 @@ const selectedDateLabel = computed(() => {
       >
         <div class="slot-card-top">
           <strong>{{ s.positionName || s.displayShiftName }}</strong>
-          <span class="status" :class="s.statusClass || (s.status === 'partial' ? 'open' : s.status)">{{ s.statusLabel }}</span>
+          <span class="status" :class="slotStatusClass(s)">{{ slotStatusText(s) }}</span>
         </div>
         <p>{{ s.displayShiftName }} · {{ s.startTime }}-{{ s.endTime }}</p>
         <p class="slot-card-sub">{{ s.departmentDisplayName }} · {{ s.teamName }}</p>
@@ -653,6 +665,16 @@ const selectedDateLabel = computed(() => {
 }
 
 .slot-card-top .status.open {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.slot-card-top .status.pending {
+  background: #fffbeb;
+  color: #d97706;
+}
+
+.slot-card-top .status.rejected {
   background: #fef2f2;
   color: #dc2626;
 }

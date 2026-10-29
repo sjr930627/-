@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAppStore } from '@/stores/app'
 import { getEnterpriseReviewNode } from '@/services/task'
+import { resolveTaskCustomerAmount } from '@/constants/task'
 
 const store = useAppStore()
 
@@ -19,10 +20,14 @@ const pendingList = computed(() =>
       const reviewNode = getEnterpriseReviewNode(wf)
       return reviewNode && i.currentNodeId === reviewNode.id
     })
-    .map((i) => ({
-      ...i,
-      submittedAt: new Date(i.updatedAt).toLocaleString('zh-CN'),
-    })),
+    .map((i) => {
+      const task = store.tasks.find((t) => t.id === i.taskId)
+      return {
+        ...i,
+        amount: (task && resolveTaskCustomerAmount(task, i.claimQuantity)) ?? i.amount,
+        submittedAt: new Date(i.updatedAt).toLocaleString('zh-CN'),
+      }
+    }),
 )
 
 const historyList = computed(() =>
@@ -41,14 +46,18 @@ const historyList = computed(() =>
       )
     })
     .slice(0, 20)
-    .map((i) => ({
-      ...i,
-      result:
-        i.currentNodeName.includes('已完成') || i.currentNodeName.includes('已结算')
-          ? '已通过'
-          : '已驳回',
-      time: new Date(i.updatedAt).toLocaleString('zh-CN'),
-    })),
+    .map((i) => {
+      const task = store.tasks.find((t) => t.id === i.taskId)
+      return {
+        ...i,
+        amount: (task && resolveTaskCustomerAmount(task, i.claimQuantity)) ?? i.amount,
+        result:
+          i.currentNodeName.includes('已完成') || i.currentNodeName.includes('已结算')
+            ? '已通过'
+            : '已驳回',
+        time: new Date(i.updatedAt).toLocaleString('zh-CN'),
+      }
+    }),
 )
 
 async function review(id: string, approved: boolean) {

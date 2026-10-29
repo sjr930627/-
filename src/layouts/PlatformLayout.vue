@@ -123,18 +123,6 @@ const menuGroups: MenuGroup[] = [
       { path: '/payroll/invoices', title: '发票管理', icon: 'Ticket' },
     ],
   },
-  {
-    index: 'statistics',
-    title: '数据分析',
-    icon: 'DataAnalysis',
-    children: [
-      { path: '/statistics/shift', title: '班次统计', icon: 'Calendar' },
-      { path: '/statistics/attendance', title: '考勤分析', icon: 'Timer' },
-      { path: '/statistics/task', title: '任务分析', icon: 'Finished' },
-      { path: '/statistics/settlement/enterprise', title: '企业结算分析', icon: 'Wallet' },
-      { path: '/statistics/settlement/worker', title: '灵工结算分析', icon: 'Money' },
-    ],
-  },
 ]
 
 const activeMenu = computed(() => route.path)

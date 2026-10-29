@@ -79,6 +79,40 @@ export function normalizeConfirmStatus(
   return status in confirmStatusMap ? status : undefined
 }
 
+/** 纯休息不是班次。请假仍占用 shift_rest，但不算休息班次。 */
+export function isRestOnlyAssignment(
+  asn: { shiftId?: string; note?: string } | null | undefined,
+  shift?: { code?: string; name?: string } | null,
+) {
+  if (!asn?.shiftId) return false
+  if (asn.note?.includes('请假')) return false
+  if (asn.shiftId === 'shift_rest') return true
+  return shift?.code === 'REST' || shift?.name === '休息'
+}
+
+/**
+ * 排班展示：休息日视为未排班。
+ * 若记录被误标成休息、但来自抢班工作班次，则按抢班班次展示。
+ */
+export function presentScheduleAssignment<
+  T extends { shiftId: string; note?: string; fromGrabSlotId?: string },
+>(
+  asn: T | undefined,
+  shifts: { id: string; code?: string; name?: string }[],
+  grabSlots: { id: string; shiftId?: string }[] = [],
+): T | undefined {
+  if (!asn) return undefined
+  const shift = shifts.find((s) => s.id === asn.shiftId)
+  if (!isRestOnlyAssignment(asn, shift)) return asn
+  const slotShiftId = asn.fromGrabSlotId
+    ? grabSlots.find((s) => s.id === asn.fromGrabSlotId)?.shiftId
+    : undefined
+  if (!slotShiftId || slotShiftId === 'shift_rest') return undefined
+  const slotShift = shifts.find((s) => s.id === slotShiftId)
+  if (isRestOnlyAssignment({ shiftId: slotShiftId }, slotShift)) return undefined
+  return { ...asn, shiftId: slotShiftId }
+}
+
 /** 已发布且灵工已确认的排班不可直接编辑（需走取消班次） */
 export function isAssignmentConfirmedLocked(
   asn: { published?: boolean; confirmStatus?: keyof typeof confirmStatusMap | 'confirming' } | null | undefined,

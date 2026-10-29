@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Bell } from '@element-plus/icons-vue'
 import { useAppStore } from '@/stores/app'
+import { classifyEnterpriseMiniMessage } from '@/constants/enterpriseMiniMessage'
 
 withDefaults(
   defineProps<{
@@ -16,7 +17,9 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 
-const unreadCount = computed(() => store.unreadNotificationCount)
+const unreadCount = computed(
+  () => store.notifications.filter((message) => !message.read && classifyEnterpriseMiniMessage(message)).length,
+)
 
 const hidden = computed(
   () =>

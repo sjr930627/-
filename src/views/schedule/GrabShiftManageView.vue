@@ -56,6 +56,7 @@ const router = useRouter()
 const { enterpriseFilter, matchesEnterprise, enterpriseName, showEnterpriseControl } =
   useEnterpriseScope('filter')
 
+const isEnterpriseSide = computed(() => route.path.startsWith('/enterprise'))
 const selectedGroupId = ref('ag_factory')
 const publishDepartmentId = ref('')
 const listDeptFilter = ref<'all' | string>('all')
@@ -68,6 +69,7 @@ const publishVisible = ref(false)
 const detailVisible = ref(false)
 const reviewVisible = ref(false)
 const whitelistVisible = ref(false)
+const whitelistAddVisible = ref(false)
 const currentSlot = ref<GrabShiftSlot | null>(null)
 const reviewNote = ref('')
 const reviewForm = ref({
@@ -652,7 +654,7 @@ const whitelistCandidateOptions = computed(() =>
     )
     .map((e) => ({
       value: e.id,
-      label: `${e.name}（${e.employeeNo}）`,
+      label: `${e.name} · ${e.phone || '—'} · ${e.position || '未设岗位'}`,
     })),
 )
 
@@ -829,13 +831,20 @@ function submitPublish() {
     }),
   )
   publishVisible.value = false
-  activeTab.value = 'publish'
+  activeTab.value = isEnterpriseSide.value ? 'slots' : 'publish'
   ElMessage.success('已提交发布审批，通过后将上架小程序')
 }
 
 function openWhitelist() {
-  whitelistForm.value = { employeeId: whitelistCandidateOptions.value[0]?.value ?? '', remark: '' }
   whitelistVisible.value = true
+}
+
+function openWhitelistAdd() {
+  whitelistForm.value = {
+    employeeId: whitelistCandidateOptions.value[0]?.value ?? '',
+    remark: '',
+  }
+  whitelistAddVisible.value = true
 }
 
 function submitWhitelist() {
@@ -851,6 +860,7 @@ function submitWhitelist() {
       createdBy: '排班员',
     })
     whitelistForm.value = { employeeId: '', remark: '' }
+    whitelistAddVisible.value = false
     ElMessage.success('已加入白名单，该人员抢班报名将免审批')
   } catch (e) {
     ElMessage.warning(e instanceof Error ? e.message : '添加失败')
@@ -987,7 +997,7 @@ function onReviewPositionSelect(positionId: string) {
 }
 
 function onCalendarSlotClick(slot: GrabShiftSlot) {
-  if (slot.publishStatus === 'pending') {
+  if (!isEnterpriseSide.value && slot.publishStatus === 'pending') {
     openPublishReview(slot)
     return
   }
@@ -1126,9 +1136,13 @@ watch(
     if (store.attendanceGroups.some((g) => g.id === slot.attendanceGroupId)) {
       selectedGroupId.value = slot.attendanceGroupId
     }
-    activeTab.value = slot.publishStatus === 'pending' ? 'publish' : 'slots'
-    if (slot.publishStatus === 'pending') openPublishReview(slot)
-    else showSlotDetail(slot)
+    if (slot.publishStatus === 'pending' && !isEnterpriseSide.value) {
+      activeTab.value = 'publish'
+      openPublishReview(slot)
+    } else {
+      activeTab.value = 'slots'
+      showSlotDetail(slot)
+    }
   },
   { immediate: true },
 )
@@ -1136,7 +1150,9 @@ watch(
 watch(
   () => route.query.tab,
   (tab) => {
-    if (tab === 'publish' || tab === 'slots' || tab === 'calendar' || tab === 'approval') {
+    if (tab === 'publish' && isEnterpriseSide.value) {
+      activeTab.value = 'slots'
+    } else if (tab === 'publish' || tab === 'slots' || tab === 'calendar' || tab === 'approval') {
       activeTab.value = tab
     }
   },
@@ -1149,7 +1165,10 @@ watch(
     <header class="page-card page-header">
       <div>
         <h2 class="page-title">抢班管理</h2>
-        <p class="text-muted">
+        <p v-if="isEnterpriseSide" class="text-muted">
+          发布后等待运营后台审批 · 发布待审 {{ pendingPublishCount }} · 报名待审 {{ pendingCount }}
+        </p>
+        <p v-else class="text-muted">
           待审班次可改内容与费用后发布到大厅 · 发布待审 {{ pendingPublishCount }} · 报名待审
           {{ pendingCount }}
         </p>
@@ -1289,7 +1308,7 @@ watch(
             <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
                 <el-button
-                  v-if="row.publishStatus === 'pending'"
+                  v-if="!isEnterpriseSide && row.publishStatus === 'pending'"
                   link
                   type="warning"
                   @click="openPublishReview(row)"
@@ -1310,7 +1329,7 @@ watch(
           </el-table>
         </el-tab-pane>
 
-        <el-tab-pane :label="`发布审批 (${pendingPublishCount})`" name="publish">
+        <el-tab-pane v-if="!isEnterpriseSide" :label="`发布审批 (${pendingPublishCount})`" name="publish">
           <el-alert
             type="info"
             :closable="false"
@@ -1399,7 +1418,16 @@ watch(
     </div>
 
     <el-dialog v-model="publishVisible" title="发布抢班" width="620px">
-      <el-alert type="info" :closable="false" title="提交后进入「抢班管理 · 发布审批」；发布时可配置报名上浮（人数/百分比），审核通过后上架小程序" style="margin-bottom: 16px" />
+      <el-alert
+        type="info"
+        :closable="false"
+        :title="
+          isEnterpriseSide
+            ? '提交后进入待审核，审核通过后上架小程序；发布时可配置报名上浮（人数/百分比）'
+            : '提交后进入「抢班管理 · 发布审批」；发布时可配置报名上浮（人数/百分比），审核通过后上架小程序'
+        "
+        style="margin-bottom: 16px"
+      />
       <el-form label-width="108px">
         <el-form-item label="部门" required>
           <DepartmentLeafCascader
@@ -1593,7 +1621,7 @@ watch(
       </template>
     </el-dialog>
 
-    <el-dialog v-model="whitelistVisible" title="白名单管理" width="680px">
+    <el-dialog v-model="whitelistVisible" title="白名单管理" width="720px">
       <el-alert
         type="info"
         :closable="false"
@@ -1602,32 +1630,10 @@ watch(
       />
 
       <div class="whitelist-add-bar">
-        <el-select v-model="selectedGroupId" style="width: 180px" placeholder="考勤组">
+        <el-select v-model="selectedGroupId" style="width: 240px" placeholder="考勤组">
           <el-option v-for="g in groupList" :key="g.id" :label="g.name" :value="g.id" />
         </el-select>
-        <el-select
-          v-model="whitelistForm.employeeId"
-          filterable
-          placeholder="选择人员"
-          style="width: 220px"
-        >
-          <el-option
-            v-for="opt in whitelistCandidateOptions"
-            :key="opt.value"
-            :label="opt.label"
-            :value="opt.value"
-          />
-        </el-select>
-        <el-input
-          v-model="whitelistForm.remark"
-          placeholder="备注（可选）"
-          style="width: 200px"
-          maxlength="50"
-          show-word-limit
-        />
-        <el-button type="primary" :disabled="!whitelistCandidateOptions.length" @click="submitWhitelist">
-          添加
-        </el-button>
+        <el-button type="primary" @click="openWhitelistAdd">添加</el-button>
       </div>
 
       <el-table :data="whitelistTableData" border stripe style="margin-top: 16px">
@@ -1653,6 +1659,45 @@ watch(
         </el-table-column>
       </el-table>
       <el-empty v-if="!whitelistTableData.length" description="当前考勤组暂无白名单人员" />
+    </el-dialog>
+
+    <el-dialog v-model="whitelistAddVisible" title="添加白名单" width="480px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="人员" required>
+          <el-select
+            v-model="whitelistForm.employeeId"
+            filterable
+            placeholder="姓名 · 手机号 · 岗位"
+            style="width: 100%"
+            :disabled="!whitelistCandidateOptions.length"
+          >
+            <el-option
+              v-for="opt in whitelistCandidateOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input
+            v-model="whitelistForm.remark"
+            placeholder="备注（可选）"
+            maxlength="50"
+            show-word-limit
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="whitelistAddVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :disabled="!whitelistCandidateOptions.length"
+          @click="submitWhitelist"
+        >
+          确认添加
+        </el-button>
+      </template>
     </el-dialog>
 
     <el-drawer v-model="detailVisible" title="班次详情与报名记录" size="480px">

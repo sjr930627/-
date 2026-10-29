@@ -374,6 +374,31 @@ export function resolveTaskCustomerUnitPrice(task: {
   return task.fixedPrice ?? 0
 }
 
+/** 任务是否配置了客户单价 */
+export function hasTaskCustomerPrice(task: {
+  pricingMode?: 'fixed' | 'tiered'
+  fixedPrice?: number
+  tieredPrices?: { unitPrice: number }[]
+}): boolean {
+  if (task.pricingMode === 'tiered') return (task.tieredPrices?.length ?? 0) > 0
+  return typeof task.fixedPrice === 'number'
+}
+
+/** 客户侧金额：客户单价 × 数量。未配置客户单价时返回 null */
+export function resolveTaskCustomerAmount(
+  task: {
+    pricingMode?: 'fixed' | 'tiered'
+    fixedPrice?: number
+    tieredPrices?: { unitPrice: number }[]
+  },
+  quantity: number,
+): number | null {
+  if (!hasTaskCustomerPrice(task)) return null
+  const unit = resolveTaskCustomerUnitPrice(task)
+  const count = Number.isFinite(quantity) ? Math.max(0, quantity) : 0
+  return Math.round(unit * count * 100) / 100
+}
+
 /** 灵工结算单价：审批配置优先，否则回退客户单价 */
 export function resolveTaskSettlementUnitPrice(task: {
   settlementUnitPrice?: number

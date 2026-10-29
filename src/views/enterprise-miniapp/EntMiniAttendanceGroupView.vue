@@ -9,7 +9,6 @@ import {
   attendanceGroupStatusMap,
   attendanceGroupTypeMap,
   formatDeptBindings,
-  formatMinMonthlyHours,
   formatShiftPeriod,
   formatVersionLabel,
 } from '@/constants/attendanceGroup'
@@ -37,7 +36,8 @@ const groups = computed(() =>
         typeLabel: attendanceGroupTypeMap[g.attendanceType],
         statusLabel: attendanceGroupStatusMap[g.status],
         shiftPeriod: formatShiftPeriod(g),
-        minMonthlyLabel: formatMinMonthlyHours(g.minMonthlyOnlineHours),
+        shiftExtra:
+          g.attendanceType === 'shift' ? Math.max(0, g.shiftTemplates.length - 1) : 0,
         versionLabel:
           g.currentVersion > 0 ? formatVersionLabel(g.currentVersion) : '未发布',
         deptTags: depts.visible,
@@ -100,8 +100,10 @@ async function removeGroup(group: AttendanceGroup) {
           </div>
           <span class="status" :class="g.status">{{ g.statusLabel }}</span>
         </div>
-        <p class="meta">{{ g.typeLabel }} · {{ g.shiftPeriod }}</p>
-        <p class="meta">月最低 {{ g.minMonthlyLabel }} · {{ g.versionLabel }}</p>
+        <p class="meta">
+          {{ g.typeLabel }} · {{ g.shiftPeriod }}<span v-if="g.shiftExtra" class="shift-more">+{{ g.shiftExtra }}</span>
+        </p>
+        <p class="meta">{{ g.versionLabel }}</p>
         <div class="tags">
           <span v-for="d in g.deptTags" :key="d" class="tag">{{ d }}</span>
           <span v-if="g.deptExtra > 0" class="tag muted">+{{ g.deptExtra }}</span>
@@ -194,6 +196,17 @@ async function removeGroup(group: AttendanceGroup) {
   margin: 6px 0 0;
   font-size: 12px;
   color: #6b7280;
+}
+.shift-more {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  color: #6b7280;
+  vertical-align: 1px;
 }
 .tags {
   display: flex;

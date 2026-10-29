@@ -2,19 +2,17 @@
 import { onMounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { useWorkbenchTodos } from '@/composables/useWorkbenchTodos'
-import { usePortal } from '@/composables/usePortal'
 import WorkbenchMetricRow from '@/components/workbench/WorkbenchMetricRow.vue'
 import WorkbenchRecruitmentProgress from '@/components/workbench/WorkbenchRecruitmentProgress.vue'
 import WorkbenchTodoList from '@/components/workbench/WorkbenchTodoList.vue'
 import WorkbenchMessagePanel from '@/components/workbench/WorkbenchMessagePanel.vue'
 
 const store = useAppStore()
-const { isPlatform } = usePortal()
 const {
   flatTodos,
   metrics,
   recruitmentReminders,
-  platformMessages,
+  workbenchMessages,
 } = useWorkbenchTodos()
 
 onMounted(() => store.syncExceptions())
@@ -28,14 +26,14 @@ onMounted(() => store.syncExceptions())
 
     <WorkbenchMetricRow :metrics="metrics" />
 
-    <div class="workbench-grid" :class="{ 'single-col': !isPlatform }">
+    <div class="workbench-grid">
       <div class="grid-main">
         <WorkbenchRecruitmentProgress :reminders="recruitmentReminders" />
         <WorkbenchTodoList :todos="flatTodos" />
       </div>
 
-      <div v-if="isPlatform" class="grid-side">
-        <WorkbenchMessagePanel :messages="platformMessages" />
+      <div class="grid-side">
+        <WorkbenchMessagePanel :messages="workbenchMessages" />
       </div>
     </div>
   </div>
@@ -62,10 +60,6 @@ onMounted(() => store.syncExceptions())
   grid-template-columns: minmax(0, 1.4fr) minmax(300px, 0.9fr);
   gap: 16px;
   align-items: start;
-}
-
-.workbench-grid.single-col {
-  grid-template-columns: 1fr;
 }
 
 .grid-main,

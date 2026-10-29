@@ -24,6 +24,7 @@ import {
   cellKey,
   isScheduleHistoryDate,
   isScheduleShiftHistorical,
+  presentScheduleAssignment,
   type ScheduleTimeSegment,
 } from '@/constants/schedule'
 import {
@@ -61,11 +62,14 @@ const props = defineProps<{
   conflictMap?: Map<string, string[]>
   /** 已确认班次：置灰不可划线/清除 */
   isCellLocked?: (employeeId: string, date: string) => boolean
+  /** 已确认班次点击后交给父级打开取消班次，而不是只提示 */
+  enableCancel?: boolean
 }>()
 
 const emit = defineEmits<{
   enterEdit: []
   'update:selectedDate': [string]
+  lockedCell: [payload: { employeeId: string; date: string }]
 }>()
 
 const store = useAppStore()
@@ -235,7 +239,7 @@ function timeToMinutes(time: string) {
 }
 
 function getAssignment(employeeId: string, date: string) {
-  return (
+  const raw =
     store.assignments.find(
       (a) =>
         a.employeeId === employeeId &&
@@ -249,7 +253,7 @@ function getAssignment(employeeId: string, date: string) {
         a.date === date &&
         a.teamId === props.teamId,
     )
-  )
+  return presentScheduleAssignment(raw, store.shifts, store.grabShiftSlots)
 }
 
 function getAssignmentShift(employeeId: string, date: string) {
@@ -474,6 +478,11 @@ function isLocked(employeeId: string, date: string) {
   return Boolean(props.isCellLocked?.(employeeId, date))
 }
 
+/** 已确认且日期不早于今天，才提供取消班次入口 */
+function canOfferCancel(employeeId: string, date: string) {
+  return Boolean(props.enableCancel) && isLocked(employeeId, date) && !isScheduleHistoryDate(date)
+}
+
 function resolveDragSegment(startSlot: number, endSlot: number): ScheduleTimeSegment | null {
   const lo = Math.min(startSlot, endSlot)
   const hi = Math.max(startSlot, endSlot)
@@ -620,13 +629,27 @@ function upsertLineAssignment(employeeId: string, date: string, startTime: strin
   })
 }
 
+function notifyLockedCell(employeeId: string, date: string) {
+  if (!isLocked(employeeId, date)) {
+    if (isScheduleHistoryDate(date)) ElMessage.info('历史班次不可编辑')
+    return
+  }
+  if (props.enableCancel) {
+    emit('lockedCell', { employeeId, date })
+    return
+  }
+  ElMessage.info(
+    isScheduleHistoryDate(date) ? '历史班次不可编辑' : '该班次已确认，不可编辑，请走取消班次流程',
+  )
+}
+
 function onHourDown(employeeId: string, hour: number) {
   if (!props.editMode) {
     emit('enterEdit')
     return
   }
   if (isLocked(employeeId, props.selectedDate) || isScheduleHistoryDate(props.selectedDate)) {
-    ElMessage.info(isScheduleHistoryDate(props.selectedDate) ? '历史班次不可编辑' : '该班次已确认，不可编辑，请走取消班次流程')
+    notifyLockedCell(employeeId, props.selectedDate)
     return
   }
   draggingEmployeeId.value = employeeId
@@ -687,7 +710,7 @@ function onWeekDayDown(employeeId: string, dayIdx: number) {
   }
   const date = props.weekDates[dayIdx]
   if (date && (isLocked(employeeId, date) || isScheduleHistoryDate(date))) {
-    ElMessage.info(isScheduleHistoryDate(date) ? '历史班次不可编辑' : '该班次已确认，不可编辑，请走取消班次流程')
+    notifyLockedCell(employeeId, date)
     return
   }
   weekDraggingEmployeeId.value = employeeId
@@ -831,9 +854,16 @@ function resetDayDrag() {
   dragEndHour.value = null
 }
 
+function onShiftBarDown(employeeId: string, e: PointerEvent) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  if (isLocked(employeeId, props.selectedDate) || isScheduleHistoryDate(props.selectedDate)) {
+    notifyLockedCell(employeeId, props.selectedDate)
+  }
+}
+
 function clearLineDay(employeeId: string) {
   if (isLocked(employeeId, props.selectedDate)) {
-    ElMessage.info('该班次已确认，不可清除，请走取消班次流程')
+    notifyLockedCell(employeeId, props.selectedDate)
     return
   }
   store.removeAssignment(employeeId, props.selectedDate, false)
@@ -852,7 +882,11 @@ function clearLineWeek(employeeId: string) {
     cleared += 1
   })
   if (!cleared && skipped) {
-    ElMessage.info('均为已确认班次，不可清除，请走取消班次流程')
+    ElMessage.info(
+      props.enableCancel
+        ? '已确认班次请点击对应日期，发起取消班次'
+        : '均为已确认班次，不可清除，请走取消班次流程',
+    )
     return
   }
   ElMessage.success(
@@ -1100,6 +1134,7 @@ watch(
             class="shift-bar"
             :class="{ 'is-cross-day': bar.crossDay, 'is-readonly': bar.readonly }"
             :title="bar.readonly ? '前一日跨入，请切换到前一日修改' : bar.label"
+            @pointerdown.stop.prevent="bar.readonly ? undefined : onShiftBarDown(emp.id, $event)"
             :style="{
               left: bar.left,
               width: bar.width,
@@ -1110,7 +1145,18 @@ watch(
           </div>
         </div>
         <div class="act-col">
-          <el-tag v-if="isLocked(emp.id, selectedDate)" size="small" type="info">已确认</el-tag>
+          <template v-if="isLocked(emp.id, selectedDate)">
+            <el-tag size="small" type="info">已确认</el-tag>
+            <el-button
+              v-if="canOfferCancel(emp.id, selectedDate)"
+              link
+              type="danger"
+              size="small"
+              @click="notifyLockedCell(emp.id, selectedDate)"
+            >
+              取消班次
+            </el-button>
+          </template>
           <template v-else-if="editMode">
             <el-tag v-if="hasCarryOver(emp.id)" size="small" type="info" class="carry-tag" title="含前一日跨入凌晨班（只读）">
               昨续
@@ -1173,11 +1219,16 @@ watch(
             filled: getAssignment(emp.id, date),
             conflict: hasCellConflict(emp.id, date),
             locked: isLocked(emp.id, date),
+            'can-cancel': canOfferCancel(emp.id, date),
           }"
           :title="
-            isLocked(emp.id, date) || isScheduleHistoryDate(date)
-              ? isScheduleHistoryDate(date) ? '历史班次不可编辑' : '已确认，不可编辑'
-              : getCellConflictMessages(emp.id, date).join('；')
+            isLocked(emp.id, date)
+              ? canOfferCancel(emp.id, date)
+                ? '已确认，点击查看班次详情并发起取消班次'
+                : '已确认，不可编辑'
+              : isScheduleHistoryDate(date)
+                ? '历史班次不可编辑'
+                : getCellConflictMessages(emp.id, date).join('；')
           "
           @mousedown.prevent="onWeekDayDown(emp.id, dayIdx)"
           @mouseenter="onWeekDayEnter(emp.id, dayIdx)"
@@ -1193,6 +1244,15 @@ watch(
           >
             {{ getWeekCellLabel(emp.id, date) }}
           </div>
+          <button
+            v-if="canOfferCancel(emp.id, date)"
+            type="button"
+            class="cell-cancel"
+            @pointerdown.stop.prevent="notifyLockedCell(emp.id, date)"
+            @mousedown.stop.prevent
+          >
+            取消班次
+          </button>
         </div>
         <div class="act-col">
           <el-button v-if="editMode" link type="danger" size="small" @click="clearLineWeek(emp.id)">
@@ -1533,6 +1593,22 @@ watch(
 
 .day-cell.locked:hover {
   background: #f1f5f9 !important;
+}
+
+.day-cell.locked.can-cancel {
+  cursor: pointer;
+  flex-direction: column;
+}
+
+.cell-cancel {
+  margin-top: 2px;
+  border: none;
+  background: transparent;
+  color: #f56c6c;
+  font-size: 10px;
+  line-height: 1.2;
+  padding: 0;
+  cursor: pointer;
 }
 
 .conflict-block {

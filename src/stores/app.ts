@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { normalizeAttendanceGroupInsuranceRule } from '@/constants/attendanceGroup'
 import type {
   AttendanceException,
   AttendanceGroup,
@@ -319,7 +320,10 @@ import {
   getTeamsForAttendanceGroup,
 } from '@/services/scheduleGroup'
 import {
+  canAdminCancelInsurancePolicy,
   createPolicyFromPunch,
+  ensureInsurancePolicies,
+  ensureInsuranceProducts,
   findAutoInsuranceProduct,
   hasActivePolicyForDate,
   shouldAutoInsure,
@@ -575,6 +579,7 @@ export const useAppStore = defineStore('app', {
       (g): AttendanceGroup => {
         const normalized = {
           ...g,
+          insuranceRule: normalizeAttendanceGroupInsuranceRule(g.insuranceRule),
           pricingConfig:
             g.attendanceType === 'none'
               ? undefined
@@ -649,8 +654,13 @@ export const useAppStore = defineStore('app', {
       ),
       seedEnterpriseInvoiceProfiles,
     ),
-    insuranceProducts: loadFromStorage<InsuranceProduct[]>('insuranceProducts', seedInsuranceProducts),
-    insurancePolicies: loadFromStorage<InsurancePolicy[]>('insurancePolicies', seedInsurancePolicies),
+    insuranceProducts: ensureInsuranceProducts(
+      loadFromStorage<InsuranceProduct[]>('insuranceProducts', seedInsuranceProducts),
+    ),
+    insurancePolicies: ensureInsurancePolicies(
+      loadFromStorage<InsurancePolicy[]>('insurancePolicies', seedInsurancePolicies),
+      seedInsurancePolicies,
+    ),
     trainingMaterials: loadTrainingMaterials(),
     trainingMaterialCategories: loadTrainingMaterialCategories(),
     trainingCourses: trainingData.courses,
@@ -1872,6 +1882,8 @@ export const useAppStore = defineStore('app', {
       const team = this.teams.find((t) => t.id === record.teamId)
       if (!team) throw new Error('班组不存在')
 
+      let restored = 0
+      const drafts: ScheduleAssignment[] = []
       record.snapshot.forEach((item) => {
         const published = this.assignments.find(
           (a) =>
@@ -1883,8 +1895,8 @@ export const useAppStore = defineStore('app', {
         if (isAssignmentConfirmedLocked(published)) return
         if (isScheduleHistoryDate(item.date)) return
         if (isScheduleShiftHistorical(item.date, resolveAssignmentStartTime(item, this.shifts))) return
-        this.removeAssignment(item.employeeId, item.date, false)
-        this.upsertAssignment({
+        drafts.push({
+          id: generateId('asn'),
           employeeId: item.employeeId,
           shiftId: item.shiftId,
           date: item.date,
@@ -1893,9 +1905,17 @@ export const useAppStore = defineStore('app', {
           note: item.note,
           manualEdited: true,
         })
+        restored += 1
       })
-      this.persist('assignments')
-      return record.snapshot.length
+      if (drafts.length) {
+        const keys = new Set(drafts.map((item) => `${item.employeeId}_${item.date}`))
+        this.assignments = this.assignments.filter(
+          (a) => a.published || !keys.has(`${a.employeeId}_${a.date}`),
+        )
+        this.assignments.push(...drafts)
+        this.persist('assignments')
+      }
+      return restored
     },
 
     revertDraftForPeriod(teamId: string, dates: string[]) {
@@ -2100,10 +2120,79 @@ export const useAppStore = defineStore('app', {
 
     cancelInsurancePolicy(id: string) {
       const policy = this.insurancePolicies.find((p) => p.id === id)
-      if (!policy || policy.status !== 'active') return false
+      if (!policy) return { ok: false as const, message: '保单不存在' }
+      if (!canAdminCancelInsurancePolicy(policy)) {
+        return { ok: false as const, message: '仅支持当天投保后 2 小时内退保' }
+      }
       policy.status = 'cancelled'
       this.persist('insurancePolicies')
-      return true
+      return { ok: true as const, message: '保单已退保' }
+    },
+
+    addInsuranceProduct(data: {
+      name: string
+      planId: string
+      coverageAmount: number
+      description: string
+    }) {
+      const planId = data.planId.trim()
+      const name = data.name.trim()
+      if (!name) throw new Error('请填写产品名称')
+      if (!planId) throw new Error('请填写产品方案 ID')
+      if (!data.description.trim()) throw new Error('请填写产品介绍')
+      if (!(data.coverageAmount > 0)) throw new Error('请填写产品额度')
+      if (this.insuranceProducts.some((p) => (p.planId || p.code) === planId)) {
+        throw new Error('产品方案 ID 已存在')
+      }
+      const item = {
+        id: generateId('ins_prod'),
+        name,
+        planId,
+        code: planId,
+        type: 'accident' as const,
+        provider: '',
+        dailyPremium: 0,
+        coverageAmount: data.coverageAmount,
+        description: data.description.trim(),
+        autoOnPunch: false,
+        enabled: true,
+      }
+      this.insuranceProducts.unshift(item)
+      this.persist('insuranceProducts')
+      return item
+    },
+
+    updateInsuranceProduct(
+      id: string,
+      data: { name: string; planId: string; coverageAmount: number; description: string },
+    ) {
+      const product = this.insuranceProducts.find((p) => p.id === id)
+      if (!product) throw new Error('产品不存在')
+      const planId = data.planId.trim()
+      const name = data.name.trim()
+      if (!name) throw new Error('请填写产品名称')
+      if (!planId) throw new Error('请填写产品方案 ID')
+      if (!data.description.trim()) throw new Error('请填写产品介绍')
+      if (!(data.coverageAmount > 0)) throw new Error('请填写产品额度')
+      const duplicated = this.insuranceProducts.some(
+        (p) => p.id !== id && (p.planId || p.code) === planId,
+      )
+      if (duplicated) throw new Error('产品方案 ID 已存在')
+      product.name = name
+      product.planId = planId
+      product.coverageAmount = data.coverageAmount
+      product.description = data.description.trim()
+      this.persist('insuranceProducts')
+    },
+
+    removeInsuranceProduct(id: string) {
+      if (this.insurancePolicies.some((p) => p.productId === id)) {
+        throw new Error('该产品已有投保记录，无法删除')
+      }
+      const before = this.insuranceProducts.length
+      this.insuranceProducts = this.insuranceProducts.filter((p) => p.id !== id)
+      if (this.insuranceProducts.length === before) throw new Error('产品不存在')
+      this.persist('insuranceProducts')
     },
 
     removePunch(id: string) {
@@ -5215,6 +5304,7 @@ export const useAppStore = defineStore('app', {
       const seq = this.attendanceGroups.length + 1
       const item: AttendanceGroup = {
         ...data,
+        insuranceRule: normalizeAttendanceGroupInsuranceRule(data.insuranceRule),
         compliance: {
           enabled: data.compliance?.enabled === true,
           maxDailyHours: data.compliance?.maxDailyHours ?? 12,

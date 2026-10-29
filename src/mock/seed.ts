@@ -531,6 +531,7 @@ export const seedAssignmentsWithDemo: ScheduleAssignment[] = (() => {
   const grabAsn = items.find((a) => a.employeeId === 'emp_001' && a.date === '2026-07-28')
   if (grabAsn) {
     grabAsn.fromGrabSlotId = 'gs_001'
+    grabAsn.shiftId = 'shift_morning'
     grabAsn.published = true
     grabAsn.confirmStatus = 'confirmed'
   }

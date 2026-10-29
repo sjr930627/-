@@ -132,9 +132,6 @@ async function removeRow(row: EnterprisePosition) {
           <span v-if="row.profile.jobType">{{ row.profile.jobType }} · </span>
           {{ row.profile.description || '暂无岗位说明' }}
         </p>
-        <div v-if="row.profile.skills?.length" class="tags">
-          <em v-for="s in row.profile.skills" :key="s">{{ s }}</em>
-        </div>
       </div>
       <div class="acts">
         <button type="button" @click="openEdit(row)">编辑</button>
@@ -243,20 +240,6 @@ async function removeRow(row: EnterprisePosition) {
   font-size: 12px;
   color: #6b7280;
   line-height: 1.45;
-}
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 8px;
-}
-.tags em {
-  font-style: normal;
-  font-size: 11px;
-  color: #228BFF;
-  background: #D5E9FF;
-  border-radius: 999px;
-  padding: 2px 8px;
 }
 .acts {
   display: flex;

@@ -5,14 +5,20 @@ import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import {
+  buildExactInterviewTimes,
   cloneSchedule,
   emptyPositionProfile,
   emptyScheduleRule,
+  findDeptPosition,
   formatSchedulePreviewText,
+  formatSeatRuleLabel,
   grabInterviewRegStatusMap,
   normalizeDeptInterviewRule,
   profileFromTemplate,
+  resolveInterviewSlotsForSchedule,
+  resolvePositionSchedule,
   validateInterviewSchedule,
+  weekdayFromDate,
   deptRequiresInterview,
 } from '@/constants/grabInterview'
 import GrabInterviewScheduleEditor from '@/components/schedule/GrabInterviewScheduleEditor.vue'
@@ -29,6 +35,8 @@ import type {
   GrabInterviewRegStatus,
   GrabInterviewRegistration,
   GrabInterviewScheduleRule,
+  GrabInterviewSeatUnitMinutes,
+  GrabInterviewTimeSlot,
 } from '@/types'
 
 const store = useAppStore()
@@ -134,7 +142,7 @@ watch(
   { immediate: true },
 )
 
-const skillCatalog = computed(() => store.skillLibraryCatalog)
+const skillOptions = computed(() => store.skillLibraryOptions)
 
 function configuredPositionCount(departmentId: string) {
   const rule = config.value.deptRules.find((r) => r.departmentId === departmentId)
@@ -203,6 +211,7 @@ function openEditPosition(pos: GrabInterviewDeptPosition) {
   editingIsNew.value = false
   const draft = clonePosition(pos)
   if (!draft.schedule) draft.schedule = emptyScheduleRule()
+  if (!draft.profile.skills) draft.profile.skills = []
   editingPosition.value = draft
   editSheetOpen.value = true
 }
@@ -228,15 +237,6 @@ async function removePosition(pos: GrabInterviewDeptPosition) {
   } catch {
     /* cancel */
   }
-}
-
-function toggleSkill(skill: string) {
-  const pos = editingPosition.value
-  if (!pos) return
-  const list = pos.profile.skills ?? (pos.profile.skills = [])
-  const idx = list.indexOf(skill)
-  if (idx >= 0) list.splice(idx, 1)
-  else list.push(skill)
 }
 
 function applyTemplate(templateId: string) {
@@ -398,6 +398,121 @@ function markNoShow(row: GrabInterviewRegistration) {
   store.updateGrabInterviewRegistration(row.id, { status: 'no_show_cancelled' })
   ElMessage.success('已标记为未到面/取消面试')
 }
+
+const timeOpen = ref(false)
+const timeTarget = ref<GrabInterviewRegistration | null>(null)
+const timeForm = reactive({
+  interviewDate: '',
+  timeSlotId: '',
+  timeSlotLabel: '',
+  interviewExactTime: '',
+})
+
+const editingDeptRule = computed(() => {
+  if (!timeTarget.value) return null
+  const raw = config.value.deptRules.find((r) => r.departmentId === timeTarget.value!.departmentId)
+  return raw ? normalizeDeptInterviewRule(raw) : null
+})
+
+const editingRegPosition = computed(() => {
+  if (!timeTarget.value || !editingDeptRule.value) return null
+  return findDeptPosition(editingDeptRule.value, timeTarget.value.position) ?? null
+})
+
+const editingResolvedSchedule = computed(() => {
+  if (!editingDeptRule.value) return emptyScheduleRule()
+  return resolvePositionSchedule(editingDeptRule.value, editingRegPosition.value)
+})
+
+const editingRuleSlots = computed((): GrabInterviewTimeSlot[] => {
+  if (!timeTarget.value || !timeForm.interviewDate) return []
+  return resolveInterviewSlotsForSchedule(
+    editingResolvedSchedule.value,
+    weekdayFromDate(timeForm.interviewDate),
+  )
+})
+
+const exactTimeOptions = computed(() => {
+  const slot =
+    editingRuleSlots.value.find((s) => s.id === timeForm.timeSlotId) ?? editingRuleSlots.value[0]
+  if (!slot) return []
+  const unit = (editingResolvedSchedule.value.seatUnitMinutes ?? 30) as GrabInterviewSeatUnitMinutes
+  return buildExactInterviewTimes(slot, unit)
+})
+
+const seatRuleTip = computed(() => {
+  const schedule = editingResolvedSchedule.value
+  const seat = formatSeatRuleLabel(
+    (schedule.seatUnitMinutes ?? 30) as GrabInterviewSeatUnitMinutes,
+    schedule.seatsPerUnit ?? 1,
+  )
+  return editingRegPosition.value ? `${seat} · 岗位面试时间` : seat
+})
+
+watch(
+  () => timeForm.interviewDate,
+  () => {
+    if (!timeOpen.value) return
+    if (timeForm.timeSlotId && !editingRuleSlots.value.some((s) => s.id === timeForm.timeSlotId)) {
+      timeForm.timeSlotId = editingRuleSlots.value[0]?.id ?? ''
+      const first = editingRuleSlots.value[0]
+      timeForm.timeSlotLabel = first ? `${first.start}-${first.end}` : ''
+      timeForm.interviewExactTime = ''
+    }
+  },
+)
+
+watch(exactTimeOptions, (opts) => {
+  if (!timeOpen.value) return
+  if (opts.length && !opts.includes(timeForm.interviewExactTime)) {
+    timeForm.interviewExactTime = opts[0]
+  }
+})
+
+function openChangeTime(row: GrabInterviewRegistration) {
+  if (row.status !== 'pending') return
+  timeTarget.value = row
+  timeForm.interviewDate = row.interviewDate
+  timeForm.timeSlotId = row.timeSlotId ?? ''
+  timeForm.timeSlotLabel = row.timeSlotLabel
+  timeForm.interviewExactTime = row.interviewExactTime ?? ''
+  timeOpen.value = true
+}
+
+function closeChangeTime() {
+  timeOpen.value = false
+  timeTarget.value = null
+}
+
+function onPickSlot() {
+  const slot = editingRuleSlots.value.find((s) => s.id === timeForm.timeSlotId)
+  if (!slot) return
+  timeForm.timeSlotLabel = `${slot.start}-${slot.end}`
+  const unit = (editingResolvedSchedule.value.seatUnitMinutes ?? 30) as GrabInterviewSeatUnitMinutes
+  const opts = buildExactInterviewTimes(slot, unit)
+  timeForm.interviewExactTime = opts[0] ?? slot.start
+}
+
+function saveInterviewTime() {
+  if (!timeTarget.value) return
+  if (!timeForm.interviewDate || !timeForm.timeSlotLabel.trim()) {
+    ElMessage.warning('请选择面试日期与时段窗口')
+    return
+  }
+  if (!timeForm.interviewExactTime) {
+    ElMessage.warning('请选择准确面试时间')
+    return
+  }
+  store.updateGrabInterviewRegistration(timeTarget.value.id, {
+    interviewDate: timeForm.interviewDate,
+    timeSlotId: timeForm.timeSlotId || undefined,
+    timeSlotLabel: timeForm.timeSlotLabel.trim(),
+    interviewExactTime: timeForm.interviewExactTime,
+    weekday: weekdayFromDate(timeForm.interviewDate),
+  })
+  ElMessage.success('显示时间已更新')
+  closeChangeTime()
+}
 </script>
 
 <template>
@@ -498,6 +613,7 @@ function markNoShow(row: GrabInterviewRegistration) {
           <span class="status" :class="r.statusClass">{{ r.statusLabel }}</span>
         </div>
         <div v-if="r.status === 'pending'" class="btns">
+          <button type="button" class="time-btn" @click="openChangeTime(r)">配置显示时间</button>
           <button type="button" class="ghost" @click="markNoShow(r)">未到面</button>
           <button type="button" class="soft-btn" @click="openFeedback(r)">面试反馈</button>
         </div>
@@ -532,22 +648,22 @@ function markNoShow(row: GrabInterviewRegistration) {
         </select>
 
         <label>技能要求</label>
-        <p class="preview">从技能库选择</p>
-        <div v-for="category in skillCatalog" :key="category.title" class="skill-category">
-          <p class="skill-category-title">{{ category.title }}</p>
-          <div class="skill-tags">
-            <button
-              v-for="item in category.items"
-              :key="item.id"
-              type="button"
-              class="skill"
-              :class="{ on: editingPosition.profile.skills?.includes(item.name) }"
-              @click="toggleSkill(item.name)"
-            >
-              {{ item.name }}
-            </button>
-          </div>
-        </div>
+        <el-select
+          v-model="editingPosition.profile.skills"
+          class="skill-select"
+          multiple
+          filterable
+          collapse-tags
+          collapse-tags-tooltip
+          placeholder="请从技能库选择"
+        >
+          <el-option
+            v-for="s in skillOptions"
+            :key="s.id"
+            :label="s.name"
+            :value="s.name"
+          />
+        </el-select>
 
         <label>岗位要求</label>
         <textarea v-model="editingPosition.profile.requirements" rows="2" placeholder="任职要求" />
@@ -585,6 +701,32 @@ function markNoShow(row: GrabInterviewRegistration) {
         </button>
 
         <button type="button" class="submit" @click="savePosition">保存</button>
+      </div>
+    </div>
+
+    <!-- 配置显示时间 -->
+    <div v-if="timeOpen && timeTarget" class="sheet-mask" @click.self="closeChangeTime">
+      <div class="sheet">
+        <header>
+          <strong>配置显示时间 · {{ timeTarget.name }}</strong>
+          <button type="button" class="close" @click="closeChangeTime">×</button>
+        </header>
+        <label>面试日期</label>
+        <input v-model="timeForm.interviewDate" type="date">
+        <label>时段窗口</label>
+        <select v-if="editingRuleSlots.length" v-model="timeForm.timeSlotId" @change="onPickSlot">
+          <option v-for="s in editingRuleSlots" :key="s.id" :value="s.id">
+            {{ s.start }}-{{ s.end }}
+          </option>
+        </select>
+        <input v-else v-model="timeForm.timeSlotLabel" placeholder="如 09:00-10:00">
+        <label>准确面试时间</label>
+        <select v-if="exactTimeOptions.length" v-model="timeForm.interviewExactTime">
+          <option v-for="t in exactTimeOptions" :key="t" :value="t">{{ t }}</option>
+        </select>
+        <input v-else v-model="timeForm.interviewExactTime" type="time">
+        <p class="preview">{{ seatRuleTip }}</p>
+        <button type="button" class="submit" @click="saveInterviewTime">保存</button>
       </div>
     </div>
 
@@ -818,6 +960,7 @@ function markNoShow(row: GrabInterviewRegistration) {
 .primary,
 .ghost,
 .soft-btn,
+.time-btn,
 .submit {
   border-radius: 8px;
   font-size: 13px;
@@ -843,6 +986,13 @@ function markNoShow(row: GrabInterviewRegistration) {
   padding: 0 10px;
   border: 1px solid #c7d2fe;
   background: #D5E9FF;
+  color: #228BFF;
+}
+.time-btn {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #228BFF;
+  background: #fff;
   color: #228BFF;
 }
 .filters {
@@ -872,6 +1022,7 @@ function markNoShow(row: GrabInterviewRegistration) {
 .btns {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
 }
@@ -934,36 +1085,12 @@ function markNoShow(row: GrabInterviewRegistration) {
   padding: 10px;
   font-size: 14px;
 }
-.skill-category {
-  margin-bottom: 8px;
-}
-.skill-category-title {
-  margin: 0 0 6px;
-  font-size: 11px;
-  color: #9ca3af;
+.skill-select {
+  width: 100%;
 }
 .sheet label .required {
   color: #ef4444;
   font-style: normal;
-}
-.skill-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.skill {
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  border-radius: 999px;
-  height: 28px;
-  padding: 0 10px;
-  font-size: 12px;
-  color: #6b7280;
-}
-.skill.on {
-  border-color: #228BFF;
-  background: #228BFF;
-  color: #fff;
 }
 .scope-row {
   display: grid;

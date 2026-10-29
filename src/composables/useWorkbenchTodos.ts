@@ -14,7 +14,41 @@ import {
   countWorkbenchTodos,
   enrichFlatTodos,
 } from '@/services/workbenchTodos'
-import { normalizeWorkbenchMessageCategory } from '@/constants/workbenchMessage'
+import {
+  normalizeWorkbenchMessageCategory,
+  type WorkbenchMessageCategory,
+} from '@/constants/workbenchMessage'
+import type { Notification } from '@/types'
+
+function inferEnterpriseMessageCategory(
+  message: Pick<Notification, 'title' | 'content' | 'type'>,
+): WorkbenchMessageCategory | null {
+  const text = `${message.title} ${message.content}`
+  if (/合同/.test(text)) return 'contract'
+  if (/账单|资金|提现|发票/.test(text)) return 'fund'
+  if (
+    message.type === 'schedule' ||
+    message.type === 'attendance' ||
+    /班次|排班|抢班|工时|出勤|打卡/.test(text)
+  ) {
+    return 'shift'
+  }
+  return null
+}
+
+/** 企业工作台消息：班次 / 合同 / 资金，与运营后台同一套分类 */
+function toEnterpriseWorkbenchMessage(message: Notification): Notification | null {
+  if (message.portal === 'platform') return null
+  const normalized = normalizeWorkbenchMessageCategory(message.category)
+  if (normalized) {
+    if (message.portal && message.portal !== 'enterprise') return null
+    return normalized === message.category ? message : { ...message, category: normalized }
+  }
+  if (message.portal && message.portal !== 'enterprise') return null
+  const category = inferEnterpriseMessageCategory(message)
+  if (!category) return null
+  return { ...message, category }
+}
 
 export function useWorkbenchTodos() {
   const store = useAppStore()
@@ -64,8 +98,19 @@ export function useWorkbenchTodos() {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
   )
 
+  const enterpriseMessages = computed(() =>
+    store.notifications
+      .map((message) => toEnterpriseWorkbenchMessage(message))
+      .filter((message): message is Notification => message != null)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+  )
+
+  const workbenchMessages = computed(() =>
+    isEnterprise.value ? enterpriseMessages.value : platformMessages.value,
+  )
+
   const unreadMessageCount = computed(() =>
-    platformMessages.value.filter((m) => !m.read).length,
+    workbenchMessages.value.filter((m) => !m.read).length,
   )
 
   const todayCompleted = computed(() => {
@@ -117,6 +162,8 @@ export function useWorkbenchTodos() {
     recruitmentFunnel,
     departmentOpenRoles,
     platformMessages,
+    enterpriseMessages,
+    workbenchMessages,
     isPlatform,
     isEnterprise,
   }

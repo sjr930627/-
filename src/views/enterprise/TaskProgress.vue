@@ -8,6 +8,7 @@ import {
   isInstanceAtEnterpriseNode,
   resolveInstanceWorkflowStatus,
 } from '@/services/task'
+import { resolveTaskCustomerAmount } from '@/constants/task'
 import type { TaskInstance } from '@/types'
 
 const store = useAppStore()
@@ -34,6 +35,7 @@ function enrichInstance(i: TaskInstance) {
   const worker = store.employees.find((e) => e.id === i.workerId)
   return {
     ...i,
+    amount: (task && resolveTaskCustomerAmount(task, i.claimQuantity)) ?? i.amount,
     taskNo: task?.taskNo || '—',
     providerLabel: task?.serviceProviderName || '—',
     workflowName: workflow?.name ?? i.taskTypeName ?? '—',

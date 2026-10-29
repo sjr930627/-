@@ -195,7 +195,7 @@ export function buildDashboardAlerts(input: {
       level: 'urgent',
       title: `结算待付 ${pendingPay.length} 笔`,
       detail: `待付合计 ¥${amount.toLocaleString('zh-CN', { maximumFractionDigits: 0 })}`,
-      path: `${p}/statistics/settlement/enterprise`,
+      path: `${p}/payroll/bills`,
     })
   }
 

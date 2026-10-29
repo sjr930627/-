@@ -17,6 +17,7 @@ import {
   getStatusLabel,
   getStatusTagType,
   isDailyAttendanceVisible,
+  isGrabAssignment,
   type HoursConfirmSource,
 } from '@/services/attendance'
 
@@ -36,6 +37,7 @@ type HoursRow = {
   rowKey: string
   employeeId: string
   employeeName: string
+  phone: string
   date: string
   workHours: number
   scheduledHours: number
@@ -91,7 +93,12 @@ const tableData = computed(() => {
         ...d,
         rowKey: `${d.employeeId}_${d.date}`,
         employeeName: emp?.name ?? d.employeeId,
+        phone: emp?.phone || '—',
         shiftName,
+        shiftPeriod:
+          hoursSource === 'free_punch'
+            ? ''
+            : resolveShiftPeriod(d.employeeId, d.date, shift),
         hoursSource,
         hoursSourceLabel: getHoursConfirmSourceLabel(hoursSource),
         baselineLabel: getHoursBaselineLabel(hoursSource),
@@ -128,6 +135,26 @@ watch(date, () => {
 
 function shiftDay(delta: number) {
   date.value = dayjs(date.value).add(delta, 'day').format('YYYY-MM-DD')
+}
+
+function resolveShiftPeriod(
+  employeeId: string,
+  day: string,
+  shift?: { id: string; code: string; startTime: string; endTime: string },
+) {
+  if (!shift || shift.code === 'REST' || shift.code === 'FREE') return ''
+  const assignment = store.getAssignment(employeeId, day)
+  let start = shift.startTime
+  let end = shift.endTime
+  if (isGrabAssignment(assignment) && assignment?.fromGrabSlotId) {
+    const slot = store.grabShiftSlots.find((item) => item.id === assignment.fromGrabSlotId)
+    if (slot?.startTime) start = slot.startTime
+    if (slot?.endTime) end = slot.endTime
+  }
+  const startText = start.slice(0, 5)
+  const endText = end.slice(0, 5)
+  if (!startText || !endText || (startText === '00:00' && endText === '00:00')) return ''
+  return `${startText}-${endText}`
 }
 
 function toggleOne(rowKey: string, canConfirm: boolean) {
@@ -366,13 +393,18 @@ async function batchConfirm() {
               <span class="source-tag" :class="row.hoursSource">{{ row.hoursSourceLabel }}</span>
               <span class="tag" :class="row.tagType">{{ row.statusLabel }}</span>
             </div>
+            <p class="meta">手机号：{{ row.phone }}</p>
             <p class="meta">
               <template v-if="row.hoursSource === 'free_punch'">
                 无班次 · {{ row.baselineLabel }} {{ row.scheduledHours }}h
               </template>
               <template v-else>
-                {{ row.shiftName }} · {{ row.baselineLabel }} {{ row.scheduledHours }}h
+                {{ row.shiftName }}<template v-if="row.shiftPeriod"> · {{ row.shiftPeriod }}</template>
+                · {{ row.baselineLabel }} {{ row.scheduledHours }}h
               </template>
+            </p>
+            <p class="meta">
+              打卡时间：上班 {{ row.clockIn || '—' }} · 下班 {{ row.clockOut || '—' }}
             </p>
             <p class="hours">
               工时 <em>{{ row.workHours }}h</em>
@@ -407,7 +439,8 @@ async function batchConfirm() {
           <button type="button" class="close" @click="closeCorrection">×</button>
         </header>
         <p class="sheet-meta">
-          {{ correctionTarget.employeeName }} · {{ correctionTarget.date }} ·
+          {{ correctionTarget.employeeName }} · 手机号 {{ correctionTarget.phone }} ·
+          {{ correctionTarget.date }} ·
           {{ correctionTarget.hoursSourceLabel }} · {{ correctionTarget.baselineLabel }}
           {{ correctionTarget.scheduledHours }}h · 当前 {{ correctionTarget.workHours }}h
         </p>
@@ -433,7 +466,8 @@ async function batchConfirm() {
         </header>
 
         <p class="sheet-meta">
-          {{ confirmFlowRow.employeeName }} · {{ confirmFlowRow.date }} ·
+          {{ confirmFlowRow.employeeName }} · 手机号 {{ confirmFlowRow.phone }} ·
+          {{ confirmFlowRow.date }} ·
           {{ confirmFlowRow.hoursSourceLabel }} · {{ confirmFlowRow.baselineLabel }}
           {{ confirmFlowRow.scheduledHours }}h
         </p>

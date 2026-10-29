@@ -20,7 +20,7 @@ import {
   instanceWorkflowStatusMap,
   resolveInstanceWorkflowStatus,
 } from '@/services/task'
-import { resolveTaskSettlementUnitPrice } from '@/constants/task'
+import { hasTaskCustomerPrice, resolveTaskCustomerAmount, resolveTaskCustomerUnitPrice, resolveTaskSettlementUnitPrice } from '@/constants/task'
 import type { WorkflowActionConfig } from '@/types'
 
 const route = useRoute()
@@ -72,8 +72,17 @@ const timeoutHours = computed(() =>
 
 const unitPriceLabel = computed(() => {
   if (!task.value) return '-'
-  const price = resolveTaskSettlementUnitPrice(task.value)
-  return price != null ? `¥${price}/单` : '-'
+  if (isEnterprise.value && !hasTaskCustomerPrice(task.value)) return '-'
+  const price = isEnterprise.value
+    ? resolveTaskCustomerUnitPrice(task.value)
+    : resolveTaskSettlementUnitPrice(task.value)
+  return `¥${price}/单`
+})
+
+const displayAmount = computed(() => {
+  if (!instance.value) return 0
+  if (!isEnterprise.value || !task.value) return instance.value.amount
+  return resolveTaskCustomerAmount(task.value, instance.value.claimQuantity) ?? instance.value.amount
 })
 
 const canIntervene = computed(
@@ -234,7 +243,7 @@ async function executeCancel() {
             <el-descriptions-item label="当前节点">{{ instance.currentNodeName }}</el-descriptions-item>
             <el-descriptions-item label="认领数量">{{ instance.claimQuantity }} 单</el-descriptions-item>
             <el-descriptions-item label="任务单价">{{ unitPriceLabel }}</el-descriptions-item>
-            <el-descriptions-item label="预估金额">¥{{ instance.amount }}</el-descriptions-item>
+            <el-descriptions-item label="预估金额">¥{{ displayAmount }}</el-descriptions-item>
             <el-descriptions-item label="所属任务" :span="2">{{ task.name }}</el-descriptions-item>
             <el-descriptions-item v-if="task.region" label="任务地点" :span="2">
               {{ task.region }}

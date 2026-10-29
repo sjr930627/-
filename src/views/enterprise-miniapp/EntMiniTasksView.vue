@@ -12,6 +12,7 @@ import { useEnterpriseInstanceAction } from '@/composables/useEnterpriseInstance
 import {
   formatTaskQuantity,
   formatTaskRegionLabel,
+  resolveTaskCustomerAmount,
   resolveTaskPublishDepartmentScope,
   taskPublishScopeMap,
   taskPublishStatusMap,
@@ -107,8 +108,12 @@ function enrichInstance(i: TaskInstance) {
     meta: getEnterpriseActionUiMeta(a),
   }))
   const hasEnterpriseFields = getWorkflowFieldsForNode(workflow, i.currentNodeId).length > 0
+  const worker = store.employees.find((e) => e.id === i.workerId)
   return {
     ...i,
+    amount: (task && resolveTaskCustomerAmount(task, i.claimQuantity)) ?? i.amount,
+    taskNo: task?.taskNo || '—',
+    workerPhone: worker?.phone || '—',
     workflowStatus,
     statusLabel: statusMeta.label,
     statusType: statusMeta.type,
@@ -512,7 +517,9 @@ function handleAction(
               {{ row.pendingEnterprise ? '待我处理' : row.statusLabel }}
             </span>
           </div>
-          <p>{{ row.workerName }} · {{ row.currentNodeName }} · ¥{{ row.amount }}</p>
+          <p>任务ID：{{ row.taskNo }}</p>
+          <p>{{ row.workerName }} · {{ row.workerPhone }}</p>
+          <p>当前节点：{{ row.currentNodeName }} · ¥{{ row.amount }}</p>
           <div v-if="row.pendingEnterprise" class="actions" @click.stop>
             <button
               v-for="item in row.enterpriseActions"

@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
-import { formatVersionLabel } from '@/constants/attendanceGroup'
+import { formatVersionLabel, normalizeAttendanceGroupInsuranceRule } from '@/constants/attendanceGroup'
 import { isEnterpriseRootDepartment, isLeafDepartment, isUnassignedDepartment } from '@/constants/department'
 import {
   clonePricingConfig,
@@ -121,6 +121,7 @@ function emptyForm(): Omit<
     description: '',
     status: 'enabled',
     attendanceType: 'shift',
+    insuranceRule: 'punch',
     shiftTemplates: [emptyShift()],
     freePunchConfig: createDefaultFreePunchConfig(),
     gpsEnabled: true,
@@ -214,6 +215,7 @@ function hydrateFromGroup(group: AttendanceGroup) {
     description: group.description,
     status: group.status,
     attendanceType: group.attendanceType,
+    insuranceRule: normalizeAttendanceGroupInsuranceRule(group.insuranceRule),
     shiftTemplates: group.shiftTemplates,
     freePunchConfig: group.freePunchConfig,
     gpsEnabled: group.gpsEnabled,
@@ -518,6 +520,7 @@ function validate() {
 
 function preparePayload() {
   const payload = { ...form.value }
+  payload.insuranceRule = normalizeAttendanceGroupInsuranceRule(payload.insuranceRule)
   payload.shiftTemplates = (payload.shiftTemplates ?? []).map((tpl) => {
     const normalized = normalizeAttendanceShiftTemplateBreak(tpl)
     return {

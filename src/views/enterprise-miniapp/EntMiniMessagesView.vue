@@ -1,82 +1,107 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
 import { useAppStore } from '@/stores/app'
+import {
+  classifyEnterpriseMiniMessage,
+  entMiniMessageCategoryMap,
+  entMiniMessageTabs,
+  type EntMiniMessageTab,
+} from '@/constants/enterpriseMiniMessage'
 
-const router = useRouter()
 const store = useAppStore()
+const categoryFilter = ref<EntMiniMessageTab>('all')
+
+const allMessages = computed(() =>
+  store.notifications
+    .map((message) => {
+      const category = classifyEnterpriseMiniMessage(message)
+      return category ? { ...message, category } : null
+    })
+    .filter((message): message is NonNullable<typeof message> => message != null)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+)
 
 const messages = computed(() => {
-  const fromStore = store.notifications.slice(0, 30).map((n) => ({
-    id: n.id,
-    title: n.title,
-    content: n.content,
-    time: n.createdAt?.slice(0, 16).replace('T', ' ') || '',
-    unread: !n.read,
-  }))
-  if (fromStore.length) return fromStore
-  return [
-    {
-      id: 'm1',
-      title: '待确认工时提醒',
-      content: '今日有班次待确认工时，请及时处理',
-      time: '2026-07-27 09:00',
-      unread: true,
-    },
-    {
-      id: 'm2',
-      title: '面试安排通知',
-      content: '候选人面试将于今日进行，请关注进度',
-      time: '2026-07-27 08:30',
-      unread: true,
-    },
-    {
-      id: 'm3',
-      title: '抢班报名待审批',
-      content: '有新的抢班报名等待审批',
-      time: '2026-07-26 18:20',
-      unread: false,
-    },
-  ]
+  if (categoryFilter.value === 'all') return allMessages.value
+  return allMessages.value.filter((message) => message.category === categoryFilter.value)
 })
 
-onMounted(() => {
-  store.markAllNotificationsRead()
-})
+function formatTime(iso: string) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 16).replace('T', ' ')
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 function openItem(id: string) {
   store.markNotificationRead(id)
-  router.push('/enterprise-miniapp/attendance')
 }
 </script>
 
 <template>
   <div class="page">
     <EntMiniNavBar title="消息" back-to="/enterprise-miniapp/attendance" :show-message="false" />
+
+    <div class="tabs">
+      <button
+        v-for="tab in entMiniMessageTabs"
+        :key="tab.key"
+        type="button"
+        class="tab"
+        :class="{ active: categoryFilter === tab.key }"
+        @click="categoryFilter = tab.key"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
     <div class="list">
       <article
-        v-for="m in messages"
-        :key="m.id"
+        v-for="message in messages"
+        :key="message.id"
         class="item"
-        :class="{ unread: m.unread }"
-        @click="openItem(m.id)"
+        :class="{ unread: !message.read }"
+        @click="openItem(message.id)"
       >
-        <div v-if="m.unread" class="dot" />
+        <div v-if="!message.read" class="dot" />
         <div class="body">
           <div class="row">
-            <strong>{{ m.title }}</strong>
-            <span>{{ m.time }}</span>
+            <strong>{{ message.title }}</strong>
+            <span>{{ formatTime(message.createdAt) }}</span>
           </div>
-          <p>{{ m.content }}</p>
+          <p>{{ message.content }}</p>
+          <em>{{ entMiniMessageCategoryMap[message.category] }}</em>
         </div>
       </article>
-      <div v-if="!messages.length" class="empty">暂无消息</div>
+      <div v-if="!messages.length" class="empty">暂无该类消息</div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.tabs {
+  display: flex;
+  gap: 8px;
+  padding: 12px 12px 0;
+  overflow-x: auto;
+}
+.tab {
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: #fff;
+  color: #6b7280;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tab.active {
+  background: #228BFF;
+  color: #fff;
+  font-weight: 600;
+}
 .list {
   padding: 12px;
   display: flex;
@@ -90,6 +115,7 @@ function openItem(id: string) {
   display: flex;
   gap: 10px;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+  cursor: pointer;
 }
 .item.unread {
   background: #D5E9FF;
@@ -125,6 +151,13 @@ function openItem(id: string) {
   font-size: 12px;
   color: #6b7280;
   line-height: 1.45;
+}
+.body em {
+  display: inline-block;
+  margin-top: 6px;
+  font-style: normal;
+  font-size: 11px;
+  color: #228BFF;
 }
 .empty {
   padding: 48px 0;

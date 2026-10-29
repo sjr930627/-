@@ -44,6 +44,7 @@ const selectedSlot = ref<GrabShiftCalendarSlot | null>(null)
 
 const selectedGroupId = ref('')
 const whitelistForm = ref({ employeeId: '', remark: '' })
+const whitelistOpen = ref(false)
 
 const interviewConfig = computed(() =>
   store.ensureGrabInterviewConfig(enterpriseId.value || store.currentEnterpriseId),
@@ -225,7 +226,7 @@ const pendingApps = computed(() =>
       return {
         ...a,
         employeeName: emp?.name || a.employeeId,
-        employeeNo: emp?.employeeNo || '—',
+        phone: emp?.phone || '—',
         position: emp?.position || '—',
         shiftName: resolveGrabSlotShiftName(slot),
         positionName: slot.positionName || '—',
@@ -242,7 +243,7 @@ const pendingApps = computed(() =>
     id: string
     employeeId: string
     employeeName: string
-    employeeNo: string
+    phone: string
     position: string
     shiftName: string
     positionName: string
@@ -286,7 +287,7 @@ const whitelistCandidateOptions = computed(() =>
     )
     .map((e) => ({
       value: e.id,
-      label: `${e.name}（${e.employeeNo}）· ${e.position || '未设岗位'}`,
+      label: `${e.name} · ${e.phone || '—'} · ${e.position || '未设岗位'}`,
     })),
 )
 
@@ -526,12 +527,17 @@ function review(id: string, approved: boolean) {
   }
 }
 
-function addToWhitelist(employeeId: string, attendanceGroupId: string, silent = false) {
+function addToWhitelist(
+  employeeId: string,
+  attendanceGroupId: string,
+  silent = false,
+  remark?: string,
+) {
   try {
     store.addGrabShiftWhitelistEntry({
       attendanceGroupId,
       employeeId,
-      remark: '企业小程序添加',
+      remark: remark?.trim() || '企业小程序添加',
       createdBy: operatorName.value,
     })
     if (!silent) ElMessage.success('已加入白名单，后续抢班报名将免审批')
@@ -552,6 +558,22 @@ function reviewAndWhitelist(id: string, employeeId: string, attendanceGroupId: s
   }
 }
 
+function openWhitelist() {
+  if (!selectedGroupId.value) {
+    ElMessage.warning('请选择考勤组')
+    return
+  }
+  whitelistForm.value = {
+    employeeId: whitelistCandidateOptions.value[0]?.value ?? '',
+    remark: '',
+  }
+  whitelistOpen.value = true
+}
+
+function closeWhitelist() {
+  whitelistOpen.value = false
+}
+
 function submitWhitelist() {
   if (!selectedGroupId.value) {
     ElMessage.warning('请选择考勤组')
@@ -561,12 +583,18 @@ function submitWhitelist() {
     ElMessage.warning('请选择人员')
     return
   }
-  const ok = addToWhitelist(whitelistForm.value.employeeId, selectedGroupId.value)
+  const ok = addToWhitelist(
+    whitelistForm.value.employeeId,
+    selectedGroupId.value,
+    false,
+    whitelistForm.value.remark,
+  )
   if (ok) {
     whitelistForm.value = {
       employeeId: whitelistCandidateOptions.value[0]?.value ?? '',
       remark: '',
     }
+    closeWhitelist()
   }
 }
 
@@ -657,9 +685,10 @@ const publishPreviewRate = computed(() => {
       <div v-if="!pendingApps.length" class="empty">暂无待审批报名</div>
       <article v-for="a in pendingApps" :key="a.id" class="card">
         <strong>{{ a.employeeName }}</strong>
+        <p class="sub">手机号：{{ a.phone }}</p>
         <p>{{ a.date }} · {{ a.positionName }} · {{ a.shiftName }}</p>
         <p class="sub">
-          {{ a.departmentDisplayName }} · {{ a.employeeNo }} · 名额 {{ a.progress }}
+          {{ a.departmentDisplayName }} · 名额 {{ a.progress }}
         </p>
         <div class="btns">
           <button type="button" class="ghost" @click="review(a.id, false)">驳回</button>
@@ -682,28 +711,7 @@ const publishPreviewRate = computed(() => {
         <select v-model="selectedGroupId">
           <option v-for="g in groupList" :key="g.id" :value="g.id">{{ g.name }}</option>
         </select>
-      </div>
-      <div class="wl-add">
-        <select v-model="whitelistForm.employeeId">
-          <option value="" disabled>选择人员</option>
-          <option v-for="opt in whitelistCandidateOptions" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </option>
-        </select>
-        <input
-          v-model="whitelistForm.remark"
-          type="text"
-          maxlength="50"
-          placeholder="备注（可选）"
-        >
-        <button
-          type="button"
-          class="ok"
-          :disabled="!whitelistCandidateOptions.length"
-          @click="submitWhitelist"
-        >
-          添加
-        </button>
+        <button type="button" class="ok" @click="openWhitelist">添加</button>
       </div>
       <article v-for="w in whitelistTableData" :key="w.id" class="card wl-card">
         <div class="card-top">
@@ -719,6 +727,33 @@ const publishPreviewRate = computed(() => {
       </article>
       <div v-if="!whitelistTableData.length" class="empty">当前考勤组暂无白名单人员</div>
     </section>
+
+    <div v-if="whitelistOpen" class="sheet-mask" @click.self="closeWhitelist">
+      <div class="sheet">
+        <header>
+          <strong>添加白名单</strong>
+          <button type="button" class="close" @click="closeWhitelist">×</button>
+        </header>
+        <p class="sheet-hint">加入后，该人员报名抢班将自动通过</p>
+        <label>人员</label>
+        <select v-model="whitelistForm.employeeId" :disabled="!whitelistCandidateOptions.length">
+          <option v-if="!whitelistCandidateOptions.length" value="" disabled>暂无可添加人员</option>
+          <option v-for="opt in whitelistCandidateOptions" :key="opt.value" :value="opt.value">
+            {{ opt.label }}
+          </option>
+        </select>
+        <label>备注</label>
+        <input v-model="whitelistForm.remark" type="text" maxlength="50" placeholder="备注（可选）">
+        <button
+          type="button"
+          class="submit"
+          :disabled="!whitelistCandidateOptions.length"
+          @click="submitWhitelist"
+        >
+          确认添加
+        </button>
+      </div>
+    </div>
 
     <div v-if="slotDetailOpen && selectedSlot" class="sheet-mask slot-detail-mask" @click.self="closeSlotDetail">
       <div class="sheet slot-detail-sheet">
@@ -881,8 +916,6 @@ const publishPreviewRate = computed(() => {
 
 <style scoped>
 .wl-toolbar select,
-.wl-add select,
-.wl-add input,
 .sheet select,
 .sheet input,
 .sheet textarea {
@@ -1095,19 +1128,19 @@ const publishPreviewRate = computed(() => {
   opacity: 0.5;
 }
 .wl-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   margin-bottom: 8px;
 }
 .wl-toolbar select {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
+  width: auto;
 }
-.wl-add {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.wl-add .ok {
-  height: 36px;
+.wl-toolbar .ok {
+  flex-shrink: 0;
+  height: 34px;
 }
 .wl-card .ghost {
   flex-shrink: 0;

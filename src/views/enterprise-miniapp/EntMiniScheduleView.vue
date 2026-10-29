@@ -22,6 +22,8 @@ import {
   FLEX_SHIFT_COLOR,
   FLEX_SHIFT_ID,
   isAssignmentConfirmedLocked,
+  isRestOnlyAssignment,
+  presentScheduleAssignment,
   isScheduleHistoryDate,
   isScheduleFutureDate,
   isScheduleShiftHistorical,
@@ -113,7 +115,6 @@ const longPressOptions = [
   { id: 'shift_afternoon', label: '中班' },
   { id: 'shift_night', label: '夜班' },
   { id: FLEX_SHIFT_ID, label: '自定义' },
-  { id: 'shift_rest', label: '休息' },
   { id: 'leave', label: '请假' },
 ]
 
@@ -352,14 +353,20 @@ const enterpriseScopedAssignments = computed(() =>
   ),
 )
 
+function presentAssignment<T extends { shiftId: string; note?: string; fromGrabSlotId?: string }>(
+  asn: T | undefined,
+) {
+  return presentScheduleAssignment(asn, store.shifts, store.grabShiftSlots)
+}
+
 function getPublishedAssignment(employeeId: string, date: string) {
   const all = store.assignments.filter((a) => a.employeeId === employeeId && a.date === date)
-  return all.find((a) => a.published)
+  return presentAssignment(all.find((a) => a.published))
 }
 
 function getDraftAssignment(employeeId: string, date: string) {
   const all = store.assignments.filter((a) => a.employeeId === employeeId && a.date === date)
-  return all.find((a) => !a.published)
+  return presentAssignment(all.find((a) => !a.published))
 }
 
 function getAsn(employeeId: string, date: string) {
@@ -493,16 +500,69 @@ function shiftLabel(asn: ScheduleAssignment | undefined) {
   return formatLineAssignmentLabel(asn, shift ?? null) || shift?.name || '未排班'
 }
 
+/** 划线格 pointerdown 打开详情后，同一次点击会落到蒙层上，短时间忽略关闭 */
+let detailCloseGuardUntil = 0
+
 function openCellDetail(employeeId: string, date: string) {
+  detailCloseGuardUntil = Date.now() + 400
   cellDetail.value = { employeeId, date }
+}
+
+function closeCellDetail(force: boolean | Event = false) {
+  if (force !== true && Date.now() < detailCloseGuardUntil) return
+  cellDetail.value = null
+  cancelSheetOpen.value = false
+}
+
+function onLockedLineCell(payload: { employeeId: string; date: string }) {
+  openCellDetail(payload.employeeId, payload.date)
 }
 
 function openPublishRecord(record: SchedulePublishRecord) {
   selectedPublishRecord.value = record
 }
 
+function snapshotEmployee(employeeId: string) {
+  return store.employees.find((e) => e.id === employeeId)
+}
+
 function closePublishRecord() {
   selectedPublishRecord.value = null
+}
+
+async function restorePublishVersion(record: SchedulePublishRecord) {
+  if (!record.snapshot?.length) {
+    ElMessage.warning('该版本无快照数据')
+    return
+  }
+  const period =
+    record.periodStart && record.periodEnd
+      ? `${record.periodStart} ~ ${record.periodEnd}`
+      : record.month
+  try {
+    await ElMessageBox.confirm(
+      `将 V${record.version ?? '—'}（${period}）恢复为草稿，需再次发布才生效。已确认班次不会被覆盖。`,
+      '恢复版本',
+      { type: 'warning', confirmButtonText: '确认恢复', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    const count = store.restoreSchedulePublishVersion(record.id)
+    if (!count) {
+      ElMessage.warning('没有可恢复为草稿的班次，历史班次和已确认班次不会被覆盖')
+      return
+    }
+    if (record.periodStart) weekAnchor.value = record.periodStart
+    editMode.value = true
+    persistDraft()
+    selectedPublishRecord.value = null
+    publishLogOpen.value = false
+    ElMessage.success(`已将 V${record.version ?? ''} 恢复为草稿（${count} 条），请再次发布后生效`)
+  } catch (error) {
+    ElMessage.warning(error instanceof Error ? error.message : '恢复失败')
+  }
 }
 
 const detailEmployee = computed(() => {
@@ -530,14 +590,20 @@ const detailConfirmStatus = computed(() => {
   return normalizeConfirmStatus(detailPublishedAssignment.value.confirmStatus)
 })
 
-const detailIsLocked = computed(() => {
-  if (!cellDetail.value) return false
-  return isCellLocked(cellDetail.value.employeeId, cellDetail.value.date)
-})
-
 const detailIsHistory = computed(() => {
   if (!cellDetail.value) return false
   return isCellHistorical(cellDetail.value.employeeId, cellDetail.value.date)
+})
+
+/**
+ * 已确认的未来工作班次可取消。未来 = 今天及以后（含当天已开班）。
+ * 休息不是班次，不展示、不锁定、不可取消。
+ */
+const detailCanCancel = computed(() => {
+  if (!cellDetail.value || !detailPublishedAssignment.value) return false
+  if (isRestOnlyAssignment(detailPublishedAssignment.value)) return false
+  if (!isScheduleFutureDate(cellDetail.value.date, SCHEDULE_DEMO_TODAY)) return false
+  return isAssignmentConfirmedLocked(detailPublishedAssignment.value)
 })
 
 function avatarChar(name: string) {
@@ -571,24 +637,16 @@ function cellDisplay(employeeId: string, date: string) {
   const locked = isCellLocked(employeeId, date)
   const rejected = asn.published && normalizeConfirmStatus(asn.confirmStatus) === 'rejected'
 
-  if (asn.shiftId === 'shift_rest' || asn.note?.includes('请假')) {
-    if (asn.note?.includes('请假')) {
-      return {
-        kind: 'leave' as const,
-        short: '请假',
-        color: '#F59E0B',
-        soft: '#FEF3C7',
-        text: '#B45309',
-      }
-    }
+  if (asn.note?.includes('请假')) {
     return {
-      kind: 'rest' as const,
-      short: '休',
-      color: '#D1D5DB',
-      soft: '#F3F4F6',
-      text: '#9CA3AF',
+      kind: 'leave' as const,
+      short: '请假',
+      color: '#F59E0B',
+      soft: '#FEF3C7',
+      text: '#B45309',
     }
   }
+  if (isRestOnlyAssignment(asn, store.shifts.find((s) => s.id === asn.shiftId))) return null
 
   const brush = BRUSH_META.find((b) => b.id === asn.shiftId)
   const shift = store.shifts.find((s) => s.id === asn.shiftId)
@@ -646,7 +704,7 @@ function chipStyle(employeeId: string, date: string) {
   if (d.kind === 'leave') {
     return { background: d.soft, color: d.text, borderColor: d.color }
   }
-  return { background: d.soft, color: d.text, borderColor: 'transparent' }
+  return {}
 }
 
 const stats = computed(() => {
@@ -958,12 +1016,12 @@ function resolveActionTeams() {
 
 function openCancelShift() {
   if (!cellDetail.value || !detailPublishedAssignment.value) return
-  if (detailIsHistory.value) {
-    ElMessage.warning('历史班次不可取消')
-    return
-  }
-  if (!detailIsLocked.value) {
-    ElMessage.info('仅已确认班次需走取消班次流程')
+  if (!detailCanCancel.value) {
+    ElMessage.info(
+      isScheduleFutureDate(cellDetail.value.date, SCHEDULE_DEMO_TODAY)
+        ? '仅已确认班次需走取消班次流程'
+        : '历史班次不可取消',
+    )
     return
   }
   cancelForm.value = { reasonCode: 'business_change', reasonOther: '' }
@@ -1200,7 +1258,7 @@ onUnmounted(() => {
         <el-icon :size="20"><ArrowLeft /></el-icon>
       </button>
       <h1>划线排班</h1>
-      <button type="button" class="nav-more-text" @click="moreOpen = true">更多</button>
+      <span class="nav-spacer" aria-hidden="true" />
     </header>
 
     <div class="filter-bar">
@@ -1296,7 +1354,9 @@ onUnmounted(() => {
         default-scope="week"
         :conflict-map="conflictMap"
         :is-cell-locked="isCellLocked"
+        enable-cancel
         @enter-edit="enterEditMode"
+        @locked-cell="onLockedLineCell"
       />
     </div>
 
@@ -1360,7 +1420,10 @@ onUnmounted(() => {
                     <span class="avatar" :style="{ background: group.color }">
                       {{ avatarChar(emp.name) }}
                     </span>
-                    <span class="ename">{{ emp.name }}</span>
+                    <span class="name-text">
+                      <span class="ename">{{ emp.name }}</span>
+                      <span class="ephone">{{ emp.phone || '—' }}</span>
+                    </span>
                     <span v-if="empHasConflict(emp.id)" class="warn-dot">!</span>
                   </div>
                 </td>
@@ -1423,7 +1486,6 @@ onUnmounted(() => {
       <span v-for="b in brushes.slice(0, 3)" :key="b.id" class="lg">
         <i :style="{ background: b.color }" />{{ b.name }}
       </span>
-      <span class="lg"><i style="background: #e5e7eb" />休息</span>
       <span class="lg"><i style="background: #fde68a" />请假</span>
       <span class="lg"><i style="background: #ef4444" />冲突</span>
       <span
@@ -1545,7 +1607,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div v-if="cellDetail && detailEmployee" class="sheet-mask" @click="cellDetail = null">
+    <Teleport to="body">
+    <div v-if="cellDetail && detailEmployee" class="sheet-mask ent-mini-sheet-mask" @click.self="closeCellDetail">
       <div class="sheet detail-sheet" @click.stop>
         <h3>排班详情</h3>
         <div class="detail-row">
@@ -1581,8 +1644,8 @@ onUnmounted(() => {
           <span v-else-if="detailPublishedAssignment">—</span>
           <span v-else>—</span>
         </div>
-        <p v-if="detailIsLocked" class="detail-tip warn">
-          灵工已确认该班次，不可直接编辑，可通过取消班次处理。
+        <p v-if="detailCanCancel" class="detail-tip warn">
+          灵工已确认该班次，不可直接编辑，请发起取消班次。
         </p>
         <p v-else-if="detailIsHistory" class="detail-tip">
           该班次已过期，不可修改、取消或发布。
@@ -1590,55 +1653,65 @@ onUnmounted(() => {
         <p v-else-if="detailDraftAssignment && detailPublishedAssignment" class="detail-tip">
           存在未发布修改，重新发布后将通知灵工确认。
         </p>
-        <button
-          v-if="detailIsLocked && !detailIsHistory"
-          type="button"
-          class="sheet-primary danger"
-          @click="openCancelShift"
-        >
-          取消班次
-        </button>
-        <button type="button" class="sheet-cancel" @click="cellDetail = null">关闭</button>
-      </div>
-    </div>
-
-    <div v-if="cancelSheetOpen" class="sheet-mask" @click="cancelSheetOpen = false">
-      <div class="sheet" @click.stop>
-        <h3>发起取消班次</h3>
-        <p class="sheet-sub">
-          {{ detailEmployee?.name }} · {{ cellDetail?.date }} · {{ shiftLabel(detailPublishedAssignment) }}
-        </p>
-        <p class="detail-tip warn">取消通过后将移除该日排班</p>
-        <div class="reason-list">
-          <label
-            v-for="opt in CANCEL_SHIFT_REASON_OPTIONS"
-            :key="opt.value"
-            class="reason-item"
-            :class="{ active: cancelForm.reasonCode === opt.value }"
+        <div class="detail-actions">
+          <button
+            v-if="detailCanCancel"
+            type="button"
+            class="sheet-primary danger"
+            @click="openCancelShift"
           >
-            <input v-model="cancelForm.reasonCode" type="radio" :value="opt.value">
-            <span>{{ opt.label }}</span>
-          </label>
+            发起取消班次
+          </button>
+          <button type="button" class="sheet-cancel" @click="closeCellDetail(true)">关闭</button>
         </div>
-        <textarea
-          v-if="cancelForm.reasonCode === 'other'"
-          v-model="cancelForm.reasonOther"
-          class="reason-other"
-          rows="3"
-          maxlength="200"
-          placeholder="请填写其他取消原因"
-        />
-        <button
-          type="button"
-          class="sheet-primary danger"
-          :disabled="cancelSubmitting"
-          @click="submitCancelShift"
-        >
-          {{ cancelSubmitting ? '提交中…' : '提交取消' }}
-        </button>
-        <button type="button" class="sheet-cancel" @click="cancelSheetOpen = false">返回</button>
       </div>
     </div>
+    </Teleport>
+
+    <el-dialog
+      v-model="cancelSheetOpen"
+      title="发起取消班次"
+      width="92%"
+      class="ent-mini-cancel-dialog"
+      align-center
+      append-to-body
+    >
+      <el-alert
+        type="warning"
+        :closable="false"
+        title="已确认班次取消后将进入审批/记录明细，通过后灵工排班会被移除"
+        style="margin-bottom: 16px"
+      />
+      <el-form label-position="top">
+        <el-form-item label="取消原因" required>
+          <el-radio-group v-model="cancelForm.reasonCode" class="cancel-reason-group">
+            <el-radio
+              v-for="opt in CANCEL_SHIFT_REASON_OPTIONS"
+              :key="opt.value"
+              :value="opt.value"
+            >
+              {{ opt.label }}
+            </el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="cancelForm.reasonCode === 'other'" label="其他说明" required>
+          <el-input
+            v-model="cancelForm.reasonOther"
+            type="textarea"
+            :rows="3"
+            maxlength="200"
+            show-word-limit
+            placeholder="请填写其他取消原因"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cancelSheetOpen = false">取消</el-button>
+        <el-button type="danger" :loading="cancelSubmitting" @click="submitCancelShift">
+          提交申请
+        </el-button>
+      </template>
+    </el-dialog>
 
     <div v-if="publishLogOpen" class="sheet-mask" @click="publishLogOpen = false">
       <div class="sheet publish-sheet" @click.stop>
@@ -1649,22 +1722,26 @@ onUnmounted(() => {
           <strong v-else>未发布</strong>
         </p>
         <div v-if="!publishHistory.length" class="empty-inline">暂无发布记录</div>
-        <button
-          v-for="row in publishHistory"
-          :key="row.id"
-          type="button"
-          class="publish-row"
-          @click="openPublishRecord(row)"
-        >
-          <div class="publish-row-head">
-            <span v-if="row.version" class="ver">V{{ row.version }}</span>
-            <span class="time">{{ formatPublishTime(row.publishedAt) }}</span>
-          </div>
-          <div class="publish-row-meta">
-            {{ row.periodStart }} ~ {{ row.periodEnd }} · {{ row.assignmentCount }} 条 · {{ row.publishedBy }}
-          </div>
-          <div class="publish-row-note">{{ row.changeNote || '—' }}</div>
-        </button>
+        <div v-for="row in publishHistory" :key="row.id" class="publish-row">
+          <button type="button" class="publish-row-main" @click="openPublishRecord(row)">
+            <div class="publish-row-head">
+              <span v-if="row.version" class="ver">V{{ row.version }}</span>
+              <span class="time">{{ formatPublishTime(row.publishedAt) }}</span>
+            </div>
+            <div class="publish-row-meta">
+              {{ row.periodStart }} ~ {{ row.periodEnd }} · {{ row.assignmentCount }} 条 · {{ row.publishedBy }}
+            </div>
+            <div class="publish-row-note">{{ row.changeNote || '—' }}</div>
+          </button>
+          <button
+            type="button"
+            class="restore-btn"
+            :disabled="!row.snapshot?.length"
+            @click="restorePublishVersion(row)"
+          >
+            恢复
+          </button>
+        </div>
         <button type="button" class="sheet-cancel" @click="publishLogOpen = false">关闭</button>
       </div>
     </div>
@@ -1682,9 +1759,10 @@ onUnmounted(() => {
             class="snapshot-item"
           >
             <div class="snapshot-main">
-              <strong>{{ store.employees.find((e) => e.id === row.employeeId)?.name ?? row.employeeId }}</strong>
+              <strong>{{ snapshotEmployee(row.employeeId)?.name ?? row.employeeId }}</strong>
               <span>{{ row.date }}</span>
             </div>
+            <p class="snapshot-phone">手机号：{{ snapshotEmployee(row.employeeId)?.phone || '—' }}</p>
             <div class="snapshot-sub">
               {{ store.shifts.find((s) => s.id === row.shiftId)?.name ?? row.shiftId }}
               <span
@@ -1733,15 +1811,6 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-.nav-more-text {
-  height: 40px;
-  border: none;
-  background: transparent;
-  color: #228BFF;
-  font-size: 14px;
-  font-weight: 600;
-  padding: 0 8px;
 }
 .nav-spacer {
   width: 40px;
@@ -2057,8 +2126,8 @@ h1 {
   left: 0;
   z-index: 4;
   background: #fff;
-  min-width: 88px !important;
-  max-width: 96px;
+  min-width: 132px !important;
+  max-width: 148px;
   box-shadow: 2px 0 8px rgba(15, 23, 42, 0.04);
 }
 .head-person {
@@ -2103,6 +2172,12 @@ h1 {
   align-items: center;
   gap: 6px;
 }
+.name-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
 .name-cell.selected {
   background: #eff6ff;
 }
@@ -2122,6 +2197,14 @@ h1 {
   font-size: 13px;
   font-weight: 600;
   color: #111827;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ephone {
+  font-size: 10px;
+  font-weight: 400;
+  color: #9ca3af;
+  line-height: 1.2;
   white-space: nowrap;
 }
 .warn-dot {
@@ -2273,12 +2356,24 @@ h1 {
 }
 .publish-row {
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   text-align: left;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   background: #fff;
   padding: 10px 12px;
   margin-bottom: 8px;
+  box-sizing: border-box;
+}
+.publish-row-main {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
 }
 .publish-row-head {
   display: flex;
@@ -2313,6 +2408,11 @@ h1 {
   justify-content: space-between;
   font-size: 14px;
 }
+.snapshot-phone {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #9ca3af;
+}
 .snapshot-sub {
   margin-top: 4px;
   font-size: 12px;
@@ -2321,6 +2421,21 @@ h1 {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+}
+.restore-btn {
+  flex-shrink: 0;
+  border: none;
+  background: #EBF4FF;
+  color: #228BFF;
+  border-radius: 999px;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.restore-btn:disabled {
+  background: #f3f4f6;
+  color: #9ca3af;
 }
 .empty-inline {
   padding: 24px 0;
@@ -2554,9 +2669,23 @@ h1 {
 .sheet {
   width: 100%;
   max-width: 430px;
+  max-height: 85vh;
+  overflow-y: auto;
   background: #fff;
   border-radius: 16px 16px 0 0;
   padding: 16px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+.detail-actions {
+  position: sticky;
+  bottom: 0;
+  background: #fff;
+  padding-top: 8px;
+}
+.cancel-reason-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
 }
 .sheet h3 {
   margin: 0 0 10px;
@@ -2617,6 +2746,15 @@ h1 {
 .sheet-primary.danger {
   background: #ef4444;
 }
+.field-label {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #374151;
+  font-weight: 600;
+}
+.field-label .req {
+  color: #ef4444;
+}
 .reason-list {
   display: flex;
   flex-direction: column;
@@ -2659,5 +2797,15 @@ h1 {
   color: #b91c1c;
   border-radius: 10px;
   font-size: 13px;
+}
+</style>
+
+<style>
+.ent-mini-sheet-mask {
+  z-index: 2100;
+}
+.ent-mini-cancel-dialog.el-dialog {
+  width: min(92vw, 420px) !important;
+  max-width: 420px;
 }
 </style>

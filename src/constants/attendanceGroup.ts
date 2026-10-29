@@ -1,9 +1,24 @@
-import type { AttendanceGroupStatus, AttendanceGroupType } from '@/types'
+import type {
+  AttendanceGroupInsuranceRule,
+  AttendanceGroupStatus,
+  AttendanceGroupType,
+} from '@/types'
 
 export const attendanceGroupTypeMap: Record<AttendanceGroupType, string> = {
   shift: '排班制',
   free: '自由打卡',
   none: '无需打卡',
+}
+
+export const attendanceGroupInsuranceRuleMap: Record<AttendanceGroupInsuranceRule, string> = {
+  punch: '打卡投保',
+  daily: '每日投保',
+}
+
+export function normalizeAttendanceGroupInsuranceRule(
+  rule?: string | null,
+): AttendanceGroupInsuranceRule {
+  return rule === 'daily' ? 'daily' : 'punch'
 }
 
 export const attendanceGroupStatusMap: Record<AttendanceGroupStatus, string> = {

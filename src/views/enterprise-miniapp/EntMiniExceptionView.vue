@@ -15,6 +15,29 @@ import {
 type TabKey = 'makeup' | 'cancel'
 type FlowStep = 'correct' | 'confirm'
 
+interface ApprovalCard {
+  id: string
+  kind: 'makeup' | 'cancel'
+  kindLabel: string
+  employeeName: string
+  phone: string
+  headline: string
+  reason: string
+  extra?: string
+  status: string
+  statusLabel: string
+  reviewNote?: string
+  reviewedBy?: string
+  sortAt: string
+}
+
+const approvalStatusLabel: Record<string, string> = {
+  pending: '待审批',
+  approved: '已通过',
+  rejected: '已驳回',
+  cancelled: '已撤销',
+}
+
 interface PostMakeupContext {
   makeupId: string
   employeeId: string
@@ -94,6 +117,76 @@ const cancelPending = computed(() =>
     }))
     .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)),
 )
+
+function employeeOf(employeeId: string) {
+  return store.employees.find((e) => e.id === employeeId)
+}
+
+function employeeNameOf(employeeId: string) {
+  return employeeOf(employeeId)?.name || employeeId
+}
+
+function employeePhoneOf(employeeId: string) {
+  return employeeOf(employeeId)?.phone || '—'
+}
+
+const approvalCards = computed<ApprovalCard[]>(() => {
+  const makeup = store.makeupRequests
+    .filter((r) => enterpriseEmployeeIds.value.has(r.employeeId))
+    .map((r) => ({
+      id: r.id,
+      kind: 'makeup' as const,
+      kindLabel: '补卡',
+      employeeName: employeeNameOf(r.employeeId),
+      phone: employeePhoneOf(r.employeeId),
+      headline: `${r.date} ${r.time} · ${r.punchType === 'clock_in' ? '上班' : '下班'}补卡`,
+      reason: r.reason || '—',
+      status: r.status,
+      statusLabel: approvalStatusLabel[r.status] ?? r.status,
+      reviewNote: r.reviewNote,
+      reviewedBy: r.reviewedBy,
+      sortAt: r.reviewedAt || r.createdAt,
+    }))
+  const cancel = store.cancelShiftRequests
+    .filter((r) => enterpriseEmployeeIds.value.has(r.employeeId))
+    .map((r) => ({
+      id: r.id,
+      kind: 'cancel' as const,
+      kindLabel: '取消班次',
+      employeeName: employeeNameOf(r.employeeId),
+      phone: employeePhoneOf(r.employeeId),
+      headline: `${r.date} · ${store.shifts.find((s) => s.id === r.shiftId)?.name ?? '—'} · ${r.source === 'grab' ? '抢班' : '排班'}`,
+      reason: formatCancelShiftReason(r),
+      extra: r.initiatedBy === 'employee' ? '灵工申请' : '管理端发起',
+      status: r.status,
+      statusLabel: approvalStatusLabel[r.status] ?? r.status,
+      reviewNote: r.reviewNote,
+      reviewedBy: r.reviewedBy,
+      sortAt: r.reviewedAt || r.createdAt,
+    }))
+  return [...makeup, ...cancel].sort((a, b) => b.sortAt.localeCompare(a.sortAt))
+})
+
+function splitCards(kind: ApprovalCard['kind']) {
+  const rows = approvalCards.value.filter((card) => card.kind === kind)
+  const pending = rows.filter((card) => card.status === 'pending')
+  const done = rows.filter((card) => card.status !== 'pending')
+  return { pending, done }
+}
+
+const makeupCards = computed(() => splitCards('makeup'))
+const cancelCards = computed(() => splitCards('cancel'))
+
+function statusPillClass(status: string) {
+  if (status === 'approved') return 'ok'
+  if (status === 'rejected') return 'no'
+  return 'muted'
+}
+
+function reviewCard(card: ApprovalCard, approved: boolean) {
+  if (card.kind === 'makeup') reviewMakeup(card.id, approved)
+  else reviewCancel(card.id, approved)
+}
 
 function resolveDayHours(employeeId: string, date: string) {
   const rows = buildDailyAttendanceList(
@@ -319,48 +412,81 @@ function skipConfirmLater() {
         :class="{ active: tab === 'makeup' }"
         @click="switchTab('makeup')"
       >
-        补卡申请{{ makeupPending.length ? ` ${makeupPending.length}` : '' }}
+        补卡{{ makeupCards.pending.length ? ` ${makeupCards.pending.length}` : '' }}
       </button>
       <button
         type="button"
         :class="{ active: tab === 'cancel' }"
         @click="switchTab('cancel')"
       >
-        取消班次{{ cancelPending.length ? ` ${cancelPending.length}` : '' }}
+        取消班次{{ cancelCards.pending.length ? ` ${cancelCards.pending.length}` : '' }}
       </button>
     </div>
 
     <section v-if="tab === 'makeup'" class="panel">
-      <div v-if="!makeupPending.length" class="mini-empty">暂无待审补卡</div>
-      <article v-for="r in makeupPending" :key="r.id" class="card">
-        <strong>{{ r.employeeName }}</strong>
-        <p>{{ r.date }} {{ r.time }} · {{ r.punchType === 'clock_in' ? '上班' : '下班' }}补卡</p>
-        <p class="reason">原因：{{ r.reason || '-' }}</p>
-        <div class="btns">
-          <button type="button" class="ghost" @click="reviewMakeup(r.id, false)">驳回</button>
-          <button type="button" class="mini-btn-primary sm" @click="reviewMakeup(r.id, true)">
-            通过
-          </button>
+      <div v-if="!makeupCards.pending.length && !makeupCards.done.length" class="mini-empty">暂无补卡申请</div>
+      <div v-else-if="!makeupCards.pending.length" class="mini-empty">暂无待审补卡</div>
+      <article v-for="r in makeupCards.pending" :key="r.id" class="card">
+        <div class="card-top">
+          <strong>{{ r.employeeName }}</strong>
+          <span class="pill wait">待审批</span>
         </div>
+        <p class="reason">手机号：{{ r.phone }}</p>
+        <p>{{ r.headline }}</p>
+        <p class="reason">原因：{{ r.reason }}</p>
+        <div class="btns">
+          <button type="button" class="ghost" @click="reviewCard(r, false)">驳回</button>
+          <button type="button" class="mini-btn-primary sm" @click="reviewCard(r, true)">通过</button>
+        </div>
+      </article>
+      <h3 v-if="makeupCards.done.length" class="group-title">已审批</h3>
+      <article v-for="r in makeupCards.done" :key="r.id" class="card">
+        <div class="card-top">
+          <strong>{{ r.employeeName }}</strong>
+          <span class="pill" :class="statusPillClass(r.status)">{{ r.statusLabel }}</span>
+        </div>
+        <p class="reason">手机号：{{ r.phone }}</p>
+        <p>{{ r.headline }}</p>
+        <p class="reason">原因：{{ r.reason }}</p>
+        <p v-if="r.reviewNote" class="reason">审批意见：{{ r.reviewNote }}</p>
+        <p v-if="r.reviewedBy" class="reason">审批人：{{ r.reviewedBy }}</p>
       </article>
     </section>
 
     <section v-else class="panel">
-      <p class="hint">通过后将移除当日排班（与 PC 端考勤审批一致）；驳回须填写原因</p>
-      <div v-if="!cancelPending.length" class="mini-empty">暂无待审取消班次</div>
-      <article v-for="r in cancelPending" :key="r.id" class="card">
+      <p class="hint">通过后将移除当日排班；驳回须填写原因</p>
+      <div v-if="!cancelCards.pending.length && !cancelCards.done.length" class="mini-empty">暂无取消班次申请</div>
+      <div v-else-if="!cancelCards.pending.length" class="mini-empty">暂无待审取消班次</div>
+      <article v-for="r in cancelCards.pending" :key="r.id" class="card">
         <div class="card-top">
           <strong>{{ r.employeeName }}</strong>
-          <span class="pill">{{ r.initiatedByLabel }}</span>
+          <span class="tags">
+            <span class="pill">{{ r.extra }}</span>
+            <span class="pill wait">待审批</span>
+          </span>
         </div>
-        <p>{{ r.date }} · {{ r.shiftName }} · {{ r.sourceLabel }}</p>
-        <p class="reason">原因：{{ r.reasonDisplay }}</p>
+        <p class="reason">手机号：{{ r.phone }}</p>
+        <p>{{ r.headline }}</p>
+        <p class="reason">原因：{{ r.reason }}</p>
         <div class="btns">
-          <button type="button" class="ghost" @click="reviewCancel(r.id, false)">驳回</button>
-          <button type="button" class="mini-btn-primary sm" @click="reviewCancel(r.id, true)">
-            通过
-          </button>
+          <button type="button" class="ghost" @click="reviewCard(r, false)">驳回</button>
+          <button type="button" class="mini-btn-primary sm" @click="reviewCard(r, true)">通过</button>
         </div>
+      </article>
+      <h3 v-if="cancelCards.done.length" class="group-title">已审批</h3>
+      <article v-for="r in cancelCards.done" :key="r.id" class="card">
+        <div class="card-top">
+          <strong>{{ r.employeeName }}</strong>
+          <span class="tags">
+            <span class="pill">{{ r.extra }}</span>
+            <span class="pill" :class="statusPillClass(r.status)">{{ r.statusLabel }}</span>
+          </span>
+        </div>
+        <p class="reason">手机号：{{ r.phone }}</p>
+        <p>{{ r.headline }}</p>
+        <p class="reason">原因：{{ r.reason }}</p>
+        <p v-if="r.reviewNote" class="reason">审批意见：{{ r.reviewNote }}</p>
+        <p v-if="r.reviewedBy" class="reason">审批人：{{ r.reviewedBy }}</p>
       </article>
     </section>
 
@@ -461,6 +587,12 @@ function skipConfirmLater() {
   color: #9ca3af;
   line-height: 1.45;
 }
+.group-title {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+}
 .card {
   background: #fff;
   border-radius: 12px;
@@ -482,6 +614,11 @@ function skipConfirmLater() {
 .reason {
   color: #9ca3af !important;
 }
+.tags {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
 .pill {
   flex-shrink: 0;
   font-size: 11px;
@@ -489,6 +626,22 @@ function skipConfirmLater() {
   border-radius: 999px;
   background: #D5E9FF;
   color: #228BFF;
+}
+.pill.wait {
+  background: #fff7ed;
+  color: #c2410c;
+}
+.pill.ok {
+  background: #dcfce7;
+  color: #15803d;
+}
+.pill.no {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+.pill.muted {
+  background: #f3f4f6;
+  color: #6b7280;
 }
 .btns {
   display: flex;

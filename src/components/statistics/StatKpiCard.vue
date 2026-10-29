@@ -7,6 +7,8 @@ defineProps<{
   trendUp?: boolean
   /** 环比是否为正向（离职下降等场景可与箭头方向解耦） */
   trendPositive?: boolean
+  /** 环比 / 同比等多段对比 */
+  compares?: { label: string; text: string; up: boolean; neutral?: boolean; positive?: boolean }[]
   subText?: string
   color?: 'blue' | 'green' | 'orange' | 'red' | 'purple' | 'cyan' | 'pink'
   icon?: string
@@ -33,6 +35,18 @@ defineEmits<{ click: [] }>()
       :class="(trendPositive ?? trendUp) ? 'up' : 'down'"
     >
       {{ trendUp ? '↑' : '↓' }} {{ trend }}
+    </div>
+    <div v-if="compares?.length" class="kpi-compares">
+      <span
+        v-for="item in compares"
+        :key="item.label"
+        class="kpi-compare"
+        :class="item.neutral ? 'neutral' : (item.positive ?? item.up) ? 'up' : 'down'"
+      >
+        {{ item.label }}
+        <template v-if="!item.neutral && item.text !== '新增'">{{ item.up ? '↑' : '↓' }}</template>
+        {{ item.text }}
+      </span>
     </div>
     <div v-if="subText" class="kpi-sub">{{ subText }}</div>
     <slot />
@@ -109,6 +123,22 @@ defineEmits<{ click: [] }>()
 
 .kpi-trend.up { color: #52c41a; }
 .kpi-trend.down { color: #f5222d; }
+
+.kpi-compares {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 8px;
+}
+
+.kpi-compare {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.kpi-compare.up { color: #52c41a; }
+.kpi-compare.down { color: #f5222d; }
+.kpi-compare.neutral { color: #909399; }
 
 .kpi-sub {
   margin-top: 8px;

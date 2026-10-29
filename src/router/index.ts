@@ -466,44 +466,6 @@ const platformChildren: RouteRecordRaw[] = [
     component: () => import('@/views/payroll/InvoiceApplyView.vue'),
     meta: { title: '发票详情', group: '财税管理', hidden: true, portal: 'platform' },
   },
-  {
-    path: 'statistics/overview',
-    redirect: '/statistics/shift',
-  },
-  {
-    path: 'statistics/shift',
-    name: 'StatsShift',
-    component: () => import('@/views/statistics/ShiftStatsView.vue'),
-    meta: { title: '班次统计', group: '数据分析', portal: 'platform' },
-  },
-  {
-    path: 'statistics/attendance',
-    name: 'StatsAttendance',
-    component: () => import('@/views/statistics/AttendanceStatsView.vue'),
-    meta: { title: '考勤分析', group: '数据分析', portal: 'platform' },
-  },
-  {
-    path: 'statistics/task',
-    name: 'StatsTask',
-    component: () => import('@/views/statistics/TaskStatsView.vue'),
-    meta: { title: '任务分析', group: '数据分析', portal: 'platform' },
-  },
-  {
-    path: 'statistics/settlement/enterprise',
-    name: 'StatsSettlementEnterprise',
-    component: () => import('@/views/statistics/EnterpriseSettlementStatsView.vue'),
-    meta: { title: '企业结算分析', group: '数据分析', portal: 'platform' },
-  },
-  {
-    path: 'statistics/settlement/worker',
-    name: 'StatsSettlementWorker',
-    component: () => import('@/views/statistics/WorkerSettlementStatsView.vue'),
-    meta: { title: '灵工结算分析', group: '数据分析', portal: 'platform' },
-  },
-  {
-    path: 'statistics/settlement',
-    redirect: '/statistics/settlement/enterprise',
-  },
 ]
 
 const enterpriseChildren: RouteRecordRaw[] = [
@@ -587,44 +549,6 @@ const enterpriseChildren: RouteRecordRaw[] = [
     name: 'EnterprisePayrollInvoiceDetail',
     component: () => import('@/views/payroll/InvoiceApplyView.vue'),
     meta: { title: '发票详情', group: '财税管理', hidden: true, portal: 'enterprise' },
-  },
-  {
-    path: 'statistics/overview',
-    redirect: '/enterprise/statistics/shift',
-  },
-  {
-    path: 'statistics/shift',
-    name: 'EnterpriseStatsShift',
-    component: () => import('@/views/statistics/ShiftStatsView.vue'),
-    meta: { title: '班次统计', group: '数据分析', portal: 'enterprise' },
-  },
-  {
-    path: 'statistics/attendance',
-    name: 'EnterpriseStatsAttendance',
-    component: () => import('@/views/statistics/AttendanceStatsView.vue'),
-    meta: { title: '考勤分析', group: '数据分析', portal: 'enterprise' },
-  },
-  {
-    path: 'statistics/task',
-    name: 'EnterpriseStatsTask',
-    component: () => import('@/views/statistics/TaskStatsView.vue'),
-    meta: { title: '任务分析', group: '数据分析', portal: 'enterprise' },
-  },
-  {
-    path: 'statistics/settlement/enterprise',
-    name: 'EnterpriseStatsSettlementEnterprise',
-    component: () => import('@/views/statistics/EnterpriseSettlementStatsView.vue'),
-    meta: { title: '企业结算分析', group: '数据分析', portal: 'enterprise' },
-  },
-  {
-    path: 'statistics/settlement/worker',
-    name: 'EnterpriseStatsSettlementWorker',
-    component: () => import('@/views/statistics/WorkerSettlementStatsView.vue'),
-    meta: { title: '灵工结算分析', group: '数据分析', portal: 'enterprise' },
-  },
-  {
-    path: 'statistics/settlement',
-    redirect: '/enterprise/statistics/settlement/enterprise',
   },
 ]
 
@@ -1196,14 +1120,12 @@ const router = createRouter({
     { path: '/enterprise/task-publish', redirect: '/enterprise/task/publish' },
     { path: '/enterprise/task-acceptance', redirect: '/enterprise/task/progress' },
     { path: '/enterprise/task-progress', redirect: '/enterprise/task/progress' },
-    { path: '/enterprise/statistics', redirect: '/enterprise/statistics/shift' },
-    { path: '/statistics', redirect: '/statistics/shift' },
     { path: '/payroll', redirect: '/payroll/bills' },
-    // 招聘分析 / 数据监控中心 / 经营看板已下线
-    { path: '/statistics/recruitment', redirect: '/statistics/shift' },
-    { path: '/enterprise/statistics/recruitment', redirect: '/enterprise/statistics/shift' },
-    { path: '/bi/monitor', redirect: '/statistics/shift' },
-    { path: '/enterprise/bi/monitor', redirect: '/enterprise/statistics/shift' },
+    // 数据分析 / 招聘分析 / 数据监控中心已下线，旧入口回工作台
+    { path: '/statistics/:pathMatch(.*)*', redirect: '/dashboard' },
+    { path: '/enterprise/statistics/:pathMatch(.*)*', redirect: '/enterprise/dashboard' },
+    { path: '/bi/:pathMatch(.*)*', redirect: '/dashboard' },
+    { path: '/enterprise/bi/:pathMatch(.*)*', redirect: '/enterprise/dashboard' },
     // 招聘业务 / 系统设置模块已下线，旧入口统一回工作台
     { path: '/recruitment/:pathMatch(.*)*', redirect: '/dashboard' },
     { path: '/system/:pathMatch(.*)*', redirect: '/dashboard' },
@@ -1213,26 +1135,22 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
-  // 招聘业务模块 / 系统设置 / 招聘分析 / 数据监控已下线
+  // 招聘业务 / 系统设置 / 数据分析已下线
   if (
     to.path.startsWith('/recruitment') ||
     to.path.startsWith('/system') ||
-    to.path === '/statistics/recruitment' ||
-    to.path === '/bi/monitor'
+    to.path.startsWith('/statistics') ||
+    to.path.startsWith('/bi')
   ) {
-    return to.path.startsWith('/statistics') || to.path.startsWith('/bi')
-      ? '/statistics/shift'
-      : '/dashboard'
+    return '/dashboard'
   }
   if (
     to.path.startsWith('/enterprise/recruitment') ||
     to.path.startsWith('/enterprise/system') ||
-    to.path === '/enterprise/statistics/recruitment' ||
-    to.path === '/enterprise/bi/monitor'
+    to.path.startsWith('/enterprise/statistics') ||
+    to.path.startsWith('/enterprise/bi')
   ) {
-    return to.path.includes('/statistics') || to.path.includes('/bi/')
-      ? '/enterprise/statistics/shift'
-      : '/enterprise/dashboard'
+    return '/enterprise/dashboard'
   }
 
   if (to.path.startsWith('/enterprise-miniapp')) {

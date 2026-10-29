@@ -11,8 +11,12 @@ import { resolveDashboardWindow } from '@/services/businessDashboard'
 import {
   buildShiftFillGapTrend,
   buildShiftStatistics,
+  compareMetric,
+  formatFillDuration,
+  type MetricCompare,
+  type ShiftStatsSummary,
 } from '@/services/shiftStatistics'
-import { comboChartOption, donutChartOption } from '@/services/statisticsCharts'
+import { lineChartOption } from '@/services/statisticsCharts'
 import { chartColors } from '@/plugins/echarts'
 
 const store = useAppStore()
@@ -32,10 +36,10 @@ const enterpriseIds = computed(() => {
   return [store.currentEnterpriseId]
 })
 
-const stats = computed(() =>
-  buildShiftStatistics({
-    start: window.value.start,
-    end: window.value.end,
+function statsFor(start: string, end: string) {
+  return buildShiftStatistics({
+    start,
+    end,
     grabSlots: store.grabShiftSlots,
     assignments: store.assignments,
     shifts: store.shifts,
@@ -44,44 +48,68 @@ const stats = computed(() =>
     enterprises: store.enterprises,
     attendanceGroups: store.attendanceGroups,
     cancelShiftRequests: store.cancelShiftRequests,
+    applications: store.grabShiftApplications,
+    punches: store.punches,
+    now: WORKBENCH_DEMO_NOW,
+    enterpriseIds: enterpriseIds.value,
+  })
+}
+
+const stats = computed(() => statsFor(window.value.start, window.value.end))
+const prevStats = computed(() => statsFor(window.value.prevStart, window.value.prevEnd))
+
+function mom(
+  pick: (s: ShiftStatsSummary) => number | null,
+  higherIsBetter = true,
+): MetricCompare[] {
+  return [
+    { label: '环比', ...compareMetric(pick(stats.value.summary), pick(prevStats.value.summary), higherIsBetter) },
+  ]
+}
+
+const scheduleCountCompares = computed(() => mom((s) => s.scheduleShiftCount))
+const confirmCompares = computed(() => mom((s) => s.confirmRate))
+const fulfillCompares = computed(() => mom((s) => s.fulfillRate))
+const scheduleCancelCompares = computed(() => mom((s) => s.scheduleCancelled, false))
+const grabCountCompares = computed(() => mom((s) => s.grabSlotCount))
+const grabFillCompares = computed(() => mom((s) => s.grabFillRate))
+const fillHoursCompares = computed(() => mom((s) => s.avgFillHours, false))
+const urgentCompares = computed(() => mom((s) => s.urgentShifts, false))
+
+const avgFillDisplay = computed(() => formatFillDuration(stats.value.summary.avgFillHours))
+
+function rateText(value: number | null) {
+  return value == null ? '—' : `${value}%`
+}
+
+function durationText(hours: number | null) {
+  const formatted = formatFillDuration(hours)
+  return formatted.suffix ? `${formatted.value}${formatted.suffix}` : formatted.value
+}
+
+const trendPoints = computed(() =>
+  buildShiftFillGapTrend({
+    start: window.value.start,
+    end: window.value.end,
+    mode: trendMode.value,
+    grabSlots: store.grabShiftSlots,
+    assignments: store.assignments,
+    shifts: store.shifts,
+    teams: store.teams,
+    departments: store.departments,
+    attendanceGroups: store.attendanceGroups,
+    applications: store.grabShiftApplications,
+    punches: store.punches,
+    now: WORKBENCH_DEMO_NOW,
     enterpriseIds: enterpriseIds.value,
   }),
 )
 
-const typeDonutOption = computed(() => {
-  const colors = [
-    chartColors.blue,
-    chartColors.cyan,
-    chartColors.orange,
-    chartColors.purple,
-    chartColors.green,
-  ]
-  const items = stats.value.typeDist.map((t, i) => ({
-    name: t.name,
-    value: t.value,
-    color: colors[i % colors.length],
-  }))
-  return donutChartOption(items, `${stats.value.summary.publishedShifts}\n发布班次`)
-})
-
-const trendPoints = computed(() =>
-  buildShiftFillGapTrend(
-    window.value.start,
-    window.value.end,
-    trendMode.value,
-    store.grabShiftSlots,
-    enterpriseIds.value,
-    store.attendanceGroups,
-    store.departments,
-  ),
-)
-
 const trendOption = computed(() =>
-  comboChartOption(
-    trendPoints.value.map((p) => p.label),
-    [{ name: '满员率', data: trendPoints.value.map((p) => p.fillRate), color: chartColors.blue }],
-    { name: '缺口率', data: trendPoints.value.map((p) => p.gapRate), color: chartColors.orange },
-  ),
+  lineChartOption(trendPoints.value.map((p) => p.label), [
+    { name: '排班确认率', data: trendPoints.value.map((p) => p.confirmRate), color: chartColors.blue },
+    { name: '抢班满员率', data: trendPoints.value.map((p) => p.grabFillRate), color: chartColors.cyan },
+  ]),
 )
 
 const filteredDetails = computed(() => {
@@ -95,13 +123,6 @@ const filteredDetails = computed(() => {
 const pagedDetails = computed(() => {
   const start = (page.value - 1) * pageSize
   return filteredDetails.value.slice(start, start + pageSize)
-})
-
-const fillRingStyle = computed(() => {
-  const p = Math.min(100, stats.value.summary.fillRate)
-  return {
-    background: `conic-gradient(#52c41a ${p * 3.6}deg, #f0f2f5 0deg)`,
-  }
 })
 
 function goDetail(row: { enterpriseId: string }) {
@@ -118,7 +139,7 @@ function goDetail(row: { enterpriseId: string }) {
       <div>
         <h2 class="page-title">班次统计</h2>
         <p class="text-muted">
-          排班发布 / 抢班确认 · {{ window.label }}（{{ window.start }} ~ {{ window.end }}）
+          排班与抢班分开统计，各项含环比 · {{ window.label }}（{{ window.start }} ~ {{ window.end }}）
         </p>
       </div>
       <el-radio-group v-model="period" size="default">
@@ -127,78 +148,116 @@ function goDetail(row: { enterpriseId: string }) {
       </el-radio-group>
     </div>
 
-    <el-row :gutter="16" class="kpi-row">
-      <el-col :xs="24" :sm="12" :md="8" :lg="4">
-        <StatKpiCard
-          label="排班发布班次"
-          :value="stats.summary.publishedShifts.toLocaleString()"
-          icon="Calendar"
-          color="blue"
-          :sub-text="`总工位 ${stats.summary.totalPositions.toLocaleString()}`"
-        />
+    <el-row :gutter="16" class="split-row">
+      <el-col :xs="24" :lg="12">
+        <StatPanel title="排班统计" subtitle="已发布排班，不含休息班和抢班转入">
+          <el-row :gutter="12">
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="班次数"
+                :value="stats.summary.scheduleShiftCount.toLocaleString()"
+                suffix="个"
+                icon="Calendar"
+                color="blue"
+                :compares="scheduleCountCompares"
+                sub-text="日期 × 班次 × 班组"
+              />
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="确认率"
+                :value="rateText(stats.summary.confirmRate)"
+                icon="CircleCheck"
+                color="cyan"
+                :compares="confirmCompares"
+                :sub-text="`已确认 ${stats.summary.scheduleConfirmed} / 发布 ${stats.summary.schedulePublished} 人次`"
+              />
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="履约率"
+                :value="rateText(stats.summary.fulfillRate)"
+                icon="Position"
+                color="green"
+                :compares="fulfillCompares"
+                :sub-text="`到岗 ${stats.summary.scheduleArrived} / 已确认 ${stats.summary.scheduleConfirmed} 人次`"
+              />
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="取消班次数"
+                :value="stats.summary.scheduleCancelled.toLocaleString()"
+                suffix="个"
+                icon="CircleClose"
+                color="red"
+                :compares="scheduleCancelCompares"
+                sub-text="已审批通过的排班班次"
+              />
+            </el-col>
+          </el-row>
+        </StatPanel>
       </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="4">
-        <StatKpiCard
-          label="实际确认人数"
-          :value="stats.summary.confirmedCount.toLocaleString()"
-          suffix="人"
-          icon="User"
-          color="cyan"
-        />
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="5">
-        <div class="fill-card">
-          <div class="fill-left">
-            <div class="fill-label">班次满员率</div>
-            <div class="fill-value">{{ stats.summary.fillRate }}%</div>
-            <div class="fill-sub">确认人数 / 总工位</div>
-          </div>
-          <div class="fill-ring" :style="fillRingStyle">
-            <div class="fill-ring-inner">{{ Math.round(stats.summary.fillRate) }}%</div>
-          </div>
-        </div>
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="5">
-        <StatKpiCard
-          label="班次缺口"
-          :value="stats.summary.gapCount.toLocaleString()"
-          suffix="工位"
-          icon="Warning"
-          color="orange"
-          :sub-text="`缺口率 ${stats.summary.gapRate}%`"
-        />
-      </el-col>
-      <el-col :xs="24" :sm="12" :md="8" :lg="6">
-        <StatKpiCard
-          label="班次取消率"
-          :value="stats.summary.cancelRate"
-          suffix="%"
-          icon="CircleClose"
-          color="red"
-          :sub-text="`取消 ${stats.summary.cancelledShifts} 班 · ${stats.summary.cancelledHours}h`"
-        />
+      <el-col :xs="24" :lg="12">
+        <StatPanel title="抢班统计" subtitle="抢班池班次；紧急缺口为发布满 24 小时仍未满员的班次">
+          <el-row :gutter="12">
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="班次数"
+                :value="stats.summary.grabSlotCount.toLocaleString()"
+                suffix="个"
+                icon="Calendar"
+                color="blue"
+                :compares="grabCountCompares"
+                :sub-text="`需求 ${stats.summary.grabRequired.toLocaleString()} 人`"
+              />
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="满员率"
+                :value="rateText(stats.summary.grabFillRate)"
+                icon="UserFilled"
+                color="cyan"
+                :compares="grabFillCompares"
+                :sub-text="`已抢 ${stats.summary.grabGrabbed} / 需求 ${stats.summary.grabRequired}`"
+              />
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="平均抢满时长"
+                :value="avgFillDisplay.value"
+                :suffix="avgFillDisplay.suffix || undefined"
+                icon="Timer"
+                color="purple"
+                :compares="fillHoursCompares"
+                :sub-text="`已抢满 ${stats.summary.filledSlotCount} 个班次`"
+              />
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <StatKpiCard
+                label="紧急班次缺口数"
+                :value="stats.summary.urgentShifts.toLocaleString()"
+                suffix="个"
+                icon="Warning"
+                color="orange"
+                :compares="urgentCompares"
+                :sub-text="stats.summary.urgentGapHeadcount ? `缺 ${stats.summary.urgentGapHeadcount} 人 · 发布满 24 小时仍未满员` : '发布满 24 小时仍未满员'"
+              />
+            </el-col>
+          </el-row>
+        </StatPanel>
       </el-col>
     </el-row>
 
-    <el-row :gutter="16" class="chart-row">
-      <el-col :xs="24" :lg="10">
-        <StatPanel title="班次类型分布">
-          <VChart :option="typeDonutOption" height="300px" />
-        </StatPanel>
-      </el-col>
-      <el-col :xs="24" :lg="14">
-        <StatPanel title="满员率与缺口趋势">
-          <template #extra>
-            <el-radio-group v-model="trendMode" size="small">
-              <el-radio-button value="day">日</el-radio-button>
-              <el-radio-button value="week">周</el-radio-button>
-              <el-radio-button value="month">月</el-radio-button>
-            </el-radio-group>
-          </template>
-          <VChart :option="trendOption" height="300px" />
-        </StatPanel>
-      </el-col>
-    </el-row>
+    <StatPanel title="排班确认率与抢班满员率趋势">
+      <template #extra>
+        <el-radio-group v-model="trendMode" size="small">
+          <el-radio-button value="day">日</el-radio-button>
+          <el-radio-button value="week">周</el-radio-button>
+          <el-radio-button value="month">月</el-radio-button>
+        </el-radio-group>
+      </template>
+      <VChart :option="trendOption" height="300px" />
+    </StatPanel>
 
     <StatPanel title="班次统计明细">
       <template #extra>
@@ -215,21 +274,27 @@ function goDetail(row: { enterpriseId: string }) {
         <el-table-column prop="enterpriseName" label="用工企业" min-width="160" />
         <el-table-column prop="region" label="区域" width="90" />
         <el-table-column prop="jobType" label="工种" min-width="120" />
-        <el-table-column prop="publishedShifts" label="发布班次" width="100" align="right" />
-        <el-table-column prop="totalPositions" label="总工位数" width="100" align="right" />
-        <el-table-column prop="confirmedCount" label="确认人数" width="100" align="right" />
-        <el-table-column label="满员率" width="100" align="right">
+        <el-table-column prop="scheduleShiftCount" label="排班班次" width="100" align="right" />
+        <el-table-column label="确认率" width="90" align="right">
+          <template #default="{ row }">{{ rateText(row.confirmRate) }}</template>
+        </el-table-column>
+        <el-table-column label="履约率" width="90" align="right">
+          <template #default="{ row }">{{ rateText(row.fulfillRate) }}</template>
+        </el-table-column>
+        <el-table-column prop="scheduleCancelled" label="取消班次" width="100" align="right" />
+        <el-table-column prop="grabShiftCount" label="抢班班次" width="100" align="right" />
+        <el-table-column label="满员率" width="90" align="right">
           <template #default="{ row }">
-            <span class="rate-ok">{{ row.fillRate }}%</span>
+            <span class="rate-ok">{{ rateText(row.grabFillRate) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="缺口数" width="90" align="right">
-          <template #default="{ row }">
-            <span class="gap">{{ row.gapCount }}</span>
-          </template>
+        <el-table-column label="平均抢满时长" width="120" align="right">
+          <template #default="{ row }">{{ durationText(row.avgFillHours) }}</template>
         </el-table-column>
-        <el-table-column prop="cancelRate" label="取消率" width="90" align="right">
-          <template #default="{ row }">{{ row.cancelRate }}%</template>
+        <el-table-column label="紧急缺口" width="100" align="right">
+          <template #default="{ row }">
+            <span class="gap">{{ row.urgentShifts }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
@@ -268,57 +333,14 @@ function goDetail(row: { enterpriseId: string }) {
   padding: 20px 24px;
   border: 1px solid var(--app-border);
 }
-.kpi-row .el-col,
-.chart-row .el-col {
+.split-row .el-col {
   margin-bottom: 16px;
 }
-.fill-card {
-  background: #fff;
-  border-radius: 12px;
-  padding: 18px 20px;
-  border: 1px solid var(--app-border);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+.split-row :deep(.el-col) {
+  margin-bottom: 12px;
 }
-.fill-label {
-  font-size: 13px;
-  color: #909399;
-}
-.fill-value {
-  font-size: 28px;
-  font-weight: 700;
-  color: #1a1a2e;
-  margin-top: 6px;
-}
-.fill-sub {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #909399;
-}
-.fill-ring {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.fill-ring-inner {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  color: #52c41a;
+.split-row :deep(.el-col:last-child) {
+  margin-bottom: 0;
 }
 .rate-ok {
   color: #52c41a;

@@ -1,19 +1,24 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import EntMiniNavBar from '@/components/enterprise-miniapp/EntMiniNavBar.vue'
+import TaskFormSection from '@/components/task/TaskFormSection.vue'
+import TaskPublishFormBody, {
+  type TaskPublishFormModel,
+} from '@/components/task/TaskPublishFormBody.vue'
 import { useAppStore } from '@/stores/app'
 import { useEnterpriseMiniAuth } from '@/composables/useEnterpriseMiniAuth'
 import {
-  dispatchModeMap,
   formatTaskQuantity,
-  formatTaskTypePrice,
   resolveTaskPricing,
-  resolveTaskSettlementUnitPrice,
-  taskPublishStatusMap,
+  taskPublishDepartmentIdsFromTask,
+  workflowStatusMap,
 } from '@/constants/task'
-import { calcEnterpriseTaskProgress } from '@/services/task'
+import { formatTaskClaimableQuantity } from '@/services/task'
+import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
+import { isEnterpriseRootDepartment, isUnassignedDepartment } from '@/constants/department'
+import type { Task } from '@/types'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,36 +33,122 @@ const workflow = computed(() =>
   task.value ? store.taskWorkflows.find((w) => w.id === task.value!.workflowId) : undefined,
 )
 
-const pricing = computed(() =>
-  task.value ? resolveTaskPricing(task.value, store.taskTypes) : undefined,
+function createEmptyForm(): TaskPublishFormModel {
+  return {
+    serviceProviderId: '',
+    publishScope: 'global',
+    departmentIds: [],
+    workflowId: '',
+    name: '',
+    description: '',
+    regionCodes: [],
+    addressDetail: '',
+    metadataFields: [],
+    fixedPrice: 50,
+    plannedTotal: 100,
+    unlimitedQuantity: false,
+    longTerm: false,
+    dateRange: [],
+    maxPerPerson: 5,
+  }
+}
+
+const form = ref<TaskPublishFormModel>(createEmptyForm())
+
+const departmentOptions = computed(() =>
+  store.departments.filter((d) => {
+    if (isEnterpriseRootDepartment(d) || isUnassignedDepartment(d.id)) return false
+    return resolveEnterpriseIdByDepartment(d.id, store.departments) === enterpriseId.value
+  }),
 )
 
-const progressInfo = computed(() =>
-  task.value ? calcEnterpriseTaskProgress(task.value) : { progress: 0 },
-)
+const providerOptions = computed(() => {
+  const providers = store.serviceProviders.filter((p) => p.status === 'cooperating')
+  const byLink = providers.filter(
+    (p) =>
+      p.linkedEnterpriseIds?.includes(enterpriseId.value) ||
+      store.serviceContracts.some(
+        (c) => c.enterpriseId === enterpriseId.value && c.providerId === p.id,
+      ),
+  )
+  const list = byLink.length ? byLink : providers
+  const options = list.map((p) => ({ label: p.name, value: p.id }))
+  const currentId = task.value?.serviceProviderId
+  if (currentId && !options.some((o) => o.value === currentId)) {
+    options.unshift({
+      label: task.value?.serviceProviderName || currentId,
+      value: currentId,
+    })
+  }
+  return options
+})
 
-const periodLabel = computed(() => {
+const workflowOptions = computed(() => {
+  const options = store.enabledWorkflows
+    .filter(
+      (w) =>
+        w.enterpriseScope === 'all' ||
+        (w.enterpriseIds ?? []).includes(enterpriseId.value),
+    )
+    .map((w) => ({
+      label: `${w.name}（${workflowStatusMap[w.status]}）`,
+      value: w.id,
+    }))
+  const currentId = task.value?.workflowId
+  if (currentId && !options.some((o) => o.value === currentId)) {
+    const wf = store.taskWorkflows.find((w) => w.id === currentId)
+    options.unshift({
+      label: wf ? `${wf.name}（${workflowStatusMap[wf.status]}）` : currentId,
+      value: currentId,
+    })
+  }
+  return options
+})
+
+const claimableLabel = computed(() => {
+  if (!task.value) return undefined
+  return formatTaskClaimableQuantity(task.value, store.taskInstances, workflow.value)
+})
+
+const totalQuantityLabel = computed(() => {
   if (!task.value) return '—'
-  if (task.value.longTerm) return '长期'
-  return `${task.value.startTime.slice(0, 10)} ~ ${task.value.endTime.slice(0, 10)}`
+  return formatTaskQuantity(task.value.unlimitedQuantity, task.value.plannedTotal)
 })
 
-const priceLabel = computed(() =>
-  pricing.value ? formatTaskTypePrice(pricing.value) : '—',
-)
+function formatCountLabel(value: string | number | undefined) {
+  if (value == null || value === '' || value === '—') return '—'
+  return `${value} 单`
+}
 
-const settlementLabel = computed(() => {
-  if (!task.value) return '—'
-  const price = resolveTaskSettlementUnitPrice(task.value)
-  return `¥${price}/单`
-})
+function fillForm(row: Task) {
+  const pricing = resolveTaskPricing(row, store.taskTypes)
+  form.value = {
+    serviceProviderId: row.serviceProviderId ?? '',
+    publishScope: row.publishScope === 'department' ? 'department' : 'global',
+    departmentIds: taskPublishDepartmentIdsFromTask(row),
+    workflowId: row.workflowId,
+    name: row.name,
+    description: row.description,
+    regionCodes: row.regionCodes?.length ? [...row.regionCodes] : [],
+    addressDetail: row.addressDetail ?? '',
+    metadataFields: (row.metadataFields ?? []).map((m) => ({
+      key: m.key,
+      label: m.label,
+      type: m.type ?? 'text',
+      value: m.value,
+    })),
+    fixedPrice: pricing?.fixedPrice ?? row.fixedPrice ?? 50,
+    plannedTotal: row.plannedTotal,
+    unlimitedQuantity: row.unlimitedQuantity ?? row.plannedTotal == null,
+    longTerm: row.longTerm ?? false,
+    dateRange: row.longTerm ? [] : [row.startTime.slice(0, 10), row.endTime.slice(0, 10)],
+    maxPerPerson: row.maxPerPerson ?? 5,
+  }
+}
 
-const assigneeNames = computed(() => {
-  if (!task.value?.assigneeIds?.length) return '—'
-  return task.value.assigneeIds
-    .map((id) => store.employees.find((e) => e.id === id)?.name ?? id)
-    .join('、')
-})
+watch(task, (row) => {
+  if (row) fillForm(row)
+}, { immediate: true })
 
 function assertAccessible() {
   const t = task.value
@@ -77,11 +168,6 @@ function assertAccessible() {
 onMounted(assertAccessible)
 watch(taskId, assertAccessible)
 
-function formatTime(iso?: string) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleString('zh-CN')
-}
-
 function viewInstances() {
   router.push({
     path: '/enterprise-miniapp/tasks',
@@ -95,127 +181,37 @@ function viewInstances() {
     <EntMiniNavBar title="任务详情" back-to="/enterprise-miniapp/tasks" />
 
     <div class="show-body">
-      <section class="info-card">
-        <div class="hero">
-          <h1>{{ task.name }}</h1>
-          <span class="status">{{ taskPublishStatusMap[task.status] }}</span>
-        </div>
-        <p class="sub">{{ task.enterpriseName }}</p>
-        <div class="progress">
-          <div class="bar"><i :style="{ width: `${progressInfo.progress}%` }" /></div>
-          <span>完成 {{ task.completedCount }} / 接单 {{ task.acceptedCount }}</span>
-        </div>
-      </section>
-
-      <section class="info-card">
-        <h3 class="card-title">基本信息</h3>
-        <div class="info-row">
-          <span class="label">部门/公司</span>
-          <span class="value">{{ task.departmentName || '—' }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">服务商</span>
-          <span class="value">{{ task.serviceProviderName || '—' }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">任务流程</span>
-          <span class="value">{{ workflow?.name ?? task.taskTypeName }}</span>
-        </div>
-        <div class="info-row block">
-          <span class="label">任务内容</span>
-          <span class="value">{{ task.description || '—' }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">任务地点</span>
-          <span class="value">{{ task.region || '—' }}</span>
-        </div>
-      </section>
-
-      <section class="info-card">
-        <h3 class="card-title">定价配置</h3>
-        <div class="info-row">
-          <span class="label">单价模式</span>
-          <span class="value">{{ pricing?.pricingMode === 'tiered' ? '阶梯单价' : '固定单价' }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">客户单价</span>
-          <span class="value">{{ priceLabel }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">结算单价</span>
-          <span class="value">{{ settlementLabel }}</span>
-        </div>
-        <div class="info-row block">
-          <span class="label">任务激励</span>
-          <span class="value">{{ task.incentive || '—' }}</span>
-        </div>
-      </section>
-
-      <section class="info-card">
-        <h3 class="card-title">数量、期限与派单</h3>
-        <div class="info-row">
-          <span class="label">任务数量</span>
-          <span class="value">
-            {{ formatTaskQuantity(task.unlimitedQuantity, task.plannedTotal) }}
-          </span>
-        </div>
-        <div class="info-row">
-          <span class="label">任务期限</span>
-          <span class="value">{{ periodLabel }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">派单方式</span>
-          <span class="value">{{ dispatchModeMap[task.dispatchMode] }}</span>
-        </div>
-        <div v-if="task.dispatchMode === 'assign'" class="info-row block">
-          <span class="label">指派人员</span>
-          <span class="value">{{ assigneeNames }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">限领规则</span>
-          <span class="value">每人限领 {{ task.maxPerPerson ?? '—' }} 单</span>
-        </div>
-      </section>
-
-      <section v-if="task.metadataFields?.length" class="info-card">
-        <h3 class="card-title">自定义字段</h3>
-        <div
-          v-for="meta in task.metadataFields"
-          :key="meta.key"
-          class="info-row"
-        >
-          <span class="label">{{ meta.label || meta.key }}</span>
-          <span class="value">{{ meta.value || '—' }}</span>
-        </div>
-      </section>
-
-      <section class="info-card">
-        <h3 class="card-title">进度与审核</h3>
-        <div class="info-row">
-          <span class="label">接单数</span>
-          <span class="value">{{ task.acceptedCount }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">完成数</span>
-          <span class="value">{{ task.completedCount }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">验收数</span>
-          <span class="value">{{ task.approvedCount }}</span>
-        </div>
-        <div class="info-row">
-          <span class="label">创建时间</span>
-          <span class="value">{{ formatTime(task.createdAt) }}</span>
-        </div>
-        <div v-if="task.reviewedAt" class="info-row">
-          <span class="label">审核时间</span>
-          <span class="value">{{ formatTime(task.reviewedAt) }}</span>
-        </div>
-        <div v-if="task.reviewNote" class="info-row block">
-          <span class="label">审核意见</span>
-          <span class="value">{{ task.reviewNote }}</span>
-        </div>
-      </section>
+      <el-form label-position="top" class="detail-form">
+        <TaskPublishFormBody
+          v-model="form"
+          readonly
+          :require-location="false"
+          :provider-options="providerOptions"
+          :department-options="departmentOptions"
+          :workflow-options="workflowOptions"
+          :claimable-label="claimableLabel"
+        />
+        <TaskFormSection class="task-totals" title="任务总计" icon="计" icon-variant="blue">
+          <div class="totals">
+            <div>
+              <strong>{{ totalQuantityLabel }}</strong>
+              <span>任务总计</span>
+            </div>
+            <div>
+              <strong>{{ formatCountLabel(task.acceptedCount) }}</strong>
+              <span>已接单</span>
+            </div>
+            <div>
+              <strong>{{ formatCountLabel(task.completedCount) }}</strong>
+              <span>已完成</span>
+            </div>
+            <div>
+              <strong>{{ formatCountLabel(claimableLabel) }}</strong>
+              <span>可领数量</span>
+            </div>
+          </div>
+        </TaskFormSection>
+      </el-form>
     </div>
 
     <footer class="show-footer">
@@ -228,114 +224,67 @@ function viewInstances() {
 .show-page {
   min-height: 100%;
   padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  background: #f3f4f6;
 }
 
 .show-body {
-  padding: 12px 16px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  padding: 12px;
 }
 
-.info-card {
-  background: #fff;
-  border-radius: 14px;
-  padding: 14px;
-  box-shadow: var(--mini-shadow);
+.detail-form :deep(.el-form-item) {
+  margin-bottom: 12px;
 }
 
-.hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.hero h1 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  color: #111827;
+.detail-form :deep(.el-form-item__label) {
+  margin-bottom: 4px;
   line-height: 1.4;
 }
 
-.status {
-  flex-shrink: 0;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: #228BFF;
-  color: #fff;
+.detail-form :deep(.task-form-section) {
+  background: #fff;
 }
 
-.sub {
-  margin: 6px 0 0;
+.task-totals {
+  margin-top: 14px;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.totals div {
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 12px 8px;
+  text-align: center;
+}
+
+.totals strong {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.totals span {
+  display: block;
+  margin-top: 4px;
   font-size: 12px;
   color: #6b7280;
 }
 
-.progress {
-  margin-top: 12px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.detail-form :deep(.metadata-row) {
+  align-items: stretch;
 }
 
-.progress .bar {
-  flex: 1;
-  height: 6px;
-  border-radius: 999px;
-  background: #f3f4f6;
-  overflow: hidden;
-}
-
-.progress .bar i {
-  display: block;
-  height: 100%;
-  background: #228BFF;
-  border-radius: 999px;
-}
-
-.progress span {
-  font-size: 11px;
-  color: #9ca3af;
-  white-space: nowrap;
-}
-
-.card-title {
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 700;
-  color: #374151;
-}
-
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 0;
-  font-size: 13px;
-}
-
-.info-row.block {
-  flex-direction: column;
-  gap: 4px;
-}
-
-.info-row .label {
-  color: #9ca3af;
-  flex-shrink: 0;
-}
-
-.info-row .value {
-  color: #374151;
-  text-align: right;
-  word-break: break-word;
-}
-
-.info-row.block .value {
-  text-align: left;
-  line-height: 1.5;
+.detail-form :deep(.metadata-row .el-input),
+.detail-form :deep(.metadata-row .el-select),
+.detail-form :deep(.metadata-row .el-date-editor) {
+  flex: 1 1 140px;
+  width: auto !important;
+  min-width: 0;
 }
 
 .show-footer {

@@ -280,7 +280,7 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
 
     <TaskFormSection
       title="任务元数据"
-      subtitle="字段名称、类型与值（可选）"
+      :subtitle="readonly ? '字段名称与值' : '字段名称、类型与值（可选）'"
       icon="元"
       icon-variant="orange"
     >
@@ -288,10 +288,10 @@ function setTimeRangeModel(item: TaskMetadataField, range: [string, string] | nu
         <div v-for="(item, index) in form.metadataFields" :key="item.key" class="metadata-row">
           <el-input v-model="item.label" placeholder="字段名称" style="flex: 1.1" :disabled="readonly" />
           <el-select
+            v-if="!readonly"
             :model-value="item.type"
             placeholder="类型"
             style="width: 118px"
-            :disabled="readonly"
             @update:model-value="(v: TaskMetadataFieldType) => onMetaTypeChange(item, v)"
           >
             <el-option
