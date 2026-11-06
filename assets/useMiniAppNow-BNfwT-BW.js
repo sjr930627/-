@@ -1,0 +1,1 @@
+import{r as a,A as s,U as u,h9 as i}from"./index-DPka_A1b.js";function t(){const e=new Date,[n,o,r]=i.split("-").map(Number);return new Date(n,o-1,r,e.getHours(),e.getMinutes(),e.getSeconds())}function c(){const e=a(t());let n=null;return s(()=>{n=setInterval(()=>{e.value=t()},1e3)}),u(()=>{n&&clearInterval(n)}),{now:e}}export{c as u};

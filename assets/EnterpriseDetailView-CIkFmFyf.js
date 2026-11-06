@@ -1,0 +1,1 @@
+import e from"./EnterpriseFormView-DEOaxZUp.js";import{d as r,g as o,o as t}from"./index-DPka_A1b.js";const c=r({__name:"EnterpriseDetailView",setup(n){return(a,p)=>(t(),o(e,{readonly:""}))}});export{c as default};
