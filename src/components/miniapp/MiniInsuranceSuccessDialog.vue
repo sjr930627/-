@@ -1,10 +1,10 @@
 <script setup lang="ts">
 export interface InsuranceSuccessInfo {
   productName: string
+  deathDisabilityAmount: string
   workDate: string
   shiftLabel: string
   location: string
-  premium: number
   policyNo: string
 }
 
@@ -36,6 +36,11 @@ const emit = defineEmits<{
             <span class="ins-row-value">{{ info.productName }}</span>
           </div>
           <div class="ins-row">
+            <span class="ins-row-icon green">✚</span>
+            <span class="ins-row-label">死亡伤残保额</span>
+            <span class="ins-row-value">{{ info.deathDisabilityAmount }}</span>
+          </div>
+          <div class="ins-row">
             <span class="ins-row-icon blue">📅</span>
             <span class="ins-row-label">申报日期</span>
             <span class="ins-row-value">{{ info.workDate }}</span>
@@ -50,11 +55,6 @@ const emit = defineEmits<{
             <span class="ins-row-label">工作地点</span>
             <span class="ins-row-value">{{ info.location }}</span>
           </div>
-        </div>
-
-        <div class="ins-premium">
-          <span class="ins-premium-left">💴 今日保费</span>
-          <span class="ins-premium-value">¥ {{ info.premium.toFixed(2) }}/天</span>
         </div>
 
         <div class="ins-tip">
@@ -167,27 +167,6 @@ const emit = defineEmits<{
   text-align: right;
   max-width: 55%;
   word-break: break-all;
-}
-
-.ins-premium {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #fff5f5;
-  border-radius: 999px;
-  padding: 10px 16px;
-  margin-bottom: 12px;
-}
-
-.ins-premium-left {
-  font-size: 13px;
-  color: #666;
-}
-
-.ins-premium-value {
-  font-size: 16px;
-  font-weight: 700;
-  color: #e60012;
 }
 
 .ins-tip {

@@ -64,10 +64,6 @@ const shiftLabel = computed(() => {
           <span class="label">生效时间</span>
           <span class="value">{{ todayPolicy.effectiveTime.replace('T', ' ') }}</span>
         </div>
-        <div class="detail-row">
-          <span class="label">今日保费</span>
-          <span class="value premium">¥ {{ todayPolicy.premium.toFixed(2) }}/天</span>
-        </div>
       </div>
       <div v-else class="mini-card empty-card">
         <div class="status-badge inactive">当日未投保</div>
@@ -119,11 +115,6 @@ const shiftLabel = computed(() => {
   color: #333;
   text-align: right;
   word-break: break-all;
-}
-
-.value.premium {
-  color: #ef4444;
-  font-weight: 700;
 }
 
 .empty-tip {

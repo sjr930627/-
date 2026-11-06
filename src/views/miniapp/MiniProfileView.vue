@@ -6,6 +6,7 @@ import {
   CreditCard,
   Document,
   EditPen,
+  FirstAidKit,
   List,
   Reading,
   OfficeBuilding,
@@ -48,6 +49,7 @@ const iconItems: {
   color: string
 }[] = [
   { path: '/miniapp/training/materials', icon: Reading, label: '我的培训', bg: '#f0fdf4', color: '#22c55e' },
+  { path: '/miniapp/protection', icon: FirstAidKit, label: '我的保障', bg: '#fff1f2', color: '#e11d48' },
   { path: '/miniapp/training/exams', icon: EditPen, label: '我的考核', bg: '#fff7ed', color: '#f97316' },
   { path: '/miniapp/tasks', icon: List, label: '任务进度', bg: '#E6FFFA', color: '#4FD1C5' },
   { path: '/miniapp/applications', icon: Tickets, label: '我的报名', bg: '#E6FFFA', color: '#4FD1C5' },

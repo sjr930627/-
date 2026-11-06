@@ -1,13 +1,20 @@
 import { SCHEDULE_DEMO_NOW } from '@/constants/schedule'
-import type { AttendancePunch, InsurancePolicy, InsurancePolicyStatus, InsuranceProduct } from '@/types'
-
-/** 后台退保窗口：投保当日内、投保时间起 2 小时 */
-export const INSURANCE_ADMIN_CANCEL_WINDOW_MS = 2 * 60 * 60 * 1000
+import type {
+  AttendancePunch,
+  InsuranceClaimCommunication,
+  InsuranceClaimProgress,
+  InsuranceClaimRecord,
+  InsuranceClaimStatus,
+  InsuranceCoverageScope,
+  InsurancePolicy,
+  InsurancePolicyStatus,
+  InsuranceProduct,
+  InsuranceProductType,
+} from '@/types'
 
 const productTypeLabel: Record<InsuranceProduct['type'], string> = {
-  accident: '意外伤害',
+  team_accident: '团队意外',
   employer_liability: '雇主责任',
-  comprehensive: '综合保障',
 }
 
 const statusLabel: Record<InsurancePolicyStatus, string> = {
@@ -19,6 +26,47 @@ const statusLabel: Record<InsurancePolicyStatus, string> = {
 
 export function getInsuranceProductTypeLabel(type: InsuranceProduct['type']) {
   return productTypeLabel[type]
+}
+
+export const insuranceProductTypeOptions: { value: InsuranceProductType; label: string }[] = [
+  { value: 'team_accident', label: '团队意外' },
+  { value: 'employer_liability', label: '雇主责任' },
+]
+
+export function isInsuranceProductType(value: string): value is InsuranceProductType {
+  return value === 'team_accident' || value === 'employer_liability'
+}
+
+/** 旧数据里的意外伤害、综合保障并入团队意外 */
+export function normalizeInsuranceProductType(type?: string): InsuranceProductType {
+  return type === 'employer_liability' ? 'employer_liability' : 'team_accident'
+}
+
+export function normalizeInsuranceCoverageScope(
+  scope?: Partial<InsuranceCoverageScope> | null,
+): InsuranceCoverageScope | undefined {
+  if (!scope) return undefined
+  return {
+    deathDisabilityAmount: Number(scope.deathDisabilityAmount),
+    medicalExpenseAmount: Number(scope.medicalExpenseAmount),
+    lostWageDailyAmount: Number(scope.lostWageDailyAmount),
+    suddenDeathAmount: Number(scope.suddenDeathAmount),
+  }
+}
+
+export function insuranceCoverageScopeError(scope?: Partial<InsuranceCoverageScope> | null) {
+  const value = normalizeInsuranceCoverageScope(scope)
+  if (!value || !(value.deathDisabilityAmount > 0)) return '请填写工伤身故残疾额度'
+  if (!(value.medicalExpenseAmount > 0)) return '请填写工伤医疗费用'
+  if (!(value.lostWageDailyAmount > 0)) return '请填写工伤误工补偿'
+  if (!(value.suddenDeathAmount > 0)) return '请填写工伤猝死额度'
+  return ''
+}
+
+export function formatInsuranceCoverageScope(scope?: Partial<InsuranceCoverageScope> | null) {
+  const value = normalizeInsuranceCoverageScope(scope)
+  if (!value || insuranceCoverageScopeError(value)) return '—'
+  return `身故残疾${value.deathDisabilityAmount}万、医疗${value.medicalExpenseAmount}万、误工${value.lostWageDailyAmount}元/天、猝死${value.suddenDeathAmount}万`
 }
 
 export function getInsurancePolicyStatusLabel(status: InsurancePolicyStatus) {
@@ -109,26 +157,6 @@ function parseInsuranceTime(iso: string) {
   return Number.isNaN(date.getTime()) ? null : date
 }
 
-function insuranceDateKey(date: Date) {
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${date.getFullYear()}-${month}-${day}`
-}
-
-/** 后台退保：状态为保障中，且仍处于投保当天的 2 小时内 */
-export function canAdminCancelInsurancePolicy(
-  policy: Pick<InsurancePolicy, 'status' | 'createdAt' | 'effectiveTime'>,
-  nowIso = SCHEDULE_DEMO_NOW,
-) {
-  if (policy.status !== 'active') return false
-  const enrolled = parseInsuranceTime(insuranceEnrolledAt(policy))
-  const now = parseInsuranceTime(nowIso)
-  if (!enrolled || !now) return false
-  if (insuranceDateKey(enrolled) !== insuranceDateKey(now)) return false
-  const elapsed = now.getTime() - enrolled.getTime()
-  return elapsed >= 0 && elapsed <= INSURANCE_ADMIN_CANCEL_WINDOW_MS
-}
-
 export function formatInsuranceDateTime(iso?: string) {
   if (!iso) return '—'
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(iso) && !iso.endsWith('Z')) {
@@ -144,20 +172,174 @@ export function formatInsurancePeriod(effectiveTime: string, expireTime: string)
   return `${formatInsuranceDateTime(effectiveTime)} 至 ${formatInsuranceDateTime(expireTime)}`
 }
 
+export const insuranceClaimMaterialFields = [
+  { key: 'identity', label: '身份证明', required: true },
+  { key: 'medical', label: '医疗证明', required: true },
+  { key: 'invoice', label: '费用票据', required: true },
+  { key: 'scene', label: '事故照片', required: false },
+] as const
+
+export const insuranceClaimProgressOptions: { value: InsuranceClaimProgress; label: string }[] = [
+  { value: 'reported', label: '已提报' },
+  { value: 'accepted', label: '已受理' },
+  { value: 'closed', label: '已办结' },
+]
+
+export const insuranceClaimStatusOptions: { value: InsuranceClaimStatus; label: string }[] = [
+  { value: 'pending', label: '待审核' },
+  { value: 'reported', label: '已提报' },
+  { value: 'accepted', label: '已受理' },
+  { value: 'closed', label: '已办结' },
+  { value: 'rejected', label: '已驳回' },
+]
+
+const claimStatusLabel: Record<InsuranceClaimStatus, string> = {
+  pending: '待审核',
+  rejected: '已驳回',
+  reported: '已提报',
+  accepted: '已受理',
+  closed: '已办结',
+}
+
+export function getInsuranceClaimStatusLabel(status: InsuranceClaimStatus) {
+  return claimStatusLabel[status]
+}
+
+export function getInsuranceClaimStatusTagType(
+  status: InsuranceClaimStatus,
+): 'warning' | 'primary' | 'success' | 'danger' | 'info' {
+  if (status === 'pending') return 'warning'
+  if (status === 'rejected') return 'danger'
+  if (status === 'reported') return 'primary'
+  if (status === 'accepted') return 'warning'
+  return 'success'
+}
+
+export function isInsuranceClaimProgress(status: InsuranceClaimStatus): status is InsuranceClaimProgress {
+  return status === 'reported' || status === 'accepted' || status === 'closed'
+}
+
+/** 已受理、已提报可编辑；已办结锁定 */
+export function canEditInsuranceClaim(status: InsuranceClaimStatus) {
+  return status === 'accepted' || status === 'reported'
+}
+
+/** 把旧的单条沟通记录并入列表，并丢掉空内容 */
+export function normalizeInsuranceClaimCommunications(
+  record: Pick<InsuranceClaimRecord, 'id' | 'communications' | 'communicationLog' | 'recordedAt' | 'updatedAt'>,
+): InsuranceClaimCommunication[] {
+  if (Array.isArray(record.communications)) {
+    return record.communications
+      .map((item) => ({
+        id: item.id,
+        content: String(item.content ?? '').trim(),
+        createdAt: item.createdAt || record.updatedAt || record.recordedAt,
+        updatedAt: item.updatedAt,
+      }))
+      .filter((item) => item.id && item.content)
+  }
+  const legacy = record.communicationLog?.trim()
+  if (!legacy) return []
+  return [
+    {
+      id: `${record.id}_log`,
+      content: legacy,
+      createdAt: record.updatedAt || record.recordedAt,
+    },
+  ]
+}
+
+/** 同一保单存在待审核或进行中的申请时，不能再次提交 */
+export function canSubmitInsuranceClaim(records: InsuranceClaimRecord[], policyId: string) {
+  return !records.some(
+    (record) =>
+      record.policyId === policyId &&
+      (record.status === 'pending' || record.status === 'reported' || record.status === 'accepted'),
+  )
+}
+
+export function ensureInsuranceClaimRecords(
+  records: InsuranceClaimRecord[],
+  seed: InsuranceClaimRecord[],
+) {
+  const seedById = new Map(seed.map((record) => [record.id, record]))
+  const normalized = records.map((record) => {
+    const seeded = seedById.get(record.id)
+    if (seeded && !Array.isArray(record.materials)) return { ...seeded }
+    const next = {
+      ...record,
+      materials: record.materials ?? [],
+      employeeId: record.employeeId || seeded?.employeeId || '',
+      communications: normalizeInsuranceClaimCommunications(record),
+    }
+    delete next.communicationLog
+    return next
+  })
+  const ids = new Set(normalized.map((record) => record.id))
+  const missing = seed.filter((record) => !ids.has(record.id))
+  if (!missing.length) return normalized
+  return [...missing, ...normalized]
+}
+
 export function formatCoverageAmount(amount?: number | null) {
   if (amount == null || Number.isNaN(amount)) return '—'
   return `${amount}万`
 }
 
-/** 已保存的产品补上方案 ID；不把用户删掉的种子产品加回来 */
-export function ensureInsuranceProducts(products: InsuranceProduct[]) {
-  return products.map((product) => ({
-    ...product,
-    planId: product.planId?.trim() || product.code,
-  }))
+export function normalizeInsuranceEnterpriseIds(ids?: string[]) {
+  return [...new Set((ids ?? []).map((id) => id.trim()).filter(Boolean))]
 }
 
-/** 补齐演示投保记录（已存在的保单不覆盖，避免冲掉退保结果） */
+/** 一家企业只能挂在一个保险方案上，返回已被其他方案占用的企业 */
+export function findEnterpriseInsuranceConflicts(
+  products: InsuranceProduct[],
+  enterpriseIds: string[],
+  excludeProductId?: string,
+) {
+  const conflicts: { enterpriseId: string; productId: string; productName: string }[] = []
+  for (const enterpriseId of normalizeInsuranceEnterpriseIds(enterpriseIds)) {
+    const owner = products.find(
+      (product) =>
+        product.id !== excludeProductId && (product.enterpriseIds ?? []).includes(enterpriseId),
+    )
+    if (owner) {
+      conflicts.push({ enterpriseId, productId: owner.id, productName: owner.name })
+    }
+  }
+  return conflicts
+}
+
+/** 按企业取已启用的唯一方案。未关联企业时不出单 */
+export function findInsuranceProductForEnterprise(
+  products: InsuranceProduct[],
+  enterpriseId?: string,
+) {
+  if (!enterpriseId) return undefined
+  return products.find(
+    (product) => product.enabled && (product.enterpriseIds ?? []).includes(enterpriseId),
+  )
+}
+
+/** 已保存的产品补上方案 ID 和关联企业；不把用户删掉的种子产品加回来 */
+export function ensureInsuranceProducts(products: InsuranceProduct[], seed: InsuranceProduct[] = []) {
+  const seedById = new Map(seed.map((product) => [product.id, product]))
+  return products.map((product) => {
+    const seeded = seedById.get(product.id)
+    return {
+      ...product,
+      type: normalizeInsuranceProductType(product.type),
+      planId: product.planId?.trim() || product.code,
+      enterpriseIds: Array.isArray(product.enterpriseIds)
+        ? normalizeInsuranceEnterpriseIds(product.enterpriseIds)
+        : normalizeInsuranceEnterpriseIds(seeded?.enterpriseIds),
+      coverageScope:
+        normalizeInsuranceCoverageScope(product.coverageScope) ??
+        normalizeInsuranceCoverageScope(seeded?.coverageScope),
+    }
+  })
+}
+
+/** 补齐演示投保记录（已存在的保单不覆盖） */
 export function ensureInsurancePolicies(policies: InsurancePolicy[], seed: InsurancePolicy[]) {
   const ids = new Set(policies.map((policy) => policy.id))
   const missing = seed.filter((policy) => !ids.has(policy.id))

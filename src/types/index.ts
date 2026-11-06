@@ -616,7 +616,19 @@ export interface AttendancePunch {
 
 export type InsurancePolicyStatus = 'active' | 'expired' | 'cancelled' | 'pending'
 
-export type InsuranceProductType = 'accident' | 'employer_liability' | 'comprehensive'
+export type InsuranceProductType = 'team_accident' | 'employer_liability'
+
+/** 保障范围。身故残疾、医疗、猝死为万元，误工补偿为元/天 */
+export interface InsuranceCoverageScope {
+  /** 工伤身故残疾额度（万元） */
+  deathDisabilityAmount: number
+  /** 工伤医疗费用（万元） */
+  medicalExpenseAmount: number
+  /** 工伤误工补偿（元/天） */
+  lostWageDailyAmount: number
+  /** 工伤猝死额度（万元） */
+  suddenDeathAmount: number
+}
 
 /** 保险产品（按日投保方案） */
 export interface InsuranceProduct {
@@ -627,14 +639,18 @@ export interface InsuranceProduct {
   code: string
   type: InsuranceProductType
   provider: string
+  /** 保障范围 */
+  coverageScope?: InsuranceCoverageScope
   /** 日保费（元） */
   dailyPremium: number
-  /** 产品额度（万元） */
+  /** 出单时记下的工伤身故残疾额度（万元），供小程序展示 */
   coverageAmount: number
   description: string
   /** C 端上班打卡后自动投保 */
   autoOnPunch: boolean
   enabled: boolean
+  /** 关联企业。一个方案可关联多家企业，一家企业只能出现在一个方案中 */
+  enterpriseIds?: string[]
 }
 
 /** 投保保单记录 */
@@ -649,11 +665,57 @@ export interface InsurancePolicy {
   effectiveTime: string
   expireTime: string
   premium: number
-  /** 投保时的产品额度（万元），缺省时回退到产品当前额度 */
+  /** 投保时的工伤身故残疾额度（万元），缺省时回退到产品当前身故残疾额度 */
   coverageAmount?: number
   status: InsurancePolicyStatus
   location?: string
   createdAt: string
+}
+
+/** 待审核通过后为已提报，之后可改为已受理 / 已办结 */
+export type InsuranceClaimStatus = 'pending' | 'rejected' | 'reported' | 'accepted' | 'closed'
+
+export type InsuranceClaimProgress = Exclude<InsuranceClaimStatus, 'pending' | 'rejected'>
+
+export interface InsuranceClaimMaterial {
+  key: string
+  label: string
+  fileName: string
+}
+
+/** 理赔沟通记录。已受理、已提报可新增多条，并可编辑、删除 */
+export interface InsuranceClaimCommunication {
+  id: string
+  content: string
+  createdAt: string
+  updatedAt?: string
+}
+
+/** 灵工发起的理赔申请。后台审批通过后变为已受理，已办结不可再编辑 */
+export interface InsuranceClaimRecord {
+  id: string
+  policyId: string
+  employeeId: string
+  status: InsuranceClaimStatus
+  /** 事故经过 */
+  reason: string
+  incidentTime: string
+  incidentLocation: string
+  injury: string
+  /** 申请金额（元） */
+  claimAmount?: number
+  contactPhone: string
+  materials: InsuranceClaimMaterial[]
+  /** 沟通记录。已受理、已提报至少保留一条，点保存后写入 */
+  communications?: InsuranceClaimCommunication[]
+  /** @deprecated 旧版单条沟通记录，读取时并入 communications */
+  communicationLog?: string
+  /** 驳回原因。仅驳回时填写，最多 1000 字 */
+  rejectReason?: string
+  remark?: string
+  recordedAt: string
+  updatedAt: string
+  reviewedAt?: string
 }
 
 export type AttendanceStatus =

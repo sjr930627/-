@@ -893,6 +893,30 @@ const router = createRouter({
           meta: { title: '投保详情', miniTab: false },
         },
         {
+          path: 'protection',
+          name: 'MiniProtection',
+          component: () => import('@/views/miniapp/MiniProtectionView.vue'),
+          meta: { title: '我的保障', miniTab: false },
+        },
+        {
+          path: 'protection/policies/:id',
+          name: 'MiniPolicyDetail',
+          component: () => import('@/views/miniapp/MiniPolicyDetailView.vue'),
+          meta: { title: '保单详情', miniTab: false },
+        },
+        {
+          path: 'protection/apply/:policyId?',
+          name: 'MiniClaimApply',
+          component: () => import('@/views/miniapp/MiniClaimApplyView.vue'),
+          meta: { title: '申请理赔', miniTab: false },
+        },
+        {
+          path: 'protection/claims/:id',
+          name: 'MiniClaimDetail',
+          component: () => import('@/views/miniapp/MiniClaimDetailView.vue'),
+          meta: { title: '理赔详情', miniTab: false },
+        },
+        {
           path: 'face-verify',
           name: 'MiniFaceVerify',
           component: () => import('@/views/miniapp/MiniFaceVerifyView.vue'),

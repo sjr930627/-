@@ -34,6 +34,7 @@ import {
   type MiniPunchMethod,
 } from '@/constants/miniapp'
 import type { PunchMethod } from '@/types'
+import { formatCoverageAmount } from '@/services/insurance'
 
 const router = useRouter()
 const route = useRoute()
@@ -223,12 +224,14 @@ function buildInsuranceDialogInfo(
       : shift
         ? `${shift.name} ${shift.startTime}–${shift.endTime}`
         : '—'
+  const deathDisabilityAmount =
+    product?.coverageScope?.deathDisabilityAmount ?? product?.coverageAmount ?? policy.coverageAmount
   return {
     productName: product?.name ?? '工伤保险',
+    deathDisabilityAmount: formatCoverageAmount(deathDisabilityAmount),
     workDate: policy.workDate,
     shiftLabel,
     location: punch.location ?? policy.location ?? '—',
-    premium: policy.premium,
     policyNo: policy.policyNo,
   }
 }

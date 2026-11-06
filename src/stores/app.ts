@@ -75,6 +75,10 @@ import type {
   Team,
   InsuranceProduct,
   InsurancePolicy,
+  InsuranceClaimMaterial,
+  InsuranceClaimCommunication,
+  InsuranceClaimProgress,
+  InsuranceClaimRecord,
   TrainingMaterial,
   TrainingMaterialCategoryItem,
   TrainingCourse,
@@ -211,7 +215,11 @@ import {
   isEmployeeUnavailableOnDate,
 } from '@/services/employeeAvailability'
 import { isGrabSlotVisibleToWorker } from '@/services/grabShift'
-import { seedInsurancePolicies, seedInsuranceProducts } from '@/mock/insuranceSeed'
+import {
+  seedInsuranceClaimRecords,
+  seedInsurancePolicies,
+  seedInsuranceProducts,
+} from '@/mock/insuranceSeed'
 import {
   seedExamAttempts,
   loadCourseLearningRecords,
@@ -309,7 +317,7 @@ import {
   restoreEffectiveConfig,
 } from '@/services/contractVersion'
 import { generateId, ensureDemoBrandingVersion, ensureEnterpriseInvoiceProfiles, ensureFundTransactions, ensureGrabInterviewRegistrations, ensureNotifications, ensureServiceContracts, ensureSettlementBills, ensureSettlementManageOrders, ensureWorkerIncomeSeed, getDepartmentDescendantIds, loadFromStorage, saveToStorage, calcAgeFromIdCard } from '@/utils'
-import { resolveEnterpriseIdByDepartment } from '@/utils/enterpriseScope'
+import { resolveEnterpriseIdByDepartment, resolveEnterpriseIdByEmployee } from '@/utils/enterpriseScope'
 import { generateBillNo, resolveBillTaxFlagsFromContract, resolveServiceProviderForEnterprise } from '@/services/billSettlement'
 import { estimateServiceFeeWaiverByQuantity } from '@/constants/payrollBill'
 import { resolveWithdrawalChannel } from '@/constants/taxManage'
@@ -320,12 +328,21 @@ import {
   getTeamsForAttendanceGroup,
 } from '@/services/scheduleGroup'
 import {
-  canAdminCancelInsurancePolicy,
+  canEditInsuranceClaim,
+  canSubmitInsuranceClaim,
   createPolicyFromPunch,
+  ensureInsuranceClaimRecords,
   ensureInsurancePolicies,
   ensureInsuranceProducts,
-  findAutoInsuranceProduct,
+  insuranceClaimMaterialFields,
+  isInsuranceClaimProgress,
+  findEnterpriseInsuranceConflicts,
+  findInsuranceProductForEnterprise,
   hasActivePolicyForDate,
+  insuranceCoverageScopeError,
+  isInsuranceProductType,
+  normalizeInsuranceCoverageScope,
+  normalizeInsuranceEnterpriseIds,
   shouldAutoInsure,
 } from '@/services/insurance'
 import {
@@ -471,6 +488,23 @@ function loadWorkforceSeed() {
     grabInterviewConfigs,
     enterprisePositions,
   }
+}
+
+function insuranceEnterpriseConflictMessage(
+  products: InsuranceProduct[],
+  enterprises: { id: string; name: string }[],
+  enterpriseIds: string[],
+  excludeProductId?: string,
+) {
+  const conflicts = findEnterpriseInsuranceConflicts(products, enterpriseIds, excludeProductId)
+  if (!conflicts.length) return ''
+  const text = conflicts
+    .map((item) => {
+      const name = enterprises.find((ent) => ent.id === item.enterpriseId)?.name ?? item.enterpriseId
+      return `「${name}」已关联「${item.productName}」`
+    })
+    .join('，')
+  return `${text}，一家企业只能配置一个保险方案`
 }
 
 export const useAppStore = defineStore('app', {
@@ -656,10 +690,15 @@ export const useAppStore = defineStore('app', {
     ),
     insuranceProducts: ensureInsuranceProducts(
       loadFromStorage<InsuranceProduct[]>('insuranceProducts', seedInsuranceProducts),
+      seedInsuranceProducts,
     ),
     insurancePolicies: ensureInsurancePolicies(
       loadFromStorage<InsurancePolicy[]>('insurancePolicies', seedInsurancePolicies),
       seedInsurancePolicies,
+    ),
+    insuranceClaimRecords: ensureInsuranceClaimRecords(
+      loadFromStorage<InsuranceClaimRecord[]>('insuranceClaimRecords', seedInsuranceClaimRecords),
+      seedInsuranceClaimRecords,
     ),
     trainingMaterials: loadTrainingMaterials(),
     trainingMaterialCategories: loadTrainingMaterialCategories(),
@@ -2094,7 +2133,11 @@ export const useAppStore = defineStore('app', {
       if (hasActivePolicyForDate(this.insurancePolicies, punch.employeeId, punch.date)) {
         return undefined
       }
-      const product = findAutoInsuranceProduct(this.insuranceProducts)
+      const employee = this.employees.find((item) => item.id === punch.employeeId)
+      const product = findInsuranceProductForEnterprise(
+        this.insuranceProducts,
+        resolveEnterpriseIdByEmployee(employee),
+      )
       if (!product) return undefined
 
       const seq =
@@ -2118,44 +2161,153 @@ export const useAppStore = defineStore('app', {
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     },
 
-    cancelInsurancePolicy(id: string) {
-      const policy = this.insurancePolicies.find((p) => p.id === id)
-      if (!policy) return { ok: false as const, message: '保单不存在' }
-      if (!canAdminCancelInsurancePolicy(policy)) {
-        return { ok: false as const, message: '仅支持当天投保后 2 小时内退保' }
+    submitInsuranceClaim(data: {
+      policyId: string
+      reason: string
+      incidentTime: string
+      incidentLocation: string
+      injury: string
+      claimAmount?: number
+      contactPhone: string
+      materials: InsuranceClaimMaterial[]
+    }) {
+      const policy = this.insurancePolicies.find((item) => item.id === data.policyId)
+      if (!policy) throw new Error('保单不存在')
+      if (policy.status === 'cancelled') throw new Error('已退保保单不可申请理赔')
+      if (!canSubmitInsuranceClaim(this.insuranceClaimRecords, policy.id)) {
+        throw new Error('该保单已有进行中的理赔申请')
       }
-      policy.status = 'cancelled'
-      this.persist('insurancePolicies')
-      return { ok: true as const, message: '保单已退保' }
+      const reason = data.reason.trim()
+      const incidentLocation = data.incidentLocation.trim()
+      const injury = data.injury.trim()
+      const contactPhone = data.contactPhone.trim()
+      if (!reason) throw new Error('请填写事故经过')
+      if (!data.incidentTime) throw new Error('请填写事故时间')
+      if (!incidentLocation) throw new Error('请填写事故地点')
+      if (!injury) throw new Error('请填写受伤情况')
+      if (!contactPhone) throw new Error('请填写联系电话')
+      const required = insuranceClaimMaterialFields.filter((field) => field.required)
+      const missing = required.filter((field) => !data.materials.some((item) => item.key === field.key && item.fileName))
+      if (missing.length) throw new Error(`请上传${missing.map((field) => field.label).join('、')}`)
+      const now = new Date().toISOString()
+      const record: InsuranceClaimRecord = {
+        id: generateId('ins_claim'),
+        policyId: policy.id,
+        employeeId: policy.employeeId,
+        status: 'pending',
+        reason,
+        incidentTime: data.incidentTime,
+        incidentLocation,
+        injury,
+        claimAmount: data.claimAmount && data.claimAmount > 0 ? data.claimAmount : undefined,
+        contactPhone,
+        materials: data.materials.filter((item) => item.fileName),
+        recordedAt: now,
+        updatedAt: now,
+      }
+      this.insuranceClaimRecords.unshift(record)
+      this.persist('insuranceClaimRecords')
+      return record
+    },
+
+    approveInsuranceClaim(id: string) {
+      const record = this.insuranceClaimRecords.find((item) => item.id === id)
+      if (!record) throw new Error('理赔记录不存在')
+      if (record.status !== 'pending') throw new Error('仅待审核申请可以审批')
+      const now = new Date().toISOString()
+      record.status = 'reported'
+      record.reviewedAt = now
+      record.updatedAt = now
+      this.persist('insuranceClaimRecords')
+    },
+
+    rejectInsuranceClaim(id: string, reason: string) {
+      const record = this.insuranceClaimRecords.find((item) => item.id === id)
+      if (!record) throw new Error('理赔记录不存在')
+      if (record.status !== 'pending') throw new Error('仅待审核申请可以审批')
+      const text = reason.trim()
+      if (!text) throw new Error('请填写驳回原因')
+      if (text.length > 1000) throw new Error('驳回原因不能超过1000字')
+      const now = new Date().toISOString()
+      record.status = 'rejected'
+      record.rejectReason = text
+      record.reviewedAt = now
+      record.updatedAt = now
+      this.persist('insuranceClaimRecords')
+    },
+
+    updateInsuranceClaimProgress(
+      id: string,
+      status: InsuranceClaimProgress,
+      communications: InsuranceClaimCommunication[],
+      remark?: string,
+    ) {
+      const record = this.insuranceClaimRecords.find((item) => item.id === id)
+      if (!record) throw new Error('理赔记录不存在')
+      if (record.status === 'closed') throw new Error('已办结的理赔不可再编辑')
+      if (!canEditInsuranceClaim(record.status)) throw new Error('审批通过后才可编辑')
+      if (!isInsuranceClaimProgress(status)) throw new Error('请选择状态')
+      const logs = communications
+        .map((item) => ({
+          id: item.id,
+          content: item.content.trim(),
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        }))
+        .filter((item) => item.id && item.content)
+      if (!logs.length) throw new Error('请填写沟通记录')
+      record.communications = logs
+      delete record.communicationLog
+      record.status = status
+      record.remark = remark?.trim() || undefined
+      record.updatedAt = new Date().toISOString()
+      this.persist('insuranceClaimRecords')
     },
 
     addInsuranceProduct(data: {
       name: string
       planId: string
-      coverageAmount: number
       description: string
+      type: string
+      provider: string
+      coverageScope: Parameters<typeof normalizeInsuranceCoverageScope>[0]
+      enterpriseIds?: string[]
     }) {
       const planId = data.planId.trim()
       const name = data.name.trim()
+      const provider = data.provider.trim()
       if (!name) throw new Error('请填写产品名称')
       if (!planId) throw new Error('请填写产品方案 ID')
+      if (!isInsuranceProductType(data.type)) throw new Error('请选择险种')
+      if (!provider) throw new Error('请填写承保公司')
       if (!data.description.trim()) throw new Error('请填写产品介绍')
-      if (!(data.coverageAmount > 0)) throw new Error('请填写产品额度')
+      const coverageError = insuranceCoverageScopeError(data.coverageScope)
+      if (coverageError) throw new Error(coverageError)
+      const coverageScope = normalizeInsuranceCoverageScope(data.coverageScope)
       if (this.insuranceProducts.some((p) => (p.planId || p.code) === planId)) {
         throw new Error('产品方案 ID 已存在')
       }
+      const enterpriseIds = normalizeInsuranceEnterpriseIds(data.enterpriseIds)
+      const conflict = insuranceEnterpriseConflictMessage(
+        this.insuranceProducts,
+        this.enterprises,
+        enterpriseIds,
+      )
+      if (conflict) throw new Error(conflict)
       const item = {
         id: generateId('ins_prod'),
         name,
         planId,
         code: planId,
-        type: 'accident' as const,
-        provider: '',
+        type: data.type,
+        provider,
+        coverageScope,
         dailyPremium: 0,
-        coverageAmount: data.coverageAmount,
+        coverageAmount: coverageScope?.deathDisabilityAmount ?? 0,
         description: data.description.trim(),
         autoOnPunch: false,
         enabled: true,
+        enterpriseIds,
       }
       this.insuranceProducts.unshift(item)
       this.persist('insuranceProducts')
@@ -2164,7 +2316,15 @@ export const useAppStore = defineStore('app', {
 
     updateInsuranceProduct(
       id: string,
-      data: { name: string; planId: string; coverageAmount: number; description: string },
+      data: {
+        name: string
+        planId: string
+        description: string
+        type?: string
+        provider?: string
+        coverageScope?: Parameters<typeof normalizeInsuranceCoverageScope>[0]
+        enterpriseIds?: string[]
+      },
     ) {
       const product = this.insuranceProducts.find((p) => p.id === id)
       if (!product) throw new Error('产品不存在')
@@ -2173,14 +2333,35 @@ export const useAppStore = defineStore('app', {
       if (!name) throw new Error('请填写产品名称')
       if (!planId) throw new Error('请填写产品方案 ID')
       if (!data.description.trim()) throw new Error('请填写产品介绍')
-      if (!(data.coverageAmount > 0)) throw new Error('请填写产品额度')
       const duplicated = this.insuranceProducts.some(
         (p) => p.id !== id && (p.planId || p.code) === planId,
       )
       if (duplicated) throw new Error('产品方案 ID 已存在')
+      if (data.type !== undefined || data.provider !== undefined || data.coverageScope !== undefined) {
+        const type = data.type ?? ''
+        if (!isInsuranceProductType(type)) throw new Error('请选择险种')
+        const provider = data.provider?.trim() ?? ''
+        if (!provider) throw new Error('请填写承保公司')
+        const coverageError = insuranceCoverageScopeError(data.coverageScope)
+        if (coverageError) throw new Error(coverageError)
+        product.type = type
+        product.provider = provider
+        product.coverageScope = normalizeInsuranceCoverageScope(data.coverageScope)
+        product.coverageAmount = product.coverageScope?.deathDisabilityAmount ?? product.coverageAmount
+      }
+      if (data.enterpriseIds !== undefined) {
+        const enterpriseIds = normalizeInsuranceEnterpriseIds(data.enterpriseIds)
+        const conflict = insuranceEnterpriseConflictMessage(
+          this.insuranceProducts,
+          this.enterprises,
+          enterpriseIds,
+          id,
+        )
+        if (conflict) throw new Error(conflict)
+        product.enterpriseIds = enterpriseIds
+      }
       product.name = name
       product.planId = planId
-      product.coverageAmount = data.coverageAmount
       product.description = data.description.trim()
       this.persist('insuranceProducts')
     },
